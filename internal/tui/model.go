@@ -1,13 +1,15 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/paperpaper/paperpaper/internal/api"
 	"github.com/paperpaper/paperpaper/internal/config"
+	"github.com/paperpaper/paperpaper/internal/prompt"
 	"github.com/paperpaper/paperpaper/internal/session"
 )
 
@@ -60,6 +62,7 @@ type Model struct {
 	streaming     bool
 	streamContent string
 	streamBuf     string
+	streamChan    <-chan api.StreamChunk
 
 	// List mode
 	listItems  []session.PaperSummary
@@ -72,12 +75,13 @@ type Model struct {
 }
 
 func NewModel(cfg *config.Config) *Model {
-	vp := viewport.New(0, 0)
+	vp := viewport.New()
 	ta := textarea.New()
-	ta.Placeholder = "输入问题... (i 进入输入模式, Esc 返回浏览模式)"
+	ta.Placeholder = "输入问题... (Enter 发送, Shift+Enter 换行)"
 	ta.Focus()
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter"))
 
 	return &Model{
 		cfg:       cfg,
@@ -101,16 +105,25 @@ func (m *Model) LoadPaper(p *session.Paper) {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
-		textarea.Blink,
-	)
+	cmds := []tea.Cmd{textarea.Blink}
+
+	// If a paper was pre-loaded (e.g. from CLI arg) but has no summary yet, start streaming
+	if p := m.manager.Paper(); p != nil && p.InitialSummary == "" && !m.streaming {
+		m.streaming = true
+		m.streamContent = ""
+		cmds = append(cmds, m.startStream([]api.ChatMessage{
+			{Role: "system", Content: prompt.GetHeavy()},
+			{Role: "user", Content: p.Content},
+		}))
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (m *Model) startStream(messages []api.ChatMessage) tea.Cmd {
-	return func() tea.Msg {
-		ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, messages)
-		return streamMsg{chunk: <-ch}
-	}
+	ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, messages)
+	m.streamChan = ch
+	return m.nextStreamCmd(ch)
 }
 
 func (m *Model) nextStreamCmd(ch <-chan api.StreamChunk) tea.Cmd {

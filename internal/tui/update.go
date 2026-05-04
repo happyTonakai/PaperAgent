@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/paperpaper/paperpaper/internal/api"
 	exportPkg "github.com/paperpaper/paperpaper/internal/export"
@@ -25,7 +25,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.resizeComponents()
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKeyMsg(msg)
 
 	case streamMsg:
@@ -62,7 +62,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Global keys
 	if key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))) {
 		m.manager.Save()
@@ -102,7 +102,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "i":
 		m.mode = ModeInput
@@ -120,28 +120,32 @@ func (m *Model) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G":
 		m.viewport.GotoBottom()
 	case "ctrl+d":
-		m.viewport.ScrollDown(m.viewport.Height / 2)
+		m.viewport.ScrollDown(m.viewport.Height() / 2)
 	case "ctrl+u":
-		m.viewport.ScrollUp(m.viewport.Height / 2)
+		m.viewport.ScrollUp(m.viewport.Height() / 2)
 	}
 
 	return m, nil
 }
 
-func (m *Model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+func (m *Model) handleInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Keystroke() {
 	case "esc":
 		m.mode = ModeNormal
 		m.textarea.Blur()
 		return m, nil
 
 	case "enter":
-		if msg.Alt {
-			return m.handleSubmit()
-		}
-		// Regular enter inserts newline in textarea
+		return m.handleSubmit()
+
 	case "ctrl+d":
 		return m.handleSubmit()
+
+	case "shift+enter":
+		// Let textarea handle as newline
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(msg)
+		return m, cmd
 	}
 
 	// Update textarea
@@ -150,7 +154,7 @@ func (m *Model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleListKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.mode = ModeInput
@@ -216,11 +220,10 @@ func (m *Model) handleSubmit() (tea.Model, tea.Cmd) {
 	if m.manager.Paper() == nil {
 		// Treat input as paper content
 		m.loadPaperFromText(input)
-		ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, []api.ChatMessage{
+		return m, m.startStream([]api.ChatMessage{
 			{Role: "system", Content: prompt.GetHeavy()},
 			{Role: "user", Content: input},
 		})
-		return m, m.nextStreamCmd(ch)
 	}
 
 	// Normal question
@@ -283,8 +286,7 @@ func (m *Model) askQuestion(question string) (tea.Model, tea.Cmd) {
 	m.viewport.GotoBottom()
 
 	// Start streaming
-	ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, messages)
-	return m, m.nextStreamCmd(ch)
+	return m, m.startStream(messages)
 }
 
 func (m *Model) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
@@ -364,8 +366,8 @@ func (m *Model) handleStreamMsg(msg streamMsg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 	}
 
-	// Continue streaming
-	return m, m.nextStreamCmd(m.apiClient.ChatStream(m.cfg.API.DefaultModel, nil))
+	// Continue streaming from existing channel
+	return m, m.nextStreamCmd(m.streamChan)
 }
 
 func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
@@ -385,7 +387,7 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		if len(parts) > 1 {
 			return m.loadFromInput(strings.TrimSpace(parts[1]))
 		}
-		m.viewport.SetContent(bannerStyle.Render("欢迎使用 PaperPaper!\n\n请粘贴论文内容，然后按 Ctrl+D 或 Alt+Enter 提交。\n\n或使用 /new <url/path> 从文件或 URL 加载。"))
+		m.viewport.SetContent(bannerStyle.Render("欢迎使用 PaperPaper!\n\n请粘贴论文内容，然后按 Enter 提交。\n\nShift+Enter 换行，或使用 /new <url/path> 从文件或 URL 加载。"))
 		return m, nil
 
 	case "/list":
@@ -488,7 +490,10 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 				"  i     进入输入模式\n" +
 				"  Esc   返回浏览模式\n" +
 				"  j/k   上下滚动\n" +
-				"  q     退出"))
+				"  q     退出\n\n" +
+				"输入模式:\n\n" +
+				"  Enter       发送消息\n" +
+				"  Shift+Enter 插入换行"))
 		return m, nil
 	}
 
@@ -551,8 +556,7 @@ func (m *Model) handleSummarize() (tea.Model, tea.Cmd) {
 	}
 
 	m.viewport.SetContent(m.renderMessages())
-	ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, messages)
-	return m, m.nextStreamCmd(ch)
+	return m, m.startStream(messages)
 }
 
 func (m *Model) handleExport() (tea.Model, tea.Cmd) {
@@ -629,11 +633,10 @@ func (m *Model) loadFromInput(input string) (tea.Model, tea.Cmd) {
 
 	m.viewport.SetContent(m.renderMessages())
 
-	ch := m.apiClient.ChatStream(m.cfg.API.DefaultModel, []api.ChatMessage{
+	return m, m.startStream([]api.ChatMessage{
 		{Role: "system", Content: prompt.GetHeavy()},
 		{Role: "user", Content: content},
 	})
-	return m, m.nextStreamCmd(ch)
 }
 
 func (m *Model) resizeComponents() {
@@ -649,8 +652,8 @@ func (m *Model) resizeComponents() {
 		viewportHeight = 5
 	}
 
-	m.viewport.Width = m.width - 2
-	m.viewport.Height = viewportHeight
+	m.viewport.SetWidth(m.width - 2)
+	m.viewport.SetHeight(viewportHeight)
 	m.textarea.SetWidth(m.width - 2)
 }
 

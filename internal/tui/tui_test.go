@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/paperpaper/paperpaper/internal/config"
 	"github.com/paperpaper/paperpaper/internal/session"
@@ -31,24 +31,26 @@ func testConfig() *config.Config {
 
 func sendKeys(m *Model, keys ...string) {
 	for _, k := range keys {
-		var msg tea.KeyMsg
+		var msg tea.KeyPressMsg
 		switch k {
 		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter}
+		case "shift+enter":
+			msg = tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}
 		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEscape}
+			msg = tea.KeyPressMsg{Code: tea.KeyEscape}
 		case "ctrl+d":
-			msg = tea.KeyMsg{Type: tea.KeyCtrlD}
+			msg = tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}
 		case "ctrl+c":
-			msg = tea.KeyMsg{Type: tea.KeyCtrlC}
-		case "alt+enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter, Alt: true}
+			msg = tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+		case "ctrl+j":
+			msg = tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl}
 		case "up":
-			msg = tea.KeyMsg{Type: tea.KeyUp}
+			msg = tea.KeyPressMsg{Code: tea.KeyUp}
 		case "down":
-			msg = tea.KeyMsg{Type: tea.KeyDown}
+			msg = tea.KeyPressMsg{Code: tea.KeyDown}
 		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+			msg = tea.KeyPressMsg{Code: rune(k[0]), Text: k}
 		}
 		m.Update(msg)
 	}
@@ -65,7 +67,7 @@ func TestWelcomeScreen(t *testing.T) {
 	m := NewModel(cfg)
 	sendWindowSize(m, 120, 40)
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "PaperPaper") {
 		t.Error("welcome screen should contain 'PaperPaper'")
 	}
@@ -83,7 +85,7 @@ func TestHelpCommand(t *testing.T) {
 	sendKeys(m, "/", "h", "e", "l", "p")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "/new") {
 		t.Error("help should show /new command")
 	}
@@ -113,7 +115,7 @@ func TestModeSwitching(t *testing.T) {
 		t.Errorf("expected ModeNormal after Esc, got %d", m.mode)
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "NORMAL") {
 		t.Error("should show NORMAL mode indicator")
 	}
@@ -143,27 +145,27 @@ func TestVimNavigation(t *testing.T) {
 	sendKeys(m, "esc")
 
 	// Test j/k scrolling
-	initialOffset := m.viewport.YOffset
+	initialOffset := m.viewport.YOffset()
 	sendKeys(m, "j", "j", "j", "j", "j")
-	if m.viewport.YOffset <= initialOffset {
-		t.Errorf("j should scroll down: initial=%d, now=%d", initialOffset, m.viewport.YOffset)
+	if m.viewport.YOffset() <= initialOffset {
+		t.Errorf("j should scroll down: initial=%d, now=%d", initialOffset, m.viewport.YOffset())
 	}
 
 	sendKeys(m, "k", "k", "k", "k", "k")
 	// After scrolling back up, offset should be less
-	afterK := m.viewport.YOffset
+	afterK := m.viewport.YOffset()
 
 	// Test G (go to bottom)
 	sendKeys(m, "G")
-	bottomOffset := m.viewport.YOffset
+	bottomOffset := m.viewport.YOffset()
 	if bottomOffset <= afterK {
 		t.Errorf("G should scroll to bottom: afterK=%d, bottom=%d", afterK, bottomOffset)
 	}
 
 	// Test g (go to top)
 	sendKeys(m, "g")
-	if m.viewport.YOffset >= bottomOffset {
-		t.Errorf("g should scroll to top: bottom=%d, now=%d", bottomOffset, m.viewport.YOffset)
+	if m.viewport.YOffset() >= bottomOffset {
+		t.Errorf("g should scroll to top: bottom=%d, now=%d", bottomOffset, m.viewport.YOffset())
 	}
 }
 
@@ -181,7 +183,7 @@ func TestConfigCommand(t *testing.T) {
 	sendKeys(m, "/", "c", "o", "n", "f", "i", "g")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "test.api.com") {
 		t.Error("config view should show base URL")
 	}
@@ -201,7 +203,7 @@ func TestModelCommand(t *testing.T) {
 	sendKeys(m, "/", "m", "o", "d", "e", "l")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "当前模型") {
 		t.Error("should show current model")
 	}
@@ -229,7 +231,7 @@ func TestListModeEmpty(t *testing.T) {
 	sendKeys(m, "/", "l", "i", "s", "t")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "没有历史论文") {
 		t.Error("empty list should show no papers message")
 	}
@@ -261,7 +263,7 @@ func TestListModeWithPapers(t *testing.T) {
 		t.Errorf("expected ModeList, got %d", m.mode)
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Paper 1") {
 		t.Error("list should show Paper 1")
 	}
@@ -451,7 +453,7 @@ func TestDeleteCommandConfirm(t *testing.T) {
 		t.Error("expected confirmDelete")
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "确认删除") {
 		t.Error("should show confirmation dialog")
 	}
@@ -506,7 +508,7 @@ func TestNewCommand(t *testing.T) {
 		t.Errorf("expected PhaseInit, got %d", m.phase)
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "欢迎使用 PaperPaper") {
 		t.Error("should show welcome banner")
 	}
@@ -563,7 +565,7 @@ func TestEditCommandNoMessages(t *testing.T) {
 	sendKeys(m, "/", "e", "d", "i", "t")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "没有可编辑") {
 		t.Error("should show no editable messages")
 	}
@@ -647,7 +649,7 @@ func TestOpenCommandInvalidID(t *testing.T) {
 	sendKeys(m, "/", "o", "p", "e", "n", " ", "9", "9", "9")
 	sendKeys(m, "ctrl+d")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "无法加载") {
 		t.Error("should show error for invalid ID")
 	}
@@ -694,7 +696,7 @@ func TestLoadPaperWithSummary(t *testing.T) {
 		t.Errorf("expected PhaseChat, got %d", m.phase)
 	}
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "summary") {
 		t.Error("view should contain summary")
 	}
@@ -719,7 +721,7 @@ func TestTokenDisplay(t *testing.T) {
 	m.phase = PhaseChat
 	sendWindowSize(m, 120, 40)
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "600") {
 		t.Error("status bar should show total tokens")
 	}
@@ -741,7 +743,7 @@ func TestStreamContent(t *testing.T) {
 	m.streamContent = "Hello world"
 	m.viewport.SetContent(m.renderMessages())
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Hello") {
 		t.Error("streaming content should be visible")
 	}
@@ -801,14 +803,14 @@ func TestFullFlow(t *testing.T) {
 	sendWindowSize(m, 120, 40)
 
 	// 1. Start: should show PaperPaper in header
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "PaperPaper") {
 		t.Error("should show PaperPaper")
 	}
 
 	// 2. Type a paper and submit
 	m.textarea.SetValue("Attention Is All You Need introduces the Transformer architecture.")
-	m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 
 	// 3. Should be in streaming state
 	if !m.streaming {
@@ -822,7 +824,7 @@ func TestFullFlow(t *testing.T) {
 	}
 
 	// 5. Verify we can render
-	view = m.View()
+	view = m.View().Content
 	if view == "" {
 		t.Error("view should not be empty")
 	}
@@ -830,7 +832,7 @@ func TestFullFlow(t *testing.T) {
 	// 6. Test /help
 	sendKeys(m, "/", "h", "e", "l", "p")
 	sendKeys(m, "ctrl+d")
-	view = m.View()
+	view = m.View().Content
 	if !strings.Contains(view, "/new") {
 		t.Error("help should work")
 	}
@@ -838,7 +840,7 @@ func TestFullFlow(t *testing.T) {
 	// 7. Test /model
 	sendKeys(m, "/", "m", "o", "d", "e", "l")
 	sendKeys(m, "ctrl+d")
-	view = m.View()
+	view = m.View().Content
 	if !strings.Contains(view, "当前模型") {
 		t.Error("model command should work")
 	}
@@ -856,7 +858,7 @@ func TestFullFlow(t *testing.T) {
 	// 9. Test /config
 	sendKeys(m, "/", "c", "o", "n", "f", "i", "g")
 	sendKeys(m, "ctrl+d")
-	view = m.View()
+	view = m.View().Content
 	if !strings.Contains(view, "Base URL") {
 		t.Error("config should show base URL")
 	}
@@ -891,7 +893,7 @@ entirely.`
 
 	// Set content and submit
 	m.textarea.SetValue(paperContent)
-	m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 
 	// Wait a bit for async operations
 	time.Sleep(100 * time.Millisecond)
@@ -970,7 +972,7 @@ func TestSessionPersistence(t *testing.T) {
 	}
 
 	// View should contain summary and messages (glamour adds ANSI codes between words)
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "summary") {
 		t.Error("view should contain summary")
 	}

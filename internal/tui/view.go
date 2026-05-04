@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/paperpaper/paperpaper/internal/session"
 )
 
-func (m *Model) View() string {
+func (m *Model) View() tea.View {
 	if !m.ready {
-		return "Initializing..."
+		return tea.NewView("Initializing...")
 	}
 
 	var b strings.Builder
@@ -39,7 +40,11 @@ func (m *Model) View() string {
 	// Status bar
 	b.WriteString(m.renderStatusBar())
 
-	return b.String()
+	return tea.View{
+		Content:   b.String(),
+		AltScreen: true,
+		MouseMode: tea.MouseModeCellMotion,
+	}
 }
 
 func (m *Model) renderHeader() string {
@@ -90,7 +95,7 @@ func (m *Model) renderInput() string {
 	case ModeNormal:
 		modeHint = dimStyle.Render(" [NORMAL] i:编辑 j/k:滚动 q:退出")
 	case ModeInput:
-		modeHint = dimStyle.Render(" [INPUT] Esc:退出 Ctrl+D:发送 /list:会话列表")
+		modeHint = dimStyle.Render(" [INPUT] Enter:发送 Shift+Enter:换行 Esc:退出 /list:会话列表")
 	}
 
 	return lipgloss.NewStyle().
