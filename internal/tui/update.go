@@ -16,6 +16,18 @@ import (
 	"charm.land/bubbles/v2/textarea"
 )
 
+var (
+	normalKeyI     = key.NewBinding(key.WithKeys("i"))
+	normalKeyJ     = key.NewBinding(key.WithKeys("j", "down"))
+	normalKeyK     = key.NewBinding(key.WithKeys("k", "up"))
+	normalKeyJ10   = key.NewBinding(key.WithKeys("J", "shift+j"))
+	normalKeyK10   = key.NewBinding(key.WithKeys("K", "shift+k"))
+	normalKeyG     = key.NewBinding(key.WithKeys("g"))
+	normalKeyGG    = key.NewBinding(key.WithKeys("G", "shift+g"))
+	normalKeyCtrlD = key.NewBinding(key.WithKeys("ctrl+d"))
+	normalKeyCtrlU = key.NewBinding(key.WithKeys("ctrl+u"))
+)
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -126,26 +138,26 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "i":
+	switch {
+	case key.Matches(msg, normalKeyI):
 		m.mode = ModeInput
 		m.textarea.Focus()
 		return m, textarea.Blink
-	case "j", "down":
+	case key.Matches(msg, normalKeyJ):
 		m.viewport.ScrollDown(1)
-	case "k", "up":
+	case key.Matches(msg, normalKeyK):
 		m.viewport.ScrollUp(1)
-	case "J":
+	case key.Matches(msg, normalKeyJ10):
 		m.viewport.ScrollDown(10)
-	case "K":
+	case key.Matches(msg, normalKeyK10):
 		m.viewport.ScrollUp(10)
-	case "g":
+	case key.Matches(msg, normalKeyG):
 		m.viewport.GotoTop()
-	case "G":
+	case key.Matches(msg, normalKeyGG):
 		m.viewport.GotoBottom()
-	case "ctrl+d":
+	case key.Matches(msg, normalKeyCtrlD):
 		m.viewport.ScrollDown(m.viewport.Height() / 2)
-	case "ctrl+u":
+	case key.Matches(msg, normalKeyCtrlU):
 		m.viewport.ScrollUp(m.viewport.Height() / 2)
 	}
 
