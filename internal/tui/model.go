@@ -115,6 +115,11 @@ type Model struct {
 
 	// Markdown renderer cache
 	glamourRenderer *glamour.TermRenderer
+
+	// Cache rendered markdown output to avoid re-rendering old messages
+	// on every streaming update. key = content, cleared on resize.
+	renderCache     map[string]string
+	renderCacheWidth int
 }
 
 func NewModel(cfg *config.Config) *Model {
@@ -127,13 +132,14 @@ func NewModel(cfg *config.Config) *Model {
 	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("shift+enter"))
 
 	return &Model{
-		cfg:       cfg,
-		apiClient: api.NewClient(cfg),
-		manager:   session.NewManager(),
-		viewport:  vp,
-		textarea:  ta,
-		mode:      ModeInput,
-		phase:     PhaseInit,
+		cfg:         cfg,
+		apiClient:   api.NewClient(cfg),
+		manager:     session.NewManager(),
+		viewport:    vp,
+		textarea:    ta,
+		mode:        ModeInput,
+		phase:       PhaseInit,
+		renderCache: make(map[string]string),
 	}
 }
 
@@ -228,6 +234,17 @@ func (m *Model) renderMarkdown(text string) string {
 		targetWidth = 120
 	}
 
+	// Invalidate cache on resize
+	if m.renderCacheWidth != targetWidth {
+		m.renderCache = make(map[string]string)
+		m.renderCacheWidth = targetWidth
+	}
+
+	// Return cached result if available (big win during streaming)
+	if cached, ok := m.renderCache[text]; ok {
+		return cached
+	}
+
 	// Create renderer once (use a huge WordWrap to disable glamour's own
 	// wrapping — we do our own CJK-aware wrapping below).
 	if m.glamourRenderer == nil {
@@ -256,7 +273,9 @@ func (m *Model) renderMarkdown(text string) string {
 	if err != nil {
 		return text
 	}
-	return rebalanceWrap(rendered, targetWidth)
+	result := rebalanceWrap(rendered, targetWidth)
+	m.renderCache[text] = result
+	return result
 }
 
 var (
