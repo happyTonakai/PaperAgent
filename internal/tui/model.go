@@ -109,6 +109,7 @@ type Model struct {
 
 	selection    viewportSelection
 	statusNotice string
+	quitArmed    bool
 
 	err error
 
