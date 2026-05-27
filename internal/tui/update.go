@@ -131,13 +131,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeInput
 		m.textarea.Focus()
 		return m, textarea.Blink
-	case "q":
-		m.manager.Save()
-		return m, tea.Quit
 	case "j", "down":
 		m.viewport.ScrollDown(1)
 	case "k", "up":
 		m.viewport.ScrollUp(1)
+	case "J":
+		m.viewport.ScrollDown(10)
+	case "K":
+		m.viewport.ScrollUp(10)
 	case "g":
 		m.viewport.GotoTop()
 	case "G":
@@ -523,7 +524,10 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 			"  i     进入输入模式\n" +
 			"  Esc   返回浏览模式\n" +
 			"  j/k   上下滚动\n" +
-			"  q     退出\n\n" +
+			"  J/K   跳10行\n" +
+			"  gg/G  跳到开头/结尾\n" +
+			"  Ctrl+D/U 半页滚动\n" +
+			"  双击 Ctrl+C 退出\n\n" +
 			"输入模式:\n\n" +
 			"  Enter       发送消息\n" +
 			"  Shift+Enter 插入换行"))

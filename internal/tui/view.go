@@ -129,6 +129,16 @@ func (m *Model) renderSeparator() string {
 	return separatorStyle.Render(line)
 }
 
+func (m *Model) renderNormalModeBar() string {
+	bar := lipgloss.NewStyle().
+		Background(lipgloss.Color("236")).
+		Foreground(lipgloss.Color("250")).
+		Padding(0, 1).
+		Width(m.width).
+		Render("NORMAL  i 编辑  │  j/k 滚动  │  J/K 跳10行  │  gg/G 首尾  │  Ctrl+D/U 半页  │  Ctrl+C 两次退出")
+	return "\n" + bar
+}
+
 func (m *Model) renderHeader() string {
 	title := "PaperPaper"
 	if m.mode == ModeList {
@@ -183,9 +193,9 @@ func (m *Model) renderInput() string {
 	modeHint := ""
 	switch m.mode {
 	case ModeNormal:
-		modeHint = dimStyle.Render(" [NORMAL] i:编辑 j/k:滚动 q:退出")
+		modeHint = m.renderNormalModeBar()
 	case ModeInput:
-		modeHint = dimStyle.Render(" [INPUT] Enter:发送 Shift+Enter:换行 Esc:退出 /:命令提示")
+		modeHint = dimStyle.Render(" [INPUT] Enter:发送 Shift+Enter:换行 Esc:浏览模式 /:命令提示")
 	}
 
 	content := input + modeHint
