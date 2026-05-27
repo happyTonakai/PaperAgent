@@ -236,6 +236,10 @@ func (m *Model) renderMarkdown(text string) string {
 		style.H4.Prefix = ""
 		style.H5.Prefix = ""
 		style.H6.Prefix = ""
+		// Use non-breaking space between bullet/number and text to prevent
+		// lipgloss.Wrap from splitting them onto separate lines with CJK content.
+		style.Item.BlockPrefix = "• "
+		style.Enumeration.BlockPrefix = ") "
 
 		renderer, err := glamour.NewTermRenderer(
 			glamour.WithWordWrap(targetWidth),
