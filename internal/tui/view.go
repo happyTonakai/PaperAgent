@@ -283,6 +283,9 @@ func (m *Model) renderStatusBar() string {
 
 	left := fmt.Sprintf("Tokens: %s", formatNumber(tokens))
 	right := fmt.Sprintf("Rounds: %d", rounds)
+	if m.rawMode {
+		right = rawLabelStyle.Render("RAW") + " " + right
+	}
 	if m.statusNotice != "" {
 		left = m.statusNotice
 	}
@@ -404,8 +407,16 @@ func (m *Model) renderMessages() string {
 
 	// Initial summary
 	if p.InitialSummary != "" {
-		rendered := m.renderMarkdown(p.InitialSummary)
-		b.WriteString(rendered)
+		if m.rawMode {
+			b.WriteString(aiStyle.Render("📋 初始总结"))
+			b.WriteString(" ")
+			b.WriteString(rawLabelStyle.Render("[RAW]"))
+			b.WriteString("\n")
+			b.WriteString(rawBorderStyle.Render(rawTextStyle.Render(p.InitialSummary)))
+		} else {
+			rendered := m.renderMarkdown(p.InitialSummary)
+			b.WriteString(rendered)
+		}
 		b.WriteString("\n")
 		sepWidth := m.width - 4
 		if sepWidth < 1 {
@@ -424,15 +435,20 @@ func (m *Model) renderMessages() string {
 	// Streaming content
 	if m.streaming && m.streamContent != "" {
 		b.WriteString(aiStyle.Render("🤖 AI: "))
-		rendered := m.renderMarkdown(m.streamContent)
-		b.WriteString(rendered)
+		if m.rawMode {
+			b.WriteString(rawLabelStyle.Render("[RAW]"))
+			b.WriteString(" ")
+			b.WriteString(rawTextStyle.Render(m.streamContent))
+		} else {
+			rendered := m.renderMarkdown(m.streamContent)
+			b.WriteString(rendered)
+		}
 		b.WriteString(dimStyle.Render(" ▍"))
 		b.WriteString("\n")
 	}
 
 	return b.String()
 }
-
 func (m *Model) renderMessage(msg session.Message) string {
 	var b strings.Builder
 
@@ -450,17 +466,27 @@ func (m *Model) renderMessage(msg session.Message) string {
 	} else {
 		header := aiStyle.Render("🤖 AI:")
 		b.WriteString(header)
+		if m.rawMode {
+			b.WriteString(" ")
+			b.WriteString(rawLabelStyle.Render("[RAW]"))
+		}
 		b.WriteString(" ")
-		rendered := m.renderMarkdown(msg.Content)
-		// Add indentation for AI messages
-		lines := strings.Split(rendered, "\n")
-		for i, line := range lines {
-			if i > 0 {
-				b.WriteString("   ")
-			}
-			b.WriteString(line)
-			if i < len(lines)-1 {
-				b.WriteString("\n")
+		if m.rawMode {
+			// Raw mode: show content as-is, no markdown rendering
+			rawContent := rawBorderStyle.Render(rawTextStyle.Render(msg.Content))
+			b.WriteString(rawContent)
+		} else {
+			rendered := m.renderMarkdown(msg.Content)
+			// Add indentation for AI messages
+			lines := strings.Split(rendered, "\n")
+			for i, line := range lines {
+				if i > 0 {
+					b.WriteString("   ")
+				}
+				b.WriteString(line)
+				if i < len(lines)-1 {
+					b.WriteString("\n")
+				}
 			}
 		}
 		b.WriteString("\n")

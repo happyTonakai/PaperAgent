@@ -544,6 +544,17 @@ func (m *Model) handleCommand(input string) (tea.Model, tea.Cmd) {
 		)))
 		return m, nil
 
+	case "/raw":
+		m.rawMode = !m.rawMode
+		if m.rawMode {
+			m.statusNotice = "RAW 模式已开启：显示 LLM 原始输出，不渲染 Markdown/LaTeX"
+		} else {
+			m.statusNotice = "RAW 模式已关闭：正常渲染"
+		}
+		m.renderCache = make(map[string]string) // clear cache to force re-render
+		m.refreshViewportContent(true)
+		return m, nil
+
 	case "/help":
 		m.viewport.SetContent(bannerStyle.Render(commandHelpText() +
 			"\n快捷键:\n\n" +

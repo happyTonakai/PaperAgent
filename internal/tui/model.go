@@ -91,6 +91,7 @@ type Model struct {
 	textarea textarea.Model
 
 	mode   Mode
+	rawMode bool
 	phase  Phase
 	ready  bool
 	width  int
@@ -228,6 +229,18 @@ var (
 
 	separatorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
+
+	rawLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("208")).
+			Bold(true)
+
+	rawTextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+
+	rawBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("208")).
+			Padding(0, 1)
 )
 
 // renderMarkdown renders markdown text with proper word wrap width
@@ -406,6 +419,7 @@ var commands = []commandInfo{
 	{Name: "/export", Usage: "/export", Description: "导出到 Obsidian"},
 	{Name: "/model", Usage: "/model [name]", Description: "查看或切换模型"},
 	{Name: "/config", Usage: "/config", Description: "查看当前配置"},
+	{Name: "/raw", Usage: "/raw", Description: "切换原始输出模式（不渲染 Markdown/LaTeX）"},
 	{Name: "/help", Usage: "/help", Description: "显示帮助"},
 	{Name: "/quit", Usage: "/quit", Description: "保存并退出"},
 }
