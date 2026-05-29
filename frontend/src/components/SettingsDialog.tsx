@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Loader2, Save } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
@@ -29,19 +29,23 @@ export function SettingsDialog() {
   const [tab, setTab] = useState<Tab>('config')
   const [visible, setVisible] = useState(false)
   const [closing, setClosing] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
-  // Animate in/out
+  // Animate in/out: state transitions
   useEffect(() => {
     if (isSettingsOpen) {
       setVisible(true)
       setClosing(false)
     } else if (visible && !closing) {
       setClosing(true)
-      timerRef.current = setTimeout(() => setVisible(false), 200)
     }
-    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [isSettingsOpen, visible, closing])
+
+  // Delayed unmount after close animation plays
+  useEffect(() => {
+    if (!closing) return
+    const timer = setTimeout(() => setVisible(false), 200)
+    return () => clearTimeout(timer)
+  }, [closing])
 
   const close = () => setSettingsOpen(false)
 
