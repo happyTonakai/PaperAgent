@@ -111,10 +111,16 @@ export function PaperList() {
         {papers?.map((p) => (
           <div
             key={p.id}
-            className={`group relative px-3 py-2.5 transition-colors border-b border-gray-100 dark:border-gray-900 ${
-              currentPaperId === p.id
+            className={`group px-3 py-2.5 transition-colors border-b border-gray-100 dark:border-gray-900 ${
+              menuOpen === p.id
+                ? 'relative z-30 bg-gray-100 dark:bg-gray-900'
+                : 'relative'
+            } ${
+              currentPaperId === p.id && menuOpen !== p.id
                 ? 'bg-blue-50 dark:bg-blue-950/40 border-l-2 border-l-blue-500'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-900 border-l-2 border-l-transparent'
+                : menuOpen !== p.id
+                  ? 'hover:bg-gray-100 dark:hover:bg-gray-900 border-l-2 border-l-transparent'
+                  : 'border-l-2 border-l-transparent'
             }`}
           >
             {/* Clickable title area (separate from action buttons) */}
