@@ -1,4 +1,4 @@
-import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown } from 'lucide-react'
+import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
@@ -65,7 +65,7 @@ export function PaperList() {
   const exportPaper = useExportPaper()
   const updateTitle = useUpdateTitle()
   const updateRating = useUpdateRating()
-  const { currentPaperId, setCurrentPaperId, setNewPaperOpen, sidebarWidth, setSidebarWidth } = useAppStore()
+  const { currentPaperId, setCurrentPaperId, setNewPaperOpen, setSettingsOpen, sidebarWidth, setSidebarWidth } = useAppStore()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
@@ -271,6 +271,15 @@ export function PaperList() {
             aria-label="新建论文"
           >
             <Plus size={15} />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-1.5 rounded-md transition-all duration-200 hover:scale-110 active:scale-95 ml-0.5 hover:bg-[var(--color-bg-inset)]"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="设置"
+            aria-label="设置"
+          >
+            <Settings size={15} />
           </button>
         </div>
       </div>

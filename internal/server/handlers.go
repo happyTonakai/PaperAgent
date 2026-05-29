@@ -6,10 +6,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/paperpaper/paperpaper/internal/api"
+	"github.com/paperpaper/paperpaper/internal/config"
 	"github.com/paperpaper/paperpaper/internal/export"
 	"github.com/paperpaper/paperpaper/internal/prompt"
 	"github.com/paperpaper/paperpaper/internal/session"
@@ -705,6 +707,52 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+func (s *Server) handleGetPrompts(w http.ResponseWriter, r *http.Request) {
+	type promptInfo struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+		Source  string `json:"source"` // "builtin" or "custom"
+	}
+	var result []promptInfo
+	for _, name := range prompt.BuiltinNames() {
+		effective := prompt.GetContent(name)
+		source := "custom"
+		// Check if user has a custom override
+		userPath := config.ConfigDir() + "/prompts/" + name + ".txt"
+		if _, err := os.Stat(userPath); os.IsNotExist(err) {
+			source = "builtin"
+		}
+		result = append(result, promptInfo{
+			Name:    name,
+			Content: effective,
+			Source:  source,
+		})
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleSavePrompts(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
+	type promptSave struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	var updates []promptSave
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	for _, u := range updates {
+		if err := prompt.Save(u.Name, u.Content); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("save %s failed: %v", u.Name, err)})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 

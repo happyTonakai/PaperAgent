@@ -9,6 +9,7 @@ import { usePaper } from '../hooks/usePapers'
 import { useSSE } from '../hooks/useSSE'
 import { useAppStore } from '../stores/appStore'
 import { MessageBubble } from './MessageBubble'
+import { RoundNav } from './RoundNav'
 import { ScrollButtons } from './ScrollButtons'
 import { FontSizeButton } from './FontSizeButton'
 import type { Message, Theme } from '../types'
@@ -424,14 +425,16 @@ export function ChatView() {
         )}
 
         {/* COMPLETED MESSAGES */}
+        <div data-msg-start />
         {allMessages.map((msg, idx) => (
           <MessageBubble
             key={`${msg.round_number}-${msg.role}-${idx}`}
             role={msg.role}
             content={msg.content}
-            digest={msg.digest}
+            roundNumber={msg.round_number}
           />
         ))}
+        <div data-msg-end />
 
         {/* CHAT STREAM */}
         {(isStreamingLocal || retryingRound !== null) && streamingContent && (
@@ -515,6 +518,7 @@ export function ChatView() {
       </div>
 
       <ScrollButtons containerRef={containerRef} />
+      <RoundNav messages={paper?.messages ?? []} containerRef={containerRef} />
     </div>
   )
 }

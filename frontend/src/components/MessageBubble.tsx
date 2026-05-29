@@ -10,14 +10,15 @@ const rehypePlugins = [rehypeKatex, rehypeHighlight]
 interface MessageBubbleProps {
   role: 'user' | 'assistant'
   content: string
-  digest?: string
+  roundNumber?: number
   isStreaming?: boolean
 }
 
-export function MessageBubble({ role, content, digest, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ role, content, roundNumber, isStreaming }: MessageBubbleProps) {
   return (
     <div
       className="flex gap-3 px-5 py-4 animate-fade-in-up"
+      {...(roundNumber !== undefined ? { 'data-round': roundNumber } : {})}
       style={{
         backgroundColor: role === 'user' ? 'var(--color-bg-elevated)' : 'transparent',
         borderBottom: '1px solid var(--color-border-light)',
@@ -46,17 +47,6 @@ export function MessageBubble({ role, content, digest, isStreaming }: MessageBub
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        {digest && role === 'user' && (
-          <div
-            className="text-xs mb-1.5"
-            style={{
-              fontFamily: 'var(--font-ui)',
-              color: 'var(--color-text-muted)',
-            }}
-          >
-            {digest}
-          </div>
-        )}
         <div className="markdown-body leading-relaxed">
           <ReactMarkdown
             remarkPlugins={remarkPlugins}

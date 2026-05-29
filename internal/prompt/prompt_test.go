@@ -47,8 +47,8 @@ func TestGetDigest(t *testing.T) {
 	if result == "" {
 		t.Error("GetDigest should not return empty")
 	}
-	if !strings.Contains(result, "总结") {
-		t.Error("DigestPrompt should contain '总结'")
+	if !strings.Contains(result, "一句话") {
+		t.Error("DigestPrompt should contain '一句话'")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/paperpaper/paperpaper/internal/config"
+	"github.com/paperpaper/paperpaper/internal/prompt"
 	"github.com/paperpaper/paperpaper/internal/session"
 )
 
@@ -202,7 +203,7 @@ func (c *Client) Chat(model string, messages []ChatMessage) (string, int, error)
 
 func (c *Client) SummarizeQuestion(model string, question string) (string, error) {
 	messages := []ChatMessage{
-		{Role: "system", Content: "用一句话（不超过50字）概括用户的问题摘要，直接输出摘要，不要加任何前缀。"},
+		{Role: "system", Content: prompt.GetDigest()},
 		{Role: "user", Content: question},
 	}
 	result, _, err := c.Chat(model, messages)
