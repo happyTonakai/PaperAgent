@@ -62,9 +62,9 @@ export function RoundNav({ messages, containerRef, narrow }: RoundNavProps) {
       onMouseLeave={handleLeave}
     >
       {/* Top arrow */}
-      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 28, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
-        <button onClick={() => scrollTo('[data-msg-start]')} className="flex items-center justify-center w-6 h-6 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
-          <ChevronUp size={14} />
+      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
+        <button onClick={() => scrollTo('[data-msg-start]')} className="flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
+          <ChevronUp size={16} />
         </button>
       </div>
 
@@ -119,9 +119,9 @@ export function RoundNav({ messages, containerRef, narrow }: RoundNavProps) {
       </div>
 
       {/* Bottom arrow */}
-      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 28, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
-        <button onClick={() => scrollTo('[data-msg-end]')} className="flex items-center justify-center w-6 h-6 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
-          <ChevronDown size={14} />
+      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
+        <button onClick={() => scrollTo('[data-msg-end]')} className="flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
+          <ChevronDown size={16} />
         </button>
       </div>
     </div>

@@ -10,7 +10,6 @@ import { useSSE } from '../hooks/useSSE'
 import { useAppStore } from '../stores/appStore'
 import { MessageBubble } from './MessageBubble'
 import { RoundNav } from './RoundNav'
-import { ScrollButtons } from './ScrollButtons'
 import { FontSizeButton } from './FontSizeButton'
 import type { Message, Theme } from '../types'
 
@@ -528,7 +527,6 @@ export function ChatView() {
         </div>
       </div>
 
-      <ScrollButtons containerRef={containerRef} narrow={contentWidth === 'narrow'} />
       <RoundNav messages={paper?.messages ?? []} containerRef={containerRef} narrow={contentWidth === 'narrow'} />
     </div>
   )
