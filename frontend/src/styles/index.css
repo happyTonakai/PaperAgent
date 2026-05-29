@@ -5,6 +5,7 @@
 
 /* ===== Design Tokens ===== */
 :root {
+  color-scheme: light;
   --color-bg: #faf6ee;
   --color-bg-elevated: #f3eddf;
   --color-bg-inset: #ebe3d1;
@@ -44,6 +45,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --color-bg: #0f0f1a;
   --color-bg-elevated: #171724;
   --color-bg-inset: #0a0a14;
@@ -223,6 +225,21 @@ pre code.hljs {
 .markdown-body strong {
   font-weight: 650;
   color: var(--color-text);
+}
+
+/* ===== Global scrollbar (all elements) ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
 }
 
 /* ===== Animations ===== */
