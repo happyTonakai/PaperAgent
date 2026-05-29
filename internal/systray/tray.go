@@ -1,0 +1,78 @@
+package systray
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os/exec"
+	"runtime"
+	"time"
+
+	"fyne.io/systray"
+)
+
+// Options configures the systray behavior.
+type Options struct {
+	Port int
+}
+
+// Run starts the system tray icon and blocks until the user quits.
+// onStart is called once the tray is ready (icon set, menu items added).
+// The returned stop function is called when the user selects "Quit".
+func Run(opts Options, httpServer *http.Server) {
+	systray.Run(
+		func() { onReady(opts) },
+		func() { onExit(httpServer) },
+	)
+}
+
+func onReady(opts Options) {
+	systray.SetIcon(iconData)
+	systray.SetTitle("PaperPaper")
+	systray.SetTooltip("PaperPaper - AI 论文阅读助手")
+
+	url := fmt.Sprintf("http://localhost:%d", opts.Port)
+
+	mOpen := systray.AddMenuItem("打开 Web 界面", "在浏览器中打开 PaperPaper")
+	mOpen.SetIcon(iconData)
+
+	systray.AddSeparator()
+
+	mQuit := systray.AddMenuItem("退出", "退出 PaperPaper")
+	mAbout := systray.AddMenuItem("关于 PaperPaper", "AI 论文阅读助手")
+
+	go func() {
+		for {
+			select {
+			case <-mOpen.ClickedCh:
+				openBrowser(url)
+			case <-mAbout.ClickedCh:
+				openBrowser(url)
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
+	}()
+}
+
+func onExit(httpServer *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	httpServer.Shutdown(ctx)
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return
+	}
+	_ = cmd.Start()
+}
