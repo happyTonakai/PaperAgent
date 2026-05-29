@@ -26,6 +26,27 @@ function StreamRenderer({ content }: { content: string }) {
   )
 }
 
+function LoadingDots() {
+  return (
+    <div className="flex items-center gap-1.5 py-1">
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="w-1.5 h-1.5 rounded-full"
+          style={{
+            backgroundColor: 'var(--color-accent)',
+            opacity: 0.5,
+            animation: `cursor-blink 1.2s ${delay}ms infinite`,
+          }}
+        />
+      ))}
+      <span className="text-xs ml-1" style={{ color: 'var(--color-text-muted)' }}>
+        正在生成...
+      </span>
+    </div>
+  )
+}
+
 export function ChatView() {
   const {
     currentPaperId,
@@ -41,14 +62,11 @@ export function ChatView() {
   const [retryingSummary, setRetryingSummary] = useState(false)
   const [retrySummaryContent, setRetrySummaryContent] = useState('')
   const [retryingRound, setRetryingRound] = useState<number | null>(null)
-  // Track which round the current stream is answering
   const answeringRound = useRef<number | null>(null)
   const userScrolledUp = useRef(false)
   const isAutoScrolling = useRef(false)
 
   const isPending = pendingPaperId === currentPaperId
-
-  // Paper has content but no summary — not currently loading or pending
   const needsSummaryRetry = !isLoading && !isPending && !retryingSummary && paper && !paper.initial_summary
 
   const scrollToBottom = useCallback(() => {
@@ -88,7 +106,6 @@ export function ChatView() {
     }
   }, [streamingContent, pendingSummary, scrollToBottom, isStreamingLocal, isPending])
 
-  // Auto-scroll during retry-summary stream
   useEffect(() => {
     if (retryingSummary && !userScrolledUp.current) {
       scrollToBottom()
@@ -106,18 +123,14 @@ export function ChatView() {
 
   const handleSendQuestion = useCallback(async (question: string) => {
     if (!currentPaperId || isStreamingLocal) return
-
     setStreamingContent('')
     setIsStreamingLocal(true)
     setStreamError(null)
     userScrolledUp.current = false
-
-    // Determine the round for this question
     const nextRound = (paper?.messages?.length ?? 0) > 0
       ? Math.max(...paper!.messages.map(m => m.round_number), 0) + 1
       : 1
     answeringRound.current = nextRound
-
     await streamRequest(`/api/papers/${currentPaperId}/chat`, { question }, {
       onChunk: (content) => setStreamingContent((prev) => prev + content),
       onDone: () => {
@@ -135,11 +148,9 @@ export function ChatView() {
 
   const handleRetrySummary = useCallback(async () => {
     if (!currentPaperId) return
-
     setRetryingSummary(true)
     setRetrySummaryContent('')
     userScrolledUp.current = false
-
     await streamRequest(`/api/papers/${currentPaperId}/retry-summary`, {}, {
       onChunk: (content) => setRetrySummaryContent((prev) => prev + content),
       onDone: () => {
@@ -157,12 +168,10 @@ export function ChatView() {
 
   const handleRetryChat = useCallback(async (round: number) => {
     if (!currentPaperId) return
-
     setRetryingRound(round)
     setStreamingContent('')
     setStreamError(null)
     userScrolledUp.current = false
-
     await streamRequest(`/api/papers/${currentPaperId}/chat/${round}/retry`, {}, {
       onChunk: (content) => setStreamingContent((prev) => prev + content),
       onDone: () => {
@@ -183,7 +192,6 @@ export function ChatView() {
     return () => setSendQuestion(null)
   }, [handleSendQuestion, setSendQuestion])
 
-  // Find last user round without an assistant answer (for retry)
   const lastUnansweredRound = useRef<number | null>(null)
   if (paper && !isStreamingLocal && !retryingSummary && retryingRound === null) {
     const msgs = paper.messages
@@ -197,11 +205,29 @@ export function ChatView() {
   // --- Empty state ---
   if (!currentPaperId) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-600">
-        <div className="text-center">
-          <div className="text-5xl mb-4">📄</div>
-          <p className="text-lg">选择一篇论文开始阅读</p>
-          <p className="text-sm mt-1">点击左侧论文列表，或创建新论文</p>
+      <div
+        className="flex-1 flex items-center justify-center"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        <div className="text-center animate-fade-in-up">
+          <div
+            className="text-6xl mb-5 opacity-40"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            &para;
+          </div>
+          <p
+            className="text-lg"
+            style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text-secondary)' }}
+          >
+            选择一篇论文开始阅读
+          </p>
+          <p
+            className="text-sm mt-2"
+            style={{ fontFamily: 'var(--font-ui)', color: 'var(--color-text-muted)' }}
+          >
+            点击左侧论文列表，或创建新论文
+          </p>
         </div>
       </div>
     )
@@ -213,10 +239,29 @@ export function ChatView() {
       <div className="flex-1 flex flex-col gap-4 p-6">
         {[1, 2, 3].map((i) => (
           <div key={i} className="flex gap-3 animate-pulse">
-            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-800 flex-shrink-0" />
-            <div className="flex-1 space-y-2">
-              <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-3/4" />
-              <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
+            <div
+              className="w-8 h-8 rounded-full flex-shrink-0"
+              style={{ backgroundColor: 'var(--color-bg-inset)' }}
+            />
+            <div className="flex-1 space-y-2.5">
+              <div
+                className="h-4 rounded w-3/4"
+                style={{
+                  background: 'var(--color-bg-inset)',
+                  backgroundImage: 'linear-gradient(90deg, transparent, var(--color-border-light), transparent)',
+                  backgroundSize: '200% 100%',
+                  animation: 'shimmer 1.5s infinite',
+                }}
+              />
+              <div
+                className="h-4 rounded w-1/2"
+                style={{
+                  background: 'var(--color-bg-inset)',
+                  backgroundImage: 'linear-gradient(90deg, transparent, var(--color-border-light), transparent)',
+                  backgroundSize: '200% 100%',
+                  animation: 'shimmer 1.5s infinite',
+                }}
+              />
             </div>
           </div>
         ))}
@@ -226,7 +271,6 @@ export function ChatView() {
 
   // --- Build message list ---
   const allMessages: (Message & { isInitial?: boolean })[] = []
-
   if (paper?.initial_summary) {
     allMessages.push({
       round_number: 0,
@@ -236,70 +280,109 @@ export function ChatView() {
       isInitial: true,
     })
   }
-
   if (paper) {
     for (const msg of paper.messages.filter(m => m.round_number !== 0)) {
       allMessages.push(msg)
     }
   }
 
+  // --- Controls button style ---
+  const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
+
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
       {/* Title bar */}
-      <div className="flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 flex items-center gap-2">
-        <h2 className="text-sm font-medium truncate flex-1">
+      <div
+        className="flex-shrink-0 px-5 py-3 flex items-center gap-3"
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          borderBottom: '1px solid var(--color-border)',
+        }}
+      >
+        <h2
+          className="text-sm font-semibold truncate flex-1"
+          style={{
+            fontFamily: 'var(--font-display)',
+            color: 'var(--color-text)',
+            letterSpacing: '-0.01em',
+          }}
+        >
           {paper?.title || '加载中...'}
         </h2>
-        <button
-          onClick={toggleContentWidth}
-          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-          title={contentWidth === 'full' ? '窄屏阅读' : '宽屏阅读'}
-          aria-label={contentWidth === 'full' ? '切换到窄屏' : '切换到宽屏'}
-        >
-          {contentWidth === 'full' ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-        </button>
-        <button
-          onClick={() => {
-            const cycle: Theme[] = ['light', 'dark', 'system']
-            const idx = cycle.indexOf(theme)
-            setTheme(cycle[(idx + 1) % cycle.length])
-          }}
-          className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-          title={`主题: ${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
-          aria-label="切换主题"
-        >
-          {theme === 'light' ? <Sun size={16} /> : theme === 'dark' ? <Moon size={16} /> : <Monitor size={16} />}
-        </button>
-        <FontSizeButton />
-        {paper?.source_url && (
-          <a href={paper.source_url} target="_blank" rel="noopener noreferrer"
-            className="text-xs text-blue-500 dark:text-blue-400 hover:underline truncate max-w-[200px]">
-            {paper.source_url.length > 40 ? paper.source_url.slice(0, 40) + '...' : paper.source_url}
-          </a>
-        )}
+
+        {/* Controls group */}
+        <div className="flex items-center gap-0.5" style={{ fontFamily: 'var(--font-ui)' }}>
+          <button
+            onClick={toggleContentWidth}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title={contentWidth === 'full' ? '窄屏阅读' : '宽屏阅读'}
+            aria-label={contentWidth === 'full' ? '切换到窄屏' : '切换到宽屏'}
+          >
+            {contentWidth === 'full' ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            onClick={() => {
+              const cycle: Theme[] = ['light', 'dark', 'system']
+              const idx = cycle.indexOf(theme)
+              setTheme(cycle[(idx + 1) % cycle.length])
+            }}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title={`主题: ${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
+            aria-label="切换主题"
+          >
+            {theme === 'light' ? <Sun size={15} /> : theme === 'dark' ? <Moon size={15} /> : <Monitor size={15} />}
+          </button>
+          <FontSizeButton />
+          {paper?.source_url && (
+            <a
+              href={paper.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs hover:underline truncate max-w-[180px] ml-2 transition-colors duration-150"
+              style={{ color: 'var(--color-accent)' }}
+            >
+              {paper.source_url.length > 35 ? paper.source_url.slice(0, 35) + '...' : paper.source_url}
+            </a>
+          )}
+        </div>
       </div>
 
-      {/* Messages */}
+      {/* Messages container */}
       <div ref={containerRef} className="flex-1 overflow-y-auto custom-scrollbar">
         <div className={contentWidth === 'narrow' ? 'max-w-[55%] mx-auto' : ''}>
-        {/* PENDING SUMMARY STREAM (from NewPaperDialog SSE) */}
+
+        {/* PENDING SUMMARY STREAM */}
         {isPending && (
-          <div className="flex gap-3 px-4 py-3">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium"
-              style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}>AI</div>
+          <div
+            className="flex gap-3 px-5 py-4"
+            style={{ borderBottom: '1px solid var(--color-border-light)' }}
+          >
+            <div
+              className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 select-none"
+              style={{
+                backgroundColor: 'var(--color-bg-inset)',
+                color: 'var(--color-text-secondary)',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              A
+            </div>
             <div className="flex-1 min-w-0">
               {pendingSummary ? (
                 <StreamRenderer content={pendingSummary} />
               ) : (
-                <div className="flex items-center gap-1 py-1">
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  <span className="text-xs text-gray-400 ml-1">正在生成摘要...</span>
-                </div>
+                <LoadingDots />
               )}
               {pendingSummary && (
-                <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                <span
+                  className="inline-block w-2 h-4 ml-0.5 align-middle"
+                  style={{
+                    backgroundColor: 'var(--color-accent)',
+                    animation: 'cursor-blink 0.7s step-end infinite',
+                  }}
+                />
               )}
             </div>
           </div>
@@ -307,22 +390,34 @@ export function ChatView() {
 
         {/* RETRY SUMMARY STREAM */}
         {retryingSummary && (
-          <div className="flex gap-3 px-4 py-3">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium"
-              style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}>AI</div>
+          <div
+            className="flex gap-3 px-5 py-4"
+            style={{ borderBottom: '1px solid var(--color-border-light)' }}
+          >
+            <div
+              className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 select-none"
+              style={{
+                backgroundColor: 'var(--color-bg-inset)',
+                color: 'var(--color-text-secondary)',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              A
+            </div>
             <div className="flex-1 min-w-0">
               {retrySummaryContent ? (
                 <StreamRenderer content={retrySummaryContent} />
               ) : (
-                <div className="flex items-center gap-1 py-1">
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                  <span className="text-xs text-gray-400 ml-1">正在重新生成摘要...</span>
-                </div>
+                <LoadingDots />
               )}
               {retrySummaryContent && (
-                <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 align-middle" />
+                <span
+                  className="inline-block w-2 h-4 ml-0.5 align-middle"
+                  style={{
+                    backgroundColor: 'var(--color-accent)',
+                    animation: 'cursor-blink 0.7s step-end infinite',
+                  }}
+                />
               )}
             </div>
           </div>
@@ -343,24 +438,38 @@ export function ChatView() {
           <MessageBubble role="assistant" content={streamingContent} isStreaming />
         )}
         {(isStreamingLocal && !streamingContent) && (
-          <div className="flex gap-3 px-4 py-3">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium"
-              style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}>AI</div>
-            <div className="flex items-center gap-1">
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div
+            className="flex gap-3 px-5 py-4"
+            style={{ borderBottom: '1px solid var(--color-border-light)' }}
+          >
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium"
+              style={{
+                backgroundColor: 'var(--color-bg-inset)',
+                color: 'var(--color-text-secondary)',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              A
             </div>
+            <LoadingDots />
           </div>
         )}
 
         {/* NEEDS SUMMARY RETRY */}
         {needsSummaryRetry && !retryingSummary && (
-          <div className="px-4 py-6 flex flex-col items-center gap-3">
-            <p className="text-sm text-gray-400">摘要生成未完成，点击重新生成</p>
+          <div className="px-5 py-10 flex flex-col items-center gap-3 animate-fade-in-up">
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+              摘要生成未完成，点击重新生成
+            </p>
             <button
               onClick={handleRetrySummary}
-              className="px-4 py-2 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 text-white flex items-center gap-1.5"
+              className="px-5 py-2 text-sm rounded-lg flex items-center gap-2 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+              style={{
+                backgroundColor: 'var(--color-accent)',
+                color: '#fff',
+                fontFamily: 'var(--font-ui)',
+              }}
             >
               <RefreshCw size={14} /> 重新生成摘要
             </button>
@@ -369,26 +478,39 @@ export function ChatView() {
 
         {/* ERRORS */}
         {(streamError || pendingError) && (
-          <div className="px-4 py-3">
-            <div className="text-sm text-red-500 bg-red-50 dark:bg-red-950/30 rounded-lg p-3 flex items-center gap-2 flex-wrap">
-              <span>⚠️ {streamError || pendingError}</span>
+          <div className="px-5 py-4 animate-fade-in-up">
+            <div
+              className="text-sm rounded-lg p-3 flex items-center gap-2 flex-wrap"
+              style={{
+                color: 'var(--color-danger)',
+                backgroundColor: 'var(--color-danger-subtle)',
+                fontFamily: 'var(--font-ui)',
+              }}
+            >
+              <span>{(streamError || pendingError)}</span>
               <div className="flex gap-2 ml-auto">
                 {lastUnansweredRound.current !== null && !retryingSummary && (
                   <button
                     onClick={() => handleRetryChat(lastUnansweredRound.current!)}
-                    className="underline hover:no-underline text-blue-500 flex items-center gap-1"
+                    className="underline hover:no-underline flex items-center gap-1 transition-colors duration-150"
+                    style={{ color: 'var(--color-accent)' }}
                   >
                     <RefreshCw size={12} /> 重试
                   </button>
                 )}
-                <button onClick={() => { setStreamError(null); clearPending() }}
-                  className="underline hover:no-underline">关闭</button>
+                <button
+                  onClick={() => { setStreamError(null); clearPending() }}
+                  className="underline hover:no-underline transition-colors duration-150"
+                  style={{ color: 'var(--color-accent)' }}
+                >
+                  关闭
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        <div className="h-4" />
+        <div className="h-6" />
         </div>
       </div>
 

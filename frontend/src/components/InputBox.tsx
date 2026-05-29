@@ -43,7 +43,6 @@ export function InputBox() {
     },
   ]
 
-  // Detect / command
   const filteredCommands = inputValue.startsWith('/')
     ? commands.filter((c) => c.name.startsWith(inputValue.trim()))
     : []
@@ -57,7 +56,6 @@ export function InputBox() {
     }
   }, [inputValue, filteredCommands.length])
 
-  // Auto-resize textarea: default 5 lines, max 10 lines
   useEffect(() => {
     const el = inputRef.current
     if (el) {
@@ -70,7 +68,6 @@ export function InputBox() {
     const trimmed = inputValue.trim()
     if (!trimmed || isStreaming || !currentPaperId) return
 
-    // Check if it's a command
     if (trimmed.startsWith('/')) {
       const cmd = commands.find((c) => c.name === trimmed)
       if (cmd) {
@@ -80,7 +77,6 @@ export function InputBox() {
       }
     }
 
-    // Regular question - send to chat
     if (sendQuestion) {
       sendQuestion(trimmed)
       setInputValue('')
@@ -117,59 +113,99 @@ export function InputBox() {
   if (!currentPaperId) return null
 
   return (
-    <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 p-3 relative">
+    <div
+      className="flex-shrink-0 p-4 relative"
+      style={{
+        backgroundColor: 'var(--color-surface)',
+        borderTop: '1px solid var(--color-border)',
+      }}
+    >
       <div className={contentWidth === 'narrow' ? 'max-w-[55%] mx-auto' : ''}>
-      {/* Command autocomplete */}
-      {showCommands && (
-        <div className="absolute bottom-full left-3 right-3 mb-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg overflow-hidden z-50"
-          role="listbox"
-          aria-label="可用命令"
-          aria-expanded={showCommands}
-        >
-          {filteredCommands.map((cmd, idx) => (
-            <div
-              key={cmd.name}
-              role="option"
-              aria-selected={idx === selectedCmdIdx}
-              className={`px-3 py-2 text-sm cursor-pointer flex items-center gap-2 ${
-                idx === selectedCmdIdx
-                  ? 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400'
-                  : 'hover:bg-gray-50 dark:hover:bg-gray-700'
-              }`}
-              onClick={() => {
-                setInputValue(cmd.name)
-                setShowCommands(false)
-                inputRef.current?.focus()
-              }}
-            >
-              <Command size={14} className="text-gray-400" />
-              <span className="font-medium">{cmd.name}</span>
-              <span className="text-gray-400 text-xs">{cmd.description}</span>
-            </div>
-          ))}
-        </div>
-      )}
+        {/* Command autocomplete */}
+        {showCommands && (
+          <div
+            className="absolute bottom-full left-4 right-4 mb-2 rounded-lg shadow-lg overflow-hidden z-50 animate-scale-in"
+            role="listbox"
+            aria-label="可用命令"
+            aria-expanded={showCommands}
+            style={{
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              boxShadow: 'var(--shadow-lg)',
+            }}
+          >
+            {filteredCommands.map((cmd, idx) => (
+              <div
+                key={cmd.name}
+                role="option"
+                aria-selected={idx === selectedCmdIdx}
+                className="px-3 py-2.5 text-sm cursor-pointer flex items-center gap-2.5 transition-colors duration-100"
+                style={{
+                  fontFamily: 'var(--font-ui)',
+                  backgroundColor: idx === selectedCmdIdx
+                    ? 'var(--color-accent-subtle)'
+                    : 'transparent',
+                  color: idx === selectedCmdIdx
+                    ? 'var(--color-accent)'
+                    : 'var(--color-text)',
+                }}
+                onClick={() => {
+                  setInputValue(cmd.name)
+                  setShowCommands(false)
+                  inputRef.current?.focus()
+                }}
+              >
+                <Command size={13} style={{ color: 'var(--color-text-muted)' }} />
+                <span className="font-medium">{cmd.name}</span>
+                <span style={{ color: 'var(--color-text-muted)' }} className="text-xs">
+                  {cmd.description}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
-      {/* Input area */}
-      <div className="flex items-end gap-2">
-        <textarea
-          ref={inputRef}
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={isStreaming ? '正在生成回复...' : '输入问题，Shift+Enter 换行。输入 / 查看命令...'}
-          disabled={isStreaming}
-          className="flex-1 resize-none bg-gray-100 dark:bg-gray-900 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 placeholder-gray-400 disabled:opacity-50 overflow-y-auto"
-          style={{ minHeight: 5 * 24, maxHeight: 10 * 24 }}
-        />
-        <button
-          onClick={handleSend}
-          disabled={isStreaming || !inputValue.trim()}
-          className="flex-shrink-0 p-2 rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white transition-colors"
-        >
-          <Send size={16} />
-        </button>
-      </div>
+        {/* Input area */}
+        <div className="flex items-end gap-2.5">
+          <textarea
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isStreaming ? '正在生成回复...' : '输入问题，Shift+Enter 换行。输入 / 查看命令...'}
+            disabled={isStreaming}
+            className="flex-1 resize-none rounded-xl px-4 py-2.5 text-sm outline-none transition-all duration-200 overflow-y-auto disabled:opacity-50"
+            style={{
+              minHeight: 5 * 24,
+              maxHeight: 10 * 24,
+              fontFamily: 'var(--font-body)',
+              backgroundColor: 'var(--color-bg-inset)',
+              color: 'var(--color-text)',
+              border: '1px solid transparent',
+              boxShadow: 'var(--shadow-sm)',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = 'var(--color-accent-border)'
+              e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = 'transparent'
+              e.currentTarget.style.boxShadow = 'var(--shadow-sm)'
+            }}
+          />
+          <button
+            onClick={handleSend}
+            disabled={isStreaming || !inputValue.trim()}
+            className="flex-shrink-0 p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              color: '#fff',
+            }}
+            aria-label="发送"
+          >
+            <Send size={15} />
+          </button>
+        </div>
       </div>
     </div>
   )

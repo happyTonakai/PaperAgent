@@ -14,11 +14,10 @@ export function ScrollButtons({ containerRef }: ScrollButtonsProps) {
 
     const check = () => {
       const { scrollTop, scrollHeight, clientHeight } = el
-      // Show if scrolled away from bottom
       setShowButtons(scrollHeight - scrollTop - clientHeight > 100)
     }
 
-    el.addEventListener('scroll', check)
+    el.addEventListener('scroll', check, { passive: true })
     return () => el.removeEventListener('scroll', check)
   }, [containerRef])
 
@@ -33,21 +32,38 @@ export function ScrollButtons({ containerRef }: ScrollButtonsProps) {
 
   if (!showButtons) return null
 
+  const btnClass = "p-1.5 rounded-full border transition-all duration-200 hover:scale-110 active:scale-95"
+
   return (
-    <div className="absolute right-3 bottom-4 flex flex-col gap-1">
+    <div
+      className="absolute right-4 bottom-20 flex flex-col gap-1.5 animate-fade-in-up"
+      style={{ fontFamily: 'var(--font-ui)' }}
+    >
       <button
         onClick={scrollToTop}
-        className="p-1.5 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        className={btnClass}
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          borderColor: 'var(--color-border)',
+          color: 'var(--color-text-muted)',
+          boxShadow: 'var(--shadow-md)',
+        }}
         title="回到顶部"
       >
-        <ChevronUp size={18} />
+        <ChevronUp size={16} />
       </button>
       <button
         onClick={scrollToBottom}
-        className="p-1.5 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        className={btnClass}
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          borderColor: 'var(--color-border)',
+          color: 'var(--color-text-muted)',
+          boxShadow: 'var(--shadow-md)',
+        }}
         title="滚动到底部"
       >
-        <ChevronDown size={18} />
+        <ChevronDown size={16} />
       </button>
     </div>
   )

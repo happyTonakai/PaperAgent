@@ -9,7 +9,6 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { useAppStore, applyTheme } from './stores/appStore'
 
 export default function App() {
-  // Clean up theme matchMedia listener on unmount
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const handler = () => {
@@ -19,13 +18,15 @@ export default function App() {
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
   }, [])
+
   return (
-    <div className="h-screen flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+    <div
+      className="h-screen flex flex-col"
+      style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}
+    >
       <div className="flex-1 flex min-h-0">
-        {/* Left sidebar */}
         <PaperList />
 
-        {/* Right content area */}
         <div className="flex-1 flex flex-col min-w-0">
           <ErrorBoundary>
             <ChatView />
@@ -34,17 +35,16 @@ export default function App() {
         </div>
       </div>
 
-      {/* Modals */}
       <NewPaperDialog />
       <SettingsDialog />
 
-      {/* Toast notifications */}
       <Toaster
         position="top-right"
         toastOptions={{
           style: {
             fontSize: '0.875rem',
             borderRadius: '0.5rem',
+            fontFamily: 'var(--font-ui)',
           },
         }}
       />

@@ -27,8 +27,6 @@ export function NewPaperDialog() {
 
     const controller = new AbortController()
     abortRef.current = controller
-
-    // Timeout: abort if stream doesn't complete within 60s
     const timeoutId = setTimeout(() => controller.abort(), 60000)
 
     try {
@@ -47,7 +45,6 @@ export function NewPaperDialog() {
       const contentType = res.headers.get('content-type') || ''
 
       if (contentType.includes('text/event-stream')) {
-        // SSE stream from handleNewPaper
         const reader = res.body?.getReader()
         if (!reader) throw new Error('No response body')
 
@@ -73,33 +70,25 @@ export function NewPaperDialog() {
 
               switch (evt.type) {
                 case 'created':
-                  // Paper ID received! Close dialog, show ChatView
                   if (evt.paper_id) {
                     paperId = evt.paper_id
                     setPendingPaperId(paperId)
-                    setCurrentPaperId(paperId) // triggers ChatView to render
+                    setCurrentPaperId(paperId)
                     setNewPaperOpen(false)
                     setUrl('')
                     qc.invalidateQueries({ queryKey: ['papers'] })
                   }
                   break
                 case 'chunk':
-                  // Append to the pending summary (ChatView reads from store)
-                  if (evt.content) {
-                    appendPendingSummary(evt.content)
-                  }
+                  if (evt.content) appendPendingSummary(evt.content)
                   break
                 case 'title':
-                  // Title extracted — update the paper list
                   if (paperId) {
-                    // Invalidate papers list so it refetches with new title
                     qc.invalidateQueries({ queryKey: ['papers'] })
-                    // Also update cached paper detail
                     qc.invalidateQueries({ queryKey: ['paper', paperId] })
                   }
                   break
                 case 'done':
-                  // Summary complete - ChatView will refetch
                   clearPending()
                   break
                 case 'error':
@@ -110,7 +99,6 @@ export function NewPaperDialog() {
           }
         }
       } else {
-        // Plain JSON response
         const data = await res.json()
         if (data.id) {
           qc.invalidateQueries({ queryKey: ['papers'] })
@@ -138,26 +126,53 @@ export function NewPaperDialog() {
   }
 
   const handleClose = () => {
-    if (loading && abortRef.current) {
-      abortRef.current.abort()
-    }
+    if (loading && abortRef.current) abortRef.current.abort()
     setNewPaperOpen(false)
   }
 
+  const btnBase = "px-4 py-2 text-sm rounded-lg transition-all duration-200 font-medium"
+  const btnPrimary = `${btnBase} text-white hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:hover:scale-100`
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold flex items-center gap-2">
-            <Link size={16} /> 新建论文
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
+      style={{ backgroundColor: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+    >
+      <div
+        className="rounded-2xl shadow-lg w-full max-w-md mx-4 overflow-hidden animate-scale-in"
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          boxShadow: 'var(--shadow-lg)',
+        }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-5 py-3.5"
+          style={{ borderBottom: '1px solid var(--color-border-light)' }}
+        >
+          <h2
+            className="text-sm font-semibold flex items-center gap-2"
+            style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text)' }}
+          >
+            <Link size={15} style={{ color: 'var(--color-accent)' }} />
+            新建论文
           </h2>
-          <button onClick={handleClose} className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800">
-            <X size={16} />
+          <button
+            onClick={handleClose}
+            className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <X size={15} />
           </button>
         </div>
 
-        <div className="p-4">
-          <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1.5">
+        {/* Body */}
+        <div className="p-5">
+          <label
+            className="text-xs block mb-2"
+            style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)' }}
+          >
             输入论文 URL（支持 arXiv 链接）
           </label>
           <input
@@ -169,19 +184,48 @@ export function NewPaperDialog() {
             aria-label="论文 URL"
             autoFocus
             disabled={loading}
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-4 py-2.5 rounded-xl text-sm outline-none transition-all duration-200"
+            style={{
+              fontFamily: 'var(--font-ui)',
+              backgroundColor: 'var(--color-bg-inset)',
+              color: 'var(--color-text)',
+              border: '1px solid transparent',
+              boxShadow: 'var(--shadow-sm)',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = 'var(--color-accent-border)'
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = 'transparent'
+            }}
           />
-          {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
-          <div className="mt-4 flex justify-end gap-2">
-            <button onClick={handleClose} className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">
+          {error && (
+            <p
+              className="mt-2 text-sm"
+              style={{ color: 'var(--color-danger)', fontFamily: 'var(--font-ui)' }}
+            >
+              {error}
+            </p>
+          )}
+          <div className="mt-5 flex justify-end gap-2.5">
+            <button
+              onClick={handleClose}
+              className={btnBase}
+              style={{
+                fontFamily: 'var(--font-ui)',
+                color: 'var(--color-text-secondary)',
+                backgroundColor: 'var(--color-bg-elevated)',
+              }}
+            >
               取消
             </button>
             <button
               onClick={handleSubmit}
               disabled={loading || !url.trim()}
-              className="px-3 py-1.5 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center gap-1.5"
+              className={btnPrimary}
+              style={{ fontFamily: 'var(--font-ui)', backgroundColor: 'var(--color-accent)' }}
             >
-              {loading && <Loader2 size={14} className="animate-spin" />}
+              {loading && <Loader2 size={14} className="animate-spin inline mr-1.5" />}
               {loading ? '加载中...' : '加载'}
             </button>
           </div>

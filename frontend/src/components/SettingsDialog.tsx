@@ -14,36 +14,66 @@ export function SettingsDialog() {
   if (!isSettingsOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
+      style={{ backgroundColor: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+    >
+      <div
+        className="rounded-2xl shadow-lg w-full max-w-sm mx-4 overflow-hidden animate-scale-in"
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          border: '1px solid var(--color-border)',
+          boxShadow: 'var(--shadow-lg)',
+        }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-          <h2 className="text-sm font-semibold">⚙️ 设置</h2>
+        <div
+          className="flex items-center justify-between px-5 py-3.5"
+          style={{ borderBottom: '1px solid var(--color-border-light)' }}
+        >
+          <h2
+            className="text-sm font-semibold"
+            style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text)' }}
+          >
+            设置
+          </h2>
           <button
             onClick={() => setSettingsOpen(false)}
-            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
+            style={{ color: 'var(--color-text-muted)' }}
           >
-            <X size={16} />
+            <X size={15} />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-4 space-y-4">
+        <div className="p-5 space-y-5">
           {/* Theme */}
           <div>
-            <label className="text-xs text-gray-500 dark:text-gray-400 block mb-2">外观主题</label>
-            <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+            <label
+              className="text-xs block mb-2.5"
+              style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)' }}
+            >
+              外观主题
+            </label>
+            <div
+              className="flex gap-1 rounded-lg p-0.5"
+              style={{ backgroundColor: 'var(--color-bg-inset)' }}
+            >
               {themeOptions.map((opt) => {
                 const Icon = opt.icon
+                const isActive = theme === opt.value
                 return (
                   <button
                     key={opt.value}
                     onClick={() => setTheme(opt.value)}
-                    className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors ${
-                      theme === opt.value
-                        ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-gray-100'
-                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-                    }`}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-md text-xs transition-all duration-200"
+                    style={{
+                      fontFamily: 'var(--font-ui)',
+                      color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                      backgroundColor: isActive ? 'var(--color-surface)' : 'transparent',
+                      boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                    }}
                   >
                     <Icon size={14} />
                     {opt.label}
@@ -54,24 +84,57 @@ export function SettingsDialog() {
           </div>
 
           {/* API Config Info */}
-          <div>
-            <label className="text-xs text-gray-500 dark:text-gray-400 block mb-2">API 配置</label>
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              API 配置在 <code className="text-pink-500">~/.paperpaper/config.yaml</code>
-              {' '}或通过环境变量设置。修改配置后需重启应用。
-            </p>
-          </div>
+          <ConfigSection
+            title="API 配置"
+            body={
+              <>
+                API 配置在{' '}
+                <code style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}>
+                  ~/.paperpaper/config.yaml
+                </code>
+                {' '}或通过环境变量设置。修改配置后需重启应用。
+              </>
+            }
+          />
 
           {/* Export Config */}
-          <div>
-            <label className="text-xs text-gray-500 dark:text-gray-400 block mb-2">Obsidian 导出</label>
-            <p className="text-xs text-gray-400 dark:text-gray-500">
-              导出路径在配置文件中设置 <code className="text-pink-500">obsidian.vault_path</code>
-              {' '}和 <code className="text-pink-500">obsidian.export_folder</code>。
-            </p>
-          </div>
+          <ConfigSection
+            title="Obsidian 导出"
+            body={
+              <>
+                导出路径在配置文件中设置{' '}
+                <code style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}>
+                  obsidian.vault_path
+                </code>
+                {' '}和{' '}
+                <code style={{ color: 'var(--color-accent)', fontFamily: 'var(--font-mono)' }}>
+                  obsidian.export_folder
+                </code>
+                。
+              </>
+            }
+          />
         </div>
       </div>
+    </div>
+  )
+}
+
+function ConfigSection({ title, body }: { title: string; body: React.ReactNode }) {
+  return (
+    <div>
+      <label
+        className="text-xs block mb-1.5"
+        style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)' }}
+      >
+        {title}
+      </label>
+      <p
+        className="text-xs leading-relaxed"
+        style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-body)' }}
+      >
+        {body}
+      </p>
     </div>
   )
 }

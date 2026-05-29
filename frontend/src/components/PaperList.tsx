@@ -11,11 +11,10 @@ export function PaperList() {
   const updateTitle = useUpdateTitle()
   const { currentPaperId, setCurrentPaperId, setNewPaperOpen } = useAppStore()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
-  const [editingTitle, setEditingTitle] = useState<string | null>(null) // paper id
+  const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const editInputRef = useRef<HTMLInputElement>(null)
 
-  // Close menu on outside click — tracks by data attribute, not ref
   useEffect(() => {
     if (!menuOpen) return
     const handler = (e: MouseEvent) => {
@@ -25,7 +24,6 @@ export function PaperList() {
         setMenuOpen(null)
       }
     }
-    // Delay adding listener so the click that opened menu doesn't close it
     const id = requestAnimationFrame(() => document.addEventListener('mousedown', handler))
     return () => {
       cancelAnimationFrame(id)
@@ -58,7 +56,6 @@ export function PaperList() {
     setEditingTitle(id)
     setEditValue(currentTitle)
     setMenuOpen(null)
-    // Focus input after render
     requestAnimationFrame(() => editInputRef.current?.focus())
   }
 
@@ -96,17 +93,35 @@ export function PaperList() {
   }
 
   return (
-    <div className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/50 flex flex-col h-full">
+    <div
+      className="w-64 flex-shrink-0 flex flex-col h-full"
+      style={{
+        backgroundColor: 'var(--color-bg-elevated)',
+        borderRight: '1px solid var(--color-border)',
+      }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-gray-200 dark:border-gray-800">
-        <h1 className="text-sm font-semibold text-gray-700 dark:text-gray-300">📄 论文列表</h1>
+      <div
+        className="flex items-center justify-between px-4 py-3"
+        style={{ borderBottom: '1px solid var(--color-border-light)' }}
+      >
+        <h1
+          className="text-sm font-semibold tracking-wide"
+          style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text-secondary)' }}
+        >
+          论文列表
+        </h1>
         <button
           onClick={() => setNewPaperOpen(true)}
-          className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+          className="p-1.5 rounded-md transition-all duration-200 hover:scale-110 active:scale-95"
+          style={{
+            color: 'var(--color-accent)',
+            backgroundColor: 'var(--color-accent-subtle)',
+          }}
           title="新建论文"
           aria-label="新建论文"
         >
-          <Plus size={16} />
+          <Plus size={15} />
         </button>
       </div>
 
@@ -115,46 +130,67 @@ export function PaperList() {
         {isLoading && (
           <div className="p-3 space-y-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="animate-pulse">
-                <div className="h-4 bg-gray-200 dark:bg-gray-800 rounded w-full mb-1.5" />
-                <div className="h-3 bg-gray-200 dark:bg-gray-800 rounded w-1/2" />
+              <div key={i} className="animate-pulse px-2 py-2">
+                <div
+                  className="h-4 rounded w-full mb-1.5"
+                  style={{
+                    background: 'var(--color-bg-inset)',
+                    backgroundImage: 'linear-gradient(90deg, transparent, var(--color-border-light), transparent)',
+                    backgroundSize: '200% 100%',
+                    animation: 'shimmer 1.5s infinite',
+                  }}
+                />
+                <div
+                  className="h-3 rounded w-1/2"
+                  style={{
+                    background: 'var(--color-bg-inset)',
+                    backgroundImage: 'linear-gradient(90deg, transparent, var(--color-border-light), transparent)',
+                    backgroundSize: '200% 100%',
+                    animation: 'shimmer 1.5s infinite',
+                  }}
+                />
               </div>
             ))}
           </div>
         )}
 
         {isError && (
-          <div className="p-3 text-center text-sm text-red-500">
-            <p>加载失败</p>
-            <button onClick={() => refetch()} className="underline mt-1 text-xs">
+          <div className="p-4 text-center">
+            <p className="text-sm" style={{ color: 'var(--color-danger)' }}>加载失败</p>
+            <button onClick={() => refetch()} className="mt-1 text-xs underline" style={{ color: 'var(--color-accent)' }}>
               重试
             </button>
           </div>
         )}
 
         {!isLoading && !isError && papers?.length === 0 && (
-          <div className="p-6 text-center text-sm text-gray-400 dark:text-gray-600">
-            <p>暂无论文</p>
-            <p className="text-xs mt-1">点击 + 新建</p>
+          <div className="p-8 text-center">
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
+              暂无论文
+            </p>
+            <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              点击 + 新建
+            </p>
           </div>
         )}
 
-        {papers?.map((p) => (
+        {papers?.map((p, idx) => (
           <div
             key={p.id}
-            className={`group px-3 py-2.5 transition-colors border-b border-gray-100 dark:border-gray-900 ${
-              menuOpen === p.id
-                ? 'relative z-30 bg-gray-100 dark:bg-gray-900'
-                : 'relative'
-            } ${
-              currentPaperId === p.id && menuOpen !== p.id
-                ? 'bg-blue-50 dark:bg-blue-950/40 border-l-2 border-l-blue-500'
-                : menuOpen !== p.id
-                  ? 'hover:bg-gray-100 dark:hover:bg-gray-900 border-l-2 border-l-transparent'
-                  : 'border-l-2 border-l-transparent'
-            }`}
+            className="group relative px-4 py-3 transition-all duration-200"
+            style={{
+              borderBottom: '1px solid var(--color-border-light)',
+              backgroundColor: menuOpen === p.id
+                ? 'var(--color-bg-inset)'
+                : currentPaperId === p.id
+                  ? 'var(--color-accent-subtle)'
+                  : 'transparent',
+              borderLeft: currentPaperId === p.id && menuOpen !== p.id
+                ? '2px solid var(--color-accent)'
+                : '2px solid transparent',
+              zIndex: menuOpen === p.id ? 30 : 'auto',
+            }}
           >
-            {/* Clickable title area (separate from action buttons) */}
             <div
               role="button"
               tabIndex={0}
@@ -174,32 +210,51 @@ export function PaperList() {
                       if (e.key === 'Escape') handleCancelEdit()
                     }}
                     onBlur={() => handleSaveTitle(p.id)}
-                    className="flex-1 text-sm px-1.5 py-0.5 rounded border border-blue-500 bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-200 outline-none min-w-0"
+                    className="flex-1 text-sm px-2 py-1 rounded border outline-none min-w-0"
+                    style={{
+                      fontFamily: 'var(--font-ui)',
+                      borderColor: 'var(--color-accent)',
+                      backgroundColor: 'var(--color-surface)',
+                      color: 'var(--color-text)',
+                    }}
                   />
                 </div>
               ) : (
                 <>
-                  <div className="text-sm font-medium truncate pr-6 text-gray-800 dark:text-gray-200">
+                  <div
+                    className="text-sm truncate pr-6"
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontWeight: 550,
+                      color: currentPaperId === p.id ? 'var(--color-accent)' : 'var(--color-text)',
+                      transition: 'color var(--transition-fast)',
+                    }}
+                  >
                     {p.title || '未命名论文'}
                   </div>
-                  <div className="text-xs text-gray-400 dark:text-gray-600 mt-0.5">
+                  <div
+                    className="text-xs mt-1"
+                    style={{
+                      fontFamily: 'var(--font-ui)',
+                      color: 'var(--color-text-muted)',
+                    }}
+                  >
                     {formatDate(p.updated_at)}
                   </div>
                 </>
               )}
             </div>
 
-            {/* Action buttons */}
+            {/* Action button */}
             <div
-              className={`absolute right-1 top-1/2 -translate-y-1/2 transition-opacity ${
-                menuOpen === p.id
-                  ? 'opacity-100'
-                  : 'opacity-0 group-hover:opacity-100'
+              className={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity duration-200 ${
+                menuOpen === p.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === p.id ? null : p.id) }}
-                className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+                className="p-1 rounded-md transition-colors duration-150 hover:bg-[var(--color-bg-inset)]"
+                style={{ color: 'var(--color-text-muted)' }}
                 aria-label="论文操作"
                 aria-expanded={menuOpen === p.id}
               >
@@ -209,26 +264,34 @@ export function PaperList() {
               {menuOpen === p.id && (
                 <div
                   data-menu-id={p.id}
-                  className="absolute right-0 top-full mt-0.5 w-28 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 z-50"
+                  className="absolute right-0 top-full mt-1 w-32 rounded-lg shadow-lg py-1 z-50 animate-scale-in"
+                  style={{
+                    backgroundColor: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    boxShadow: 'var(--shadow-lg)',
+                  }}
                   role="menu"
                 >
                   <button
                     onClick={(e) => { e.stopPropagation(); handleEditTitle(p.id, p.title) }}
-                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-1.5"
+                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-[var(--color-bg-elevated)] flex items-center gap-1.5 transition-colors duration-100"
+                    style={{ color: 'var(--color-text)' }}
                     role="menuitem"
                   >
-                    <Pencil size={12} /> 编辑标题
+                    <Pencil size={12} style={{ color: 'var(--color-text-muted)' }} /> 编辑标题
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleExport(p.id) }}
-                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-1.5"
+                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-[var(--color-bg-elevated)] flex items-center gap-1.5 transition-colors duration-100"
+                    style={{ color: 'var(--color-text)' }}
                     role="menuitem"
                   >
-                    <Download size={12} /> 导出
+                    <Download size={12} style={{ color: 'var(--color-text-muted)' }} /> 导出
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}
-                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 flex items-center gap-1.5"
+                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-[var(--color-danger-subtle)] flex items-center gap-1.5 transition-colors duration-100"
+                    style={{ color: 'var(--color-danger)' }}
                     role="menuitem"
                   >
                     <Trash2 size={12} /> 删除

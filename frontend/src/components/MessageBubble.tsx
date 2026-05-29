@@ -16,21 +16,46 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ role, content, digest, isStreaming }: MessageBubbleProps) {
   return (
-    <div className={`flex gap-3 px-4 py-3 ${role === 'user' ? 'bg-gray-50 dark:bg-gray-900/50' : ''}`}>
+    <div
+      className="flex gap-3 px-5 py-4 animate-fade-in-up"
+      style={{
+        backgroundColor: role === 'user' ? 'var(--color-bg-elevated)' : 'transparent',
+        borderBottom: '1px solid var(--color-border-light)',
+      }}
+    >
       {/* Avatar */}
-      <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium mt-0.5"
+      <div
+        className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 select-none"
         style={role === 'user'
-          ? { backgroundColor: '#e0e7ff', color: '#4338ca' }
-          : { backgroundColor: '#dbeafe', color: '#1d4ed8' }
+          ? {
+              backgroundColor: 'var(--color-accent-subtle)',
+              color: 'var(--color-accent)',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.8rem',
+            }
+          : {
+              backgroundColor: 'var(--color-bg-inset)',
+              color: 'var(--color-text-secondary)',
+              fontFamily: 'var(--font-display)',
+              fontSize: '0.8rem',
+            }
         }
       >
-        {role === 'user' ? '你' : 'AI'}
+        {role === 'user' ? 'Q' : 'A'}
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         {digest && role === 'user' && (
-          <div className="text-xs text-gray-400 dark:text-gray-500 mb-1">{digest}</div>
+          <div
+            className="text-xs mb-1.5"
+            style={{
+              fontFamily: 'var(--font-ui)',
+              color: 'var(--color-text-muted)',
+            }}
+          >
+            {digest}
+          </div>
         )}
         <div className="markdown-body leading-relaxed">
           <ReactMarkdown
@@ -41,7 +66,13 @@ export function MessageBubble({ role, content, digest, isStreaming }: MessageBub
           </ReactMarkdown>
         </div>
         {isStreaming && (
-          <span className="inline-block w-2 h-4 bg-blue-500 dark:bg-blue-400 animate-pulse ml-0.5 align-middle" />
+          <span
+            className="inline-block w-2 h-4 ml-0.5 align-middle"
+            style={{
+              backgroundColor: 'var(--color-accent)',
+              animation: 'cursor-blink 0.7s step-end infinite',
+            }}
+          />
         )}
       </div>
     </div>
