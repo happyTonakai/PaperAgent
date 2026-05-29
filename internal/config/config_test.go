@@ -173,8 +173,8 @@ func TestSave(t *testing.T) {
 	}
 
 	content := string(data)
-	if !contains(content, "${OPENAI_API_KEY}") {
-		t.Error("saved config should mask API key")
+	if !contains(content, encPrefix) {
+		t.Error("saved config should encrypt API key with !!aes: prefix")
 	}
 	if !contains(content, "test-model") {
 		t.Error("saved config should contain model name")

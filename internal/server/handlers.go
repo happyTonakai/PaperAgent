@@ -626,12 +626,27 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
+	apiKey := s.cfg.API.APIKey
+	maskedKey := "••••••••"
+	hasCustomKey := false
+	if apiKey != "" && !strings.HasPrefix(apiKey, "${") {
+		head, tail := 4, len(apiKey)-4
+		if len(apiKey) < 8 {
+			head, tail = 2, 2
+		}
+		if tail < 0 {
+			tail = len(apiKey)
+		}
+		maskedKey = apiKey[:head] + "••••" + apiKey[tail:]
+		hasCustomKey = true
+	}
 	cfg := map[string]interface{}{
-		"api": map[string]string{
-			"base_url":      s.cfg.API.BaseURL,
-			"api_key":       "••••••••",
-			"default_model": s.cfg.API.DefaultModel,
-			"light_model":   s.cfg.API.LightModel,
+		"api": map[string]interface{}{
+			"base_url":       s.cfg.API.BaseURL,
+			"api_key":        maskedKey,
+			"api_key_source": "env",
+			"default_model":  s.cfg.API.DefaultModel,
+			"light_model":    s.cfg.API.LightModel,
 		},
 		"obsidian": map[string]string{
 			"vault_path":    s.cfg.Obsidian.VaultPath,
@@ -640,6 +655,9 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"ui": map[string]int{
 			"max_recent_rounds": s.cfg.UI.MaxRecentRounds,
 		},
+	}
+	if hasCustomKey {
+		cfg["api"].(map[string]interface{})["api_key_source"] = "config"
 	}
 	s.cfg.RUnlock()
 	writeJSON(w, http.StatusOK, cfg)
@@ -655,6 +673,25 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfg.Lock()
+	if v, ok := updates["api_key"].(string); ok && v != "" {
+		if isEnvVarName(v) {
+			s.cfg.API.APIKey = "${" + v + "}"
+		} else {
+			s.cfg.API.APIKey = v
+		}
+	}
+	if v, ok := updates["base_url"].(string); ok && v != "" {
+		s.cfg.API.BaseURL = v
+	}
+	if v, ok := updates["default_model"].(string); ok && v != "" {
+		s.cfg.API.DefaultModel = v
+	}
+	if v, ok := updates["light_model"].(string); ok && v != "" {
+		s.cfg.API.LightModel = v
+	}
+	if v, ok := updates["max_recent_rounds"].(float64); ok {
+		s.cfg.UI.MaxRecentRounds = int(v)
+	}
 	if v, ok := updates["obsidian_vault_path"].(string); ok {
 		s.cfg.Obsidian.VaultPath = v
 	}
@@ -727,4 +764,18 @@ func paperToResponse(p *session.Paper) paperResponse {
 		UpdatedAt:      p.UpdatedAt.Format("2006-01-02 15:04"),
 		Messages:       msgs,
 	}
+}
+
+// isEnvVarName reports whether s looks like an environment variable name
+// (all uppercase letters and underscores, at least 2 chars).
+func isEnvVarName(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	for _, r := range s {
+		if (r < 'A' || r > 'Z') && r != '_' {
+			return false
+		}
+	}
+	return true
 }

@@ -66,8 +66,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	// Expand env vars in api_key
+	// Decrypt encrypted api_key, then expand env vars
 	cfg.API.APIKey = os.ExpandEnv(cfg.API.APIKey)
+	if decrypted, err := decryptKey(cfg.API.APIKey); err == nil {
+		cfg.API.APIKey = decrypted
+	}
 
 	// Expand ~ in paths
 	cfg.Obsidian.VaultPath = expandHome(cfg.Obsidian.VaultPath)
@@ -107,28 +110,25 @@ func defaultConfig() *Config {
 func (c *Config) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.saveLocked()
-}
 
-// saveLocked writes config to disk. Caller must hold c.mu write lock.
-func (c *Config) saveLocked() error {
 	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
-	saveAPIKey := c.API.APIKey
-
-	// Mask API key for saving
-	maskedKey := saveAPIKey
-	if maskedKey != "" && !strings.HasPrefix(maskedKey, "${") {
-		maskedKey = "${OPENAI_API_KEY}"
+	apiKey := c.API.APIKey
+	if apiKey != "" && !hasEncPrefix(apiKey) && !strings.HasPrefix(apiKey, "${") {
+		enc, err := encryptKey(apiKey)
+		if err != nil {
+			return fmt.Errorf("encrypt api key: %w", err)
+		}
+		apiKey = enc
 	}
 
 	saveCfg := Config{
 		API: APIConfig{
 			BaseURL:      c.API.BaseURL,
-			APIKey:       maskedKey,
+			APIKey:       apiKey,
 			DefaultModel: c.API.DefaultModel,
 			LightModel:   c.API.LightModel,
 		},
@@ -146,7 +146,18 @@ func (c *Config) saveLocked() error {
 		return err
 	}
 
-	return os.WriteFile(ConfigPath(), data, 0644)
+	configPath := ConfigPath()
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return err
+	}
+
+	// Ensure .key file is 0600 too
+	keyFile := keyPath()
+	if _, err := os.Stat(keyFile); err == nil {
+		os.Chmod(keyFile, 0600)
+	}
+
+	return nil
 }
 
 func expandHome(path string) string {
