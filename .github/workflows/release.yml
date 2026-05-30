@@ -71,7 +71,7 @@ jobs:
       matrix:
         include:
           - { os: macos-latest, goos: darwin, goarch: arm64 }
-          - { os: macos-13, goos: darwin, goarch: amd64 }
+          - { os: windows-latest, goos: windows, goarch: amd64 }
           - { os: ubuntu-latest, goos: linux, goarch: amd64 }
     runs-on: ${{ matrix.os }}
     steps:
@@ -92,7 +92,9 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           LDFLAGS="-s -w -X main.version=${VERSION}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="$LDFLAGS" -o dist/paperagent_${{ matrix.goos }}_${{ matrix.goarch }} .
+          SUFFIX=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then SUFFIX=".exe"; fi
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="$LDFLAGS" -o "dist/paperagent_${{ matrix.goos }}_${{ matrix.goarch }}${SUFFIX}" .
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
