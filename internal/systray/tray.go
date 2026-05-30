@@ -30,24 +30,19 @@ func Run(opts Options, httpServer *http.Server) {
 
 func onReady(opts Options) {
 	systray.SetIcon(iconData)
-	systray.SetTitle("PaperAgent")
 	systray.SetTooltip("PaperAgent - AI 论文阅读助手")
 
 	url := fmt.Sprintf("http://localhost:%d", opts.Port)
 
-	mOpen := systray.AddMenuItem("打开 Web 界面", "在浏览器中打开 PaperAgent")
-	mOpen.SetIcon(iconData)
+	// Left-click opens web UI directly
+	systray.SetOnTapped(func() { openBrowser(url) })
 
-	systray.AddSeparator()
-
-	mQuit := systray.AddMenuItem("退出", "退出 PaperAgent")
 	mAbout := systray.AddMenuItem("关于 PaperAgent", "AI 论文阅读助手")
+	mQuit := systray.AddMenuItem("退出", "退出 PaperAgent")
 
 	go func() {
 		for {
 			select {
-			case <-mOpen.ClickedCh:
-				openBrowser(url)
 			case <-mAbout.ClickedCh:
 				openBrowser(repoURL)
 			case <-mQuit.ClickedCh:
