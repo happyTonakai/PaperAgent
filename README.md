@@ -62,7 +62,6 @@ sudo mv paperagent /usr/local/bin/
 ```bash
 export OPENAI_API_KEY="sk-..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"   # 可选，兼容任意 OpenAI 接口
-export OPENAI_MODEL_NAME="gpt-4o"                     # 可选
 export PAPER_ADDR=":8686"                             # 可选，Web UI 监听地址
 ```
 

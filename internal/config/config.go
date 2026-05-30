@@ -53,6 +53,9 @@ func PromptsDir() string {
 func Load() (*Config, error) {
 	cfg := defaultConfig()
 
+	// Always expand env vars in API key, even if no config file exists
+	cfg.API.APIKey = os.ExpandEnv(cfg.API.APIKey)
+
 	path := ConfigPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -66,7 +69,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	// Decrypt encrypted api_key, then expand env vars
+	// Re-expand after loading from file, then decrypt
 	cfg.API.APIKey = os.ExpandEnv(cfg.API.APIKey)
 	if decrypted, err := decryptKey(cfg.API.APIKey); err == nil {
 		cfg.API.APIKey = decrypted
