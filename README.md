@@ -33,23 +33,22 @@ Gemini 有 1M token 上下文，听起来很美好。但论文全文本身就有
 
 ## 安装
 
-从 [Releases](https://github.com/happyTonakai/paper-agent/releases) 下载对应平台二进制：
+从 [Releases](https://github.com/happyTonakai/PaperAgent/releases) 下载对应平台二进制：
 
 ```bash
 # macOS (Apple Silicon)
-curl -L -o paperagent https://github.com/happyTonakai/paper-agent/releases/latest/download/paperagent_darwin_arm64
+curl -L -o paperagent https://github.com/happyTonakai/PaperAgent/releases/latest/download/paperagent_darwin_arm64
 chmod +x paperagent
-sudo mv paperagent /usr/local/bin/
-
-# macOS (Intel)
-curl -L -o paperagent https://github.com/happyTonakai/paper-agent/releases/latest/download/paperagent_darwin_amd64
-chmod +x paperagent
+xattr -cr paperagent                     # macOS Gatekeeper 隔离移除
 sudo mv paperagent /usr/local/bin/
 
 # Linux (amd64)
-curl -L -o paperagent https://github.com/happyTonakai/paper-agent/releases/latest/download/paperagent_linux_amd64
+curl -L -o paperagent https://github.com/happyTonakai/PaperAgent/releases/latest/download/paperagent_linux_amd64
 chmod +x paperagent
 sudo mv paperagent /usr/local/bin/
+
+# Windows (amd64)
+# 下载 paperagent_windows_amd64.exe，双击运行即可
 ```
 
 二进制内嵌前端静态资源（React SPA），运行时无需安装 Node.js。

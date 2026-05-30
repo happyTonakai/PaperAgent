@@ -42,13 +42,9 @@ func main() {
 	}
 
 	if cfg.API.APIKey == "" || cfg.API.APIKey == "${OPENAI_API_KEY}" {
-		fmt.Fprintln(os.Stderr, "Error: No API key configured.")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Please configure your API key:")
+		fmt.Fprintln(os.Stderr, "Warning: No API key configured.")
+		fmt.Fprintln(os.Stderr, "Open the Web UI settings page or run:")
 		fmt.Fprintln(os.Stderr, "  export OPENAI_API_KEY=your-key-here")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Or create ~/.paperagent/config.yaml with api.api_key set.")
-		os.Exit(1)
 	}
 
 	os.MkdirAll(config.PapersDir(), 0755)

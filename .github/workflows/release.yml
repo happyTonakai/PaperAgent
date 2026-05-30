@@ -97,6 +97,11 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then SUFFIX=".exe"; fi
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="$LDFLAGS" -o "dist/paperagent_${{ matrix.goos }}_${{ matrix.goarch }}${SUFFIX}" .
 
+      - name: Codesign (macOS)
+        if: matrix.goos == 'darwin'
+        shell: bash
+        run: codesign --force --deep --sign "-" --options runtime "dist/paperagent_${{ matrix.goos }}_${{ matrix.goarch }}"
+
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
