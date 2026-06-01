@@ -192,7 +192,7 @@ export function ChatView() {
 
   const setSendQuestion = useAppStore((s) => s.setSendQuestion)
   useEffect(() => {
-    setSendQuestion(() => handleSendQuestion)
+    setSendQuestion(handleSendQuestion)
     return () => setSendQuestion(null)
   }, [handleSendQuestion, setSendQuestion])
 
