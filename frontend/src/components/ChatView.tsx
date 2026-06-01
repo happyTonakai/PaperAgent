@@ -66,6 +66,8 @@ export function ChatView() {
   const [retryingSummary, setRetryingSummary] = useState(false)
   const [retrySummaryContent, setRetrySummaryContent] = useState('')
   const [retryingRound, setRetryingRound] = useState<number | null>(null)
+  const [pendingUserQuestion, setPendingUserQuestion] = useState<string | null>(null)
+  const [pendingUserRound, setPendingUserRound] = useState<number>(0)
   const answeringRound = useRef<number | null>(null)
   const userScrolledUp = useRef(false)
   const isAutoScrolling = useRef(false)
@@ -128,24 +130,28 @@ export function ChatView() {
   const handleSendQuestion = useCallback(async (question: string) => {
     if (!currentPaperId || isStreamingLocal) return
     setStreamingContent('')
-    setIsStreamingLocal(true)
+    setPendingUserQuestion(question)
     setStreamError(null)
     userScrolledUp.current = false
     const nextRound = (paper?.messages?.length ?? 0) > 0
       ? Math.max(...paper!.messages.map(m => m.round_number), 0) + 1
       : 1
+    setPendingUserRound(nextRound)
     answeringRound.current = nextRound
+    setIsStreamingLocal(true)
     await streamRequest(`/api/papers/${currentPaperId}/chat`, { question }, {
       onChunk: (content) => setStreamingContent((prev) => prev + content),
       onDone: () => {
         setIsStreamingLocal(false)
         setStreamingContent('')
+        setPendingUserQuestion(null)
         answeringRound.current = null
         refetch()
       },
       onError: (error) => {
         setStreamError(error)
         setIsStreamingLocal(false)
+        setPendingUserQuestion(null)
       },
     })
   }, [currentPaperId, isStreamingLocal, streamRequest, refetch, paper?.messages])
@@ -446,11 +452,20 @@ export function ChatView() {
         ))}
         <div data-msg-end />
 
+        {/* PENDING USER QUESTION — show immediately before streaming AI response */}
+        {isStreamingLocal && pendingUserQuestion && (
+          <MessageBubble
+            role="user"
+            content={pendingUserQuestion}
+            roundNumber={pendingUserRound}
+          />
+        )}
+
         {/* CHAT STREAM */}
         {(isStreamingLocal || retryingRound !== null) && streamingContent && (
           <MessageBubble role="assistant" content={streamingContent} isStreaming />
         )}
-        {(isStreamingLocal && !streamingContent) && (
+        {(isStreamingLocal && !streamingContent && pendingUserQuestion) && (
           <div
             className="flex gap-3 px-5 py-4"
             style={{ borderBottom: '1px solid var(--color-border-light)' }}
