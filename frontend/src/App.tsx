@@ -145,6 +145,19 @@ export default function App() {
     return () => mq.removeEventListener('change', handler)
   }, [])
 
+  // Toggle new paper dialog with Cmd+K / Ctrl+K
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        const { isNewPaperOpen, setNewPaperOpen, isStreaming } = useAppStore.getState()
+        if (!isStreaming) setNewPaperOpen(!isNewPaperOpen)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div
       className="h-screen flex flex-col"

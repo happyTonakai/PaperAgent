@@ -1,8 +1,9 @@
-import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal } from 'lucide-react'
+import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
+import { ConfirmDialog } from './ConfirmDialog'
 import type { PaperSummary } from '../types'
 
 type SortBy = 'time' | 'rating'
@@ -72,6 +73,9 @@ export function PaperList() {
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const editInputRef = useRef<HTMLInputElement>(null)
+
+  // Delete confirm
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   // Sort state
   const [sortBy, setSortBy] = useState<SortBy>(getInitialSortBy)
@@ -147,7 +151,7 @@ export function PaperList() {
     }
   }, [menuOpen, contextMenu])
 
-  const handleDelete = async (id: string) => {
+  const handleDeleteConfirm = async (id: string) => {
     try {
       await deletePaper.mutateAsync(id)
       toast.success('论文已删除')
@@ -155,8 +159,13 @@ export function PaperList() {
     } catch {
       toast.error('删除失败')
     }
+    setDeleteConfirmId(null)
     setMenuOpen(null)
     setContextMenu(null)
+  }
+
+  const handleDelete = (id: string) => {
+    setDeleteConfirmId(id)
   }
 
   const handleContextMenu = (e: React.MouseEvent, id: string) => {
@@ -574,6 +583,23 @@ export function PaperList() {
               <Trash2 size={12} /> 删除
             </button>
           </div>
+        )
+      })()}
+
+      {/* Delete confirm dialog */}
+      {papers && deleteConfirmId && (() => {
+        const p = papers.find(pp => pp.id === deleteConfirmId)
+        return (
+          <ConfirmDialog
+            open={!!deleteConfirmId}
+            title="删除论文"
+            message={<>确定要删除「{p?.title || '未命名论文'}」吗？此操作不可撤销。</>}
+            confirmLabel="删除"
+            cancelLabel="取消"
+            danger
+            onConfirm={() => handleDeleteConfirm(deleteConfirmId)}
+            onCancel={() => { setDeleteConfirmId(null); setMenuOpen(null); setContextMenu(null) }}
+          />
         )
       })()}
 

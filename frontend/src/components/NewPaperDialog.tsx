@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { X, Link, Loader2 } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { useQueryClient } from '@tanstack/react-query'
@@ -15,8 +15,40 @@ export function NewPaperDialog() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const [visible, setVisible] = useState(false)
+  const [closing, setClosing] = useState(false)
 
-  if (!isNewPaperOpen) return null
+  // Animate in/out
+  useEffect(() => {
+    if (isNewPaperOpen) {
+      setVisible(true)
+      setClosing(false)
+    } else if (visible && !closing) {
+      setClosing(true)
+    }
+  }, [isNewPaperOpen, visible, closing])
+
+  // Delayed unmount after close animation plays
+  useEffect(() => {
+    if (!closing) return
+    const timer = setTimeout(() => setVisible(false), 200)
+    return () => clearTimeout(timer)
+  }, [closing])
+
+  const close = () => {
+    if (loading && abortRef.current) abortRef.current.abort()
+    setNewPaperOpen(false)
+  }
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isNewPaperOpen) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isNewPaperOpen, setNewPaperOpen])
+
+  if (!visible) return null
 
   const handleSubmit = async () => {
     const trimmed = url.trim()
@@ -122,12 +154,6 @@ export function NewPaperDialog() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !loading) handleSubmit()
-    else if (e.key === 'Escape') setNewPaperOpen(false)
-  }
-
-  const handleClose = () => {
-    if (loading && abortRef.current) abortRef.current.abort()
-    setNewPaperOpen(false)
   }
 
   const btnBase = "px-4 py-2 text-sm rounded-lg transition-all duration-200 font-medium"
@@ -135,11 +161,12 @@ export function NewPaperDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
+      className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
       style={{ backgroundColor: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div
-        className="rounded-2xl shadow-lg w-full max-w-md mx-4 overflow-hidden animate-scale-in"
+        className={`rounded-2xl shadow-lg w-full max-w-md mx-4 overflow-hidden ${closing ? 'animate-scale-out' : 'animate-scale-in'}`}
         style={{
           backgroundColor: 'var(--color-surface)',
           border: '1px solid var(--color-border)',
@@ -159,7 +186,7 @@ export function NewPaperDialog() {
             新建论文
           </h2>
           <button
-            onClick={handleClose}
+            onClick={() => close()}
             className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
             style={{ color: 'var(--color-text-muted)' }}
           >
@@ -209,7 +236,7 @@ export function NewPaperDialog() {
           )}
           <div className="mt-5 flex justify-end gap-2.5">
             <button
-              onClick={handleClose}
+              onClick={() => close()}
               className={btnBase}
               style={{
                 fontFamily: 'var(--font-ui)',
