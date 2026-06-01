@@ -22,7 +22,6 @@ type APIConfig struct {
 	BaseURL      string `yaml:"base_url"`
 	APIKey       string `yaml:"api_key"`
 	DefaultModel string `yaml:"default_model"`
-	LightModel   string `yaml:"light_model"`
 }
 
 type ObsidianConfig struct {
@@ -94,7 +93,6 @@ func defaultConfig() *Config {
 			BaseURL:      "https://api.openai.com/v1",
 			APIKey:       "${OPENAI_API_KEY}",
 			DefaultModel: "gpt-4o",
-			LightModel:   "gpt-4o-mini",
 		},
 		Obsidian: ObsidianConfig{
 			VaultPath:    "~/Documents/Obsidian/MyVault",
@@ -111,7 +109,6 @@ func defaultConfig() *Config {
 	}
 	if v := os.Getenv("OPENAI_MODEL_NAME"); v != "" {
 		cfg.API.DefaultModel = v
-		cfg.API.LightModel = v
 	}
 
 	return cfg
@@ -145,7 +142,6 @@ func (c *Config) Save() error {
 			BaseURL:      c.API.BaseURL,
 			APIKey:       apiKey,
 			DefaultModel: c.API.DefaultModel,
-			LightModel:   c.API.LightModel,
 		},
 		Obsidian: ObsidianConfig{
 			VaultPath:    c.Obsidian.VaultPath,

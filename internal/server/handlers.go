@@ -628,7 +628,6 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"api_key":        maskedKey,
 			"api_key_source": "env",
 			"default_model":  s.cfg.API.DefaultModel,
-			"light_model":    s.cfg.API.LightModel,
 		},
 		"obsidian": map[string]string{
 			"vault_path":    s.cfg.Obsidian.VaultPath,
@@ -672,9 +671,6 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if v, ok := updates["default_model"].(string); ok && v != "" {
 		s.cfg.API.DefaultModel = v
-	}
-	if v, ok := updates["light_model"].(string); ok && v != "" {
-		s.cfg.API.LightModel = v
 	}
 	if v, ok := updates["max_recent_rounds"].(float64); ok {
 		s.cfg.UI.MaxRecentRounds = int(v)

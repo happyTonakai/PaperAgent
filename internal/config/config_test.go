@@ -23,9 +23,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.API.DefaultModel != "gpt-4o" {
 		t.Errorf("expected default model gpt-4o, got %s", cfg.API.DefaultModel)
 	}
-	if cfg.API.LightModel != "gpt-4o-mini" {
-		t.Errorf("expected light model gpt-4o-mini, got %s", cfg.API.LightModel)
-	}
 	if cfg.UI.MaxRecentRounds != 5 {
 		t.Errorf("expected 5 max recent rounds, got %d", cfg.UI.MaxRecentRounds)
 	}
@@ -46,9 +43,6 @@ func TestDefaultConfigEnvOverride(t *testing.T) {
 	}
 	if cfg.API.DefaultModel != "custom-model" {
 		t.Errorf("expected custom model, got %s", cfg.API.DefaultModel)
-	}
-	if cfg.API.LightModel != "custom-model" {
-		t.Errorf("expected custom light model, got %s", cfg.API.LightModel)
 	}
 }
 
@@ -86,7 +80,6 @@ api:
   base_url: "https://test.api.com/v1"
   api_key: "test-key-123"
   default_model: "test-model"
-  light_model: "test-light"
 ui:
   max_recent_rounds: 10
 `
@@ -157,7 +150,6 @@ func TestSave(t *testing.T) {
 			BaseURL:      "https://test.com/v1",
 			APIKey:       "real-key",
 			DefaultModel: "test-model",
-			LightModel:   "test-light",
 		},
 		UI: UIConfig{MaxRecentRounds: 3},
 	}

@@ -15,7 +15,6 @@ func testConfig(t *testing.T) *config.Config {
 			BaseURL:      os.Getenv("OPENAI_BASE_URL"),
 			APIKey:       os.Getenv("OPENAI_API_KEY"),
 			DefaultModel: "xiaomi/mimo-v2-flash",
-			LightModel:   "xiaomi/mimo-v2-flash",
 		},
 	}
 	if cfg.API.APIKey == "" {
