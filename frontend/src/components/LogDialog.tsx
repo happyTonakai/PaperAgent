@@ -13,9 +13,38 @@ interface LogsResponse {
 
 export function LogDialog() {
   const { isLogOpen, setLogOpen } = useAppStore()
+  const [visible, setVisible] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Animate in/out
+  useEffect(() => {
+    if (isLogOpen) {
+      setVisible(true)
+      setClosing(false)
+    } else if (visible && !closing) {
+      setClosing(true)
+    }
+  }, [isLogOpen, visible, closing])
+
+  // Delayed unmount after close animation
+  useEffect(() => {
+    if (!closing) return
+    const timer = setTimeout(() => setVisible(false), 200)
+    return () => clearTimeout(timer)
+  }, [closing])
+
+  const close = () => setLogOpen(false)
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isLogOpen) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [isLogOpen, setLogOpen])
 
   const fetchLogs = async () => {
     setLoading(true)
@@ -35,33 +64,32 @@ export function LogDialog() {
   useEffect(() => {
     if (isLogOpen) {
       fetchLogs()
-      // Auto-refresh every 2 seconds while open
       const timer = setInterval(fetchLogs, 2000)
       return () => clearInterval(timer)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLogOpen])
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
-    if (isLogOpen && scrollRef.current) {
+    if (visible && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [logs, isLogOpen])
+  }, [logs, visible])
 
-  if (!isLogOpen) {
-    return null
-  }
+  if (!visible) return null
 
   const btnBase =
     'px-3 py-1.5 text-xs rounded-lg transition-all duration-200 font-medium hover:scale-[1.02] active:scale-[0.98]'
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center animate-fade-in"
+      className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
       style={{ backgroundColor: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) close() }}
     >
       <div
-        className="rounded-2xl shadow-lg w-full max-w-3xl mx-4 overflow-hidden animate-scale-in flex flex-col"
+        className={`rounded-2xl shadow-lg w-full max-w-3xl mx-4 overflow-hidden flex flex-col ${closing ? 'animate-scale-out' : 'animate-scale-in'}`}
         style={{
           backgroundColor: 'var(--color-surface)',
           border: '1px solid var(--color-border)',
@@ -100,7 +128,7 @@ export function LogDialog() {
               刷新
             </button>
             <button
-              onClick={() => setLogOpen(false)}
+              onClick={close}
               className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
               style={{ color: 'var(--color-text-muted)' }}
             >
