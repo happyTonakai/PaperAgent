@@ -51,6 +51,7 @@ go vet ./...
 | `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.paperagent/prompts/{name}.txt` first. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
 | `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.paperagent/prompts/export.md`. |
+| `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
 
 ### Data flow
 
@@ -63,7 +64,7 @@ go vet ./...
 
 ### Entry point
 
-`main.go` loads config, checks API key, starts HTTP server with embedded frontend, and runs system tray.
+`main.go` loads config, checks API key, starts HTTP server with embedded frontend, starts Feishu bot (if enabled), and runs system tray.
 
 ## Token estimation
 
@@ -72,3 +73,16 @@ Uses `len(text) / 4` — lightweight, no external dependency.
 ## Configuration
 
 Three layers (in priority order): environment variables (`PAPER_API_KEY`, `PAPER_BASE_URL`, etc.) > `~/.paperagent/config.yaml` > built-in defaults. Custom prompts override embedded defaults from `~/.paperagent/prompts/`.
+
+### Feishu bot
+
+When `feishu.enabled: true` and `feishu.app_id`/`feishu.app_secret` are configured, the bot connects via WebSocket and responds to slash commands. Configure in the Web UI settings page (Settings → API Config → Feishu Bot) or directly in `config.yaml`:
+
+```yaml
+feishu:
+  enabled: true
+  app_id: "cli_xxxxx"
+  app_secret: "xxxxx"
+```
+
+Changes take effect immediately (hot-reload). The bot must be added to a Feishu group chat or used in 1:1 bot chat. Requires `im:message` and `im:message:send_as_bot` permissions in the Feishu developer console, and the `card.action.trigger` event subscription.
