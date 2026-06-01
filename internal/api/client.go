@@ -54,10 +54,17 @@ type Client struct {
 }
 
 func NewClient(cfg *config.Config) *Client {
+	tr := &http.Transport{
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 10 * time.Second,
+		Proxy:                http.ProxyFromEnvironment,
+	}
 	return &Client{
 		cfg: cfg,
 		client: &http.Client{
-			Timeout: 5 * time.Minute,
+			Transport: tr,
+			Timeout:   5 * time.Minute,
 		},
 	}
 }
