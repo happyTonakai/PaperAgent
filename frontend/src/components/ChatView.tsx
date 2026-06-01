@@ -75,7 +75,7 @@ export function ChatView() {
   const isAutoScrolling = useRef(false)
   const retryCompletedRoundRef = useRef<number | null>(null)
 
-  const isPending = pendingPaperId === currentPaperId
+  const isPending = pendingPaperId === currentPaperId && currentPaperId !== null
   const needsSummaryRetry = !isLoading && !isPending && !retryingSummary && paper && !paper.initial_summary
 
   const scrollToBottom = useCallback(() => {
