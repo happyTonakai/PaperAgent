@@ -100,6 +100,11 @@ func (s *Server) Start(addr string) error {
 
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip noisy polling endpoints
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/logs" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		lw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(lw, r)
