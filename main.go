@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/feishu"
 	"github.com/happyTonakai/paperagent/internal/server"
 	"github.com/happyTonakai/paperagent/internal/systray"
 )
@@ -72,7 +74,7 @@ func runSystray(cfg *config.Config) {
 	}
 
 	url := fmt.Sprintf("http://localhost:%d", actualPort)
-	fmt.Printf("PaperAgent server starting on %s\n", url)
+	log.Printf("PaperAgent server starting on %s", url)
 
 	// Start HTTP server in background goroutine
 	httpErrCh := make(chan error, 1)
@@ -93,6 +95,15 @@ func runSystray(cfg *config.Config) {
 	// Auto-open browser (skip when PAPER_NO_BROWSER is set, e.g. in dev mode)
 	if os.Getenv("PAPER_NO_BROWSER") == "" {
 		go openBrowser(url)
+	}
+
+	// Start Feishu bot if enabled
+	feishuBot := feishu.New(cfg)
+	s.SetFeishuBot(feishuBot)
+	if err := feishuBot.Start(); err != nil {
+		log.Printf("Feishu bot start failed: %v", err)
+	} else {
+		defer feishuBot.Stop()
 	}
 
 	// Run systray (blocks until user quits)

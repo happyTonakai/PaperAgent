@@ -9,11 +9,13 @@ interface ConfigData {
   api: { base_url: string; api_key: string; api_key_source: string; default_model: string; light_model: string }
   obsidian: { vault_path: string; export_folder: string }
   ui: { max_recent_rounds: number }
+  feishu?: { enabled: boolean; app_id: string; app_secret: string }
 }
 
 interface ConfigForm {
   api_key: string; base_url: string; default_model: string; light_model: string
   max_recent_rounds: string; obsidian_vault_path: string; obsidian_export_folder: string
+  feishu_enabled: boolean; feishu_app_id: string; feishu_app_secret: string
 }
 
 interface PromptInfo { name: string; content: string; source: string }
@@ -53,7 +55,7 @@ export function SettingsDialog() {
   const [config, setConfig] = useState<ConfigData | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', light_model: '', max_recent_rounds: '5', obsidian_vault_path: '', obsidian_export_folder: '' })
+  const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', light_model: '', max_recent_rounds: '5', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '' })
   const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
   // Prompts
@@ -61,6 +63,9 @@ export function SettingsDialog() {
   const [promptEdits, setPromptEdits] = useState<Record<string, string>>({})
   const [promptsLoading, setPromptsLoading] = useState(false)
   const [promptsSaving, setPromptsSaving] = useState(false)
+
+  // Feishu status
+  const [feishuStatus, setFeishuStatus] = useState<{ connected: boolean; enabled: boolean; last_error?: string } | null>(null)
 
   // Close on Escape key
   useEffect(() => {
@@ -77,7 +82,7 @@ export function SettingsDialog() {
       .then((r) => r.json())
       .then((data: ConfigData) => {
         setConfig(data)
-        setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, light_model: data.api.light_model, max_recent_rounds: String(data.ui.max_recent_rounds), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder })
+        setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, light_model: data.api.light_model, max_recent_rounds: String(data.ui.max_recent_rounds), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '' })
         setApiKeyDirty(false)
       })
       .catch((err) => toast.error('加载配置失败: ' + (err instanceof Error ? err.message : '未知错误')))
@@ -94,6 +99,12 @@ export function SettingsDialog() {
       })
       .catch((err) => toast.error('加载提示词失败: ' + (err instanceof Error ? err.message : '未知错误')))
       .finally(() => setPromptsLoading(false))
+
+    // Fetch feishu status
+    fetch('/api/feishu/status')
+      .then((r) => r.json())
+      .then((data) => setFeishuStatus(data))
+      .catch(() => {})
   }, [isSettingsOpen])
 
   if (!visible) return null
@@ -108,6 +119,9 @@ export function SettingsDialog() {
     if (String(form.max_recent_rounds) !== String(config?.ui.max_recent_rounds)) body['max_recent_rounds'] = Number(form.max_recent_rounds)
     if (form.obsidian_vault_path !== config?.obsidian.vault_path) body['obsidian_vault_path'] = form.obsidian_vault_path
     if (form.obsidian_export_folder !== config?.obsidian.export_folder) body['obsidian_export_folder'] = form.obsidian_export_folder
+    if (form.feishu_enabled !== (config?.feishu?.enabled ?? false)) body['feishu_enabled'] = form.feishu_enabled
+    if (form.feishu_app_id && form.feishu_app_id !== '••••••' && form.feishu_app_id !== config?.feishu?.app_id) body['feishu_app_id'] = form.feishu_app_id
+    if (form.feishu_app_secret && form.feishu_app_secret !== '••••••' && form.feishu_app_secret !== config?.feishu?.app_secret) body['feishu_app_secret'] = form.feishu_app_secret
     if (Object.keys(body).length === 0) { toast('没有需要保存的更改'); setSaving(false); return }
     try {
       const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -175,6 +189,32 @@ export function SettingsDialog() {
                 <legend className="text-xs font-medium text-gray-500 dark:text-gray-400">Obsidian 导出</legend>
                 <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Vault 路径</label><input type="text" value={form.obsidian_vault_path} onChange={(e) => updateForm('obsidian_vault_path', e.target.value)} placeholder="~/Documents/Obsidian/MyVault" className={inputClass} /></div>
                 <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">导出文件夹</label><input type="text" value={form.obsidian_export_folder} onChange={(e) => updateForm('obsidian_export_folder', e.target.value)} placeholder="Papers" className={inputClass} /></div>
+              </fieldset>
+              <hr className="border-gray-200 dark:border-gray-800" />
+              <fieldset className="space-y-3">
+                <legend className="text-xs font-medium text-gray-500 dark:text-gray-400">飞书 Bot 配置</legend>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="feishu-enabled"
+                    checked={form.feishu_enabled}
+                    onChange={(e) => setForm((f) => ({ ...f, feishu_enabled: e.target.checked }))}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <label htmlFor="feishu-enabled" className="text-xs text-gray-500 dark:text-gray-400">启用飞书 Bot</label>
+                  {feishuStatus && feishuStatus.enabled && (
+                    <span className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${feishuStatus.connected ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${feishuStatus.connected ? 'bg-green-500' : 'bg-red-500'}`} />
+                      {feishuStatus.connected ? '已连接' : '未连接'}
+                    </span>
+                  )}
+                </div>
+                {feishuStatus && feishuStatus.last_error && (
+                  <p className="text-xs text-red-500">错误: {feishuStatus.last_error}</p>
+                )}
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">App ID {config?.feishu?.app_id && <span className="ml-1 text-gray-400">(当前: {config.feishu.app_id})</span>}</label><input type="text" value={form.feishu_app_id} onChange={(e) => updateForm('feishu_app_id', e.target.value)} placeholder="cli_xxxxx" className={inputClass} /></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">App Secret {config?.feishu?.app_secret && <span className="ml-1 text-gray-400">(当前: {config.feishu.app_secret})</span>}</label><input type="password" value={form.feishu_app_secret} onChange={(e) => updateForm('feishu_app_secret', e.target.value)} placeholder={config?.feishu?.app_secret ? '输入新 Secret 以替换...' : '飞书应用 Secret'} className={inputClass} /></div>
+                <p className="text-xs text-gray-400">保存后自动重连飞书。请在飞书开放平台开启机器人能力并订阅「消息和群组」事件。</p>
               </fieldset>
             </div>
           ) : (promptsLoading ? <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-gray-400" /></div> : (

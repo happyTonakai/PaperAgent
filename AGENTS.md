@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. Referenced by CLAUDE.md.
+This file provides guidance to coding agents when working with code in this repository.
 
 ## Project Overview
 
@@ -10,7 +10,7 @@ PaperAgent is an AI paper reading assistant built in Go with a Web UI (React SPA
 
 ```bash
 go build -o paperagent .          # Build binary
-go install github.com/paperagent/paperagent@latest  # Install globally
+go install github.com/happyTonakai/paperagent@latest  # Install globally
 
 ./paperagent ./paper.txt          # Load from file
 ./paperagent https://arxiv.org/... # Load from URL

@@ -12,17 +12,24 @@ import (
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/feishu"
 )
 
 //go:embed frontend-dist
 var frontendDist embed.FS
 
 type Server struct {
-	cfg *config.Config
-	api *api.Client
-	mux *http.ServeMux
+	cfg        *config.Config
+	api        *api.Client
+	mux        *http.ServeMux
 	paperLocks sync.Map
-	logBuf *logBuffer
+	logBuf     *logBuffer
+	feishuBot  *feishu.Bot
+}
+
+// SetFeishuBot sets the feishu bot reference for hot-reload support.
+func (s *Server) SetFeishuBot(b *feishu.Bot) {
+	s.feishuBot = b
 }
 
 func New(cfg *config.Config) *Server {
@@ -69,6 +76,7 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("POST /api/prompts", s.handleSavePrompts)
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/feishu/status", s.handleFeishuStatus)
 
 	s.registerStatic()
 }

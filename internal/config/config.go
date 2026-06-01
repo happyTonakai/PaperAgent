@@ -15,6 +15,7 @@ type Config struct {
 	API      APIConfig      `yaml:"api"`
 	Obsidian ObsidianConfig `yaml:"obsidian"`
 	UI       UIConfig       `yaml:"ui"`
+	Feishu   FeishuConfig   `yaml:"feishu"`
 }
 
 type APIConfig struct {
@@ -31,6 +32,12 @@ type ObsidianConfig struct {
 
 type UIConfig struct {
 	MaxRecentRounds int `yaml:"max_recent_rounds"`
+}
+
+type FeishuConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	AppID     string `yaml:"app_id"`
+	AppSecret string `yaml:"app_secret"`
 }
 
 func ConfigDir() string {
@@ -129,6 +136,11 @@ func (c *Config) Save() error {
 	}
 
 	saveCfg := Config{
+		Feishu: FeishuConfig{
+			Enabled:   c.Feishu.Enabled,
+			AppID:     c.Feishu.AppID,
+			AppSecret: c.Feishu.AppSecret,
+		},
 		API: APIConfig{
 			BaseURL:      c.API.BaseURL,
 			APIKey:       apiKey,

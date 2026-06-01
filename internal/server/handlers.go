@@ -637,6 +637,11 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		"ui": map[string]int{
 			"max_recent_rounds": s.cfg.UI.MaxRecentRounds,
 		},
+		"feishu": map[string]interface{}{
+			"enabled":    s.cfg.Feishu.Enabled,
+			"app_id":     maskFeishu(s.cfg.Feishu.AppID),
+			"app_secret": maskFeishu(s.cfg.Feishu.AppSecret),
+		},
 	}
 	if hasCustomKey {
 		cfg["api"].(map[string]interface{})["api_key_source"] = "config"
@@ -680,11 +685,35 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := updates["obsidian_export_folder"].(string); ok {
 		s.cfg.Obsidian.ExportFolder = v
 	}
+	if v, ok := updates["feishu_enabled"].(bool); ok {
+		s.cfg.Feishu.Enabled = v
+	}
+	if v, ok := updates["feishu_app_id"].(string); ok {
+		s.cfg.Feishu.AppID = v
+	}
+	if v, ok := updates["feishu_app_secret"].(string); ok {
+		if v != "" {
+			s.cfg.Feishu.AppSecret = v
+		}
+	}
 	s.cfg.Unlock()
 
 	if err := s.cfg.Save(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed"})
 		return
+	}
+
+	// Reload feishu bot if feishu settings changed
+	if s.feishuBot != nil {
+		_, feishuChanged := updates["feishu_enabled"]
+		_, appIDChanged := updates["feishu_app_id"]
+		_, appSecretChanged := updates["feishu_app_secret"]
+		if feishuChanged || appIDChanged || appSecretChanged {
+			log.Printf("[server] feishu config changed, reloading bot...")
+			if err := s.feishuBot.Reload(); err != nil {
+				log.Printf("[server] feishu reload failed: %v", err)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
@@ -873,6 +902,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleFeishuStatus(w http.ResponseWriter, r *http.Request) {
+	if s.feishuBot == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"available": false,
+		})
+		return
+	}
+	enabled, connected, lastError := s.feishuBot.Status()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"available":  true,
+		"enabled":    enabled,
+		"connected":  connected,
+		"last_error": lastError,
+	})
+}
+
 func (s *Server) fetchPaperContent(req newPaperRequest) (content string, sourceURL string, err error) {
 	if req.URL != "" {
 		sourceURL = req.URL
@@ -940,4 +985,15 @@ func isEnvVarName(s string) bool {
 		}
 	}
 	return true
+}
+
+// maskFeishu masks a feishu credential for safe display.
+func maskFeishu(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 8 {
+		return "••••"
+	}
+	return s[:4] + "••••" + s[len(s)-4:]
 }
