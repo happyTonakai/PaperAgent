@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Terminal, RefreshCw } from 'lucide-react'
+import { X, Terminal } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 
 interface LogEntry {
@@ -16,7 +16,6 @@ export function LogDialog() {
   const [visible, setVisible] = useState(false)
   const [closing, setClosing] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Animate in/out
@@ -47,7 +46,6 @@ export function LogDialog() {
   }, [isLogOpen, setLogOpen])
 
   const fetchLogs = async () => {
-    setLoading(true)
     try {
       const res = await fetch('/api/logs?limit=200')
       if (res.ok) {
@@ -56,8 +54,6 @@ export function LogDialog() {
       }
     } catch {
       // ignore
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -78,9 +74,6 @@ export function LogDialog() {
   }, [logs, visible])
 
   if (!visible) return null
-
-  const btnBase =
-    'px-3 py-1.5 text-xs rounded-lg transition-all duration-200 font-medium hover:scale-[1.02] active:scale-[0.98]'
 
   return (
     <div
@@ -109,32 +102,13 @@ export function LogDialog() {
             <Terminal size={15} style={{ color: 'var(--color-accent)' }} />
             服务器日志
           </h2>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={fetchLogs}
-              disabled={loading}
-              className={btnBase}
-              style={{
-                fontFamily: 'var(--font-ui)',
-                color: 'var(--color-accent)',
-                backgroundColor: 'var(--color-accent-subtle)',
-              }}
-            >
-              <RefreshCw
-                size={12}
-                className={loading ? 'animate-spin' : ''}
-                style={{ display: 'inline', marginRight: 4 }}
-              />
-              刷新
-            </button>
-            <button
-              onClick={close}
-              className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              <X size={15} />
-            </button>
-          </div>
+          <button
+            onClick={close}
+            className="p-1.5 rounded-md hover:bg-[var(--color-bg-elevated)] transition-colors duration-150"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <X size={15} />
+          </button>
         </div>
 
         {/* Logs */}
@@ -148,14 +122,9 @@ export function LogDialog() {
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
           }}
         >
-          {logs.length === 0 && !loading && (
+          {logs.length === 0 && (
             <div className="flex items-center justify-center h-full" style={{ color: '#888' }}>
               <span>暂无日志</span>
-            </div>
-          )}
-          {logs.length === 0 && loading && (
-            <div className="flex items-center justify-center h-full" style={{ color: '#888' }}>
-              <span>加载中...</span>
             </div>
           )}
           {logs.map((entry, i) => (
