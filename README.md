@@ -78,7 +78,30 @@ obsidian:
   export_folder: "Papers"
 ui:
   max_recent_rounds: 5
+feishu:
+  enabled: true
+  app_id: "cli_xxxxx"
+  app_secret: "xxxxx"
 ```
+
+### 3. 飞书 Bot（可选）
+
+在配置中启用飞书后，可在飞书群聊/私聊中使用斜杠命令操作：
+
+| 命令 | 功能 |
+|---|---|
+| `/new <url>` | 创建论文总结（流式卡片实时更新） |
+| `/list` | 最近 10 篇（交互卡片 + 选中高亮） |
+| `/summary` | 拉取当前论文初始总结 |
+| `/fetch [n]` | 拉取最近 n 轮问答（默认 2） |
+| `/help` | 帮助信息 |
+
+直接发消息即可对当前论文多轮 Q&A。配置保存后自动热加载，无需重启。
+
+**飞书开放平台配置要求**：
+- 开启机器人能力
+- 权限：`im:message`、`im:message:send_as_bot`
+- 事件订阅：`im.message.receive_v1`、`card.action.trigger`
 
 ### 3. 自定义 Prompt
 
@@ -220,6 +243,7 @@ just clean
 | SSE 流式 | Server-Sent Events |
 | LLM API | OpenAI 兼容接口 |
 | 持久化 | JSON 文件 (~/.paperagent/papers/) |
+| 飞书 | larksuite/oapi-sdk-go v3, WebSocket + 交互卡片 |
 
 
 ## 许可
