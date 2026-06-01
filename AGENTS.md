@@ -38,7 +38,7 @@ go vet ./...
 
 ### Two-phase state machine
 
-- **INIT phase**: Paper content + `heavy.txt` prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted async via light model.
+- **INIT phase**: Paper content + `heavy.txt` prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted from URL via HTML parsing.
 - **CHAT phase**: Each question sends paper content + `light.txt` prompt + last 5 rounds.
 
 ### Module layout (`internal/`)
@@ -46,7 +46,7 @@ go vet ./...
 | Package | Responsibility |
 |---|---|
 | `config/` | `~/.paperagent/config.yaml` loading, env var overrides, path helpers |
-| `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` is an async helper using light model. |
+| `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` helper for title extraction. |
 | `session/` | `Paper` and `Message` data models. Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.paperagent/papers/{id}.json`. Uses UUID-based session IDs. |
 | `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.paperagent/prompts/{name}.txt` first. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
@@ -59,7 +59,7 @@ go vet ./...
 2. `session.NewPaper()` creates paper object
 3. INIT: full paper + HEAVY_PROMPT → streamed summary
 4. CHAT: each question → paper + LIGHT_PROMPT + last 5 rounds → streamed answer
-5. Async: title extraction via light model
+5. Title extracted from URL via HTML parsing (urlparse)
 6. All persisted as JSON in `~/.paperagent/papers/`
 
 ### Entry point

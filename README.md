@@ -55,24 +55,17 @@ sudo mv paperagent /usr/local/bin/
 
 ## 配置
 
-支持三种方式（优先级从高到低）：
+支持两种配置方式，按需选用即可：
 
-### 1. 环境变量（推荐）
+### 1. 直接编辑配置文件
 
-```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"   # 可选，兼容任意 OpenAI 接口
-export PAPER_ADDR=":8686"                             # 可选，Web UI 监听地址
-```
-
-### 2. 配置文件 `~/.paperagent/config.yaml`
+`~/.paperagent/config.yaml` 是主配置文件：
 
 ```yaml
 api:
   base_url: "https://api.openai.com/v1"
   api_key: "${OPENAI_API_KEY}"
   default_model: "gpt-4o"
-  light_model: "gpt-4o-mini"
 obsidian:
   vault_path: "~/Documents/Obsidian/MyVault"
   export_folder: "Papers"
@@ -84,7 +77,26 @@ feishu:
   app_secret: "xxxxx"
 ```
 
-### 3. 飞书 Bot（可选）
+支持 `${ENV_VAR}` 语法引用环境变量，避免明文写入敏感信息：
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+```
+
+然后在 `config.yaml` 中用 `api_key: "${OPENAI_API_KEY}"` 引用即可。
+
+自定义 Prompt 也属于文件配置的一部分，在 `~/.paperagent/prompts/` 下放置同名文件即可覆盖内置模板：
+
+- `heavy.txt` — 初始深度摘要的 system prompt
+- `light.txt` — 问答阶段的 system prompt
+- `summarize.txt` — 对话元总结的 system prompt
+
+### 2. Web UI 设置页面
+
+程序运行后打开浏览器，点击左下角设置图标，可以在 Web 界面中直接修改 API 配置（API Key、Base URL、模型等），修改即时生效。
+
+### 飞书 Bot（可选）
 
 在配置中启用飞书后，可在飞书群聊/私聊中使用斜杠命令操作：
 
@@ -102,14 +114,6 @@ feishu:
 - 开启机器人能力
 - 权限：`im:message`、`im:message:send_as_bot`
 - 事件订阅：`im.message.receive_v1`、`card.action.trigger`
-
-### 3. 自定义 Prompt
-
-在 `~/.paperagent/prompts/` 下放置同名文件覆盖内置 prompt：
-
-- `heavy.txt` — 初始深度摘要的 system prompt
-- `light.txt` — 问答阶段的 system prompt
-- `summarize.txt` — 对话元总结的 system prompt
 
 ## 使用
 
