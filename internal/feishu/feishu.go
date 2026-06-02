@@ -649,7 +649,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 
 	// Send initial "thinking" card
-	cardMsgID := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title, question))
+	cardMsgID := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title))
 	if cardMsgID == "" {
 		log.Printf("[feishu] failed to send thinking card")
 		// Fall back to text
@@ -697,9 +697,9 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 
 		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
 			if isFirst {
-				return buildChatStreamingCard(paperID, paper.Title, question, c)
+				return buildChatStreamingCard(paperID, paper.Title, c)
 			}
-			return buildChatStreamingContinuationCard(question, c)
+			return buildChatStreamingContinuationCard(c)
 		})
 
 		if overflow != "" {
@@ -709,16 +709,16 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 			// Send new streaming continuation card
 			overflowStart := active.startAt + len(fits)
 			overflowContent := total[overflowStart:]
-			newID := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(question, overflowContent))
+			newID := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(overflowContent))
 			if newID != "" {
 				slots = append(slots, chatCardSlot{id: newID, startAt: overflowStart})
 				log.Printf("[feishu] chat card full -> card #%d (total so far: %d chars)", len(slots), len(total))
 			}
 		} else {
 			if isFirst {
-				b.patchCard(active.id, buildChatStreamingCard(paperID, paper.Title, question, fits))
+				b.patchCard(active.id, buildChatStreamingCard(paperID, paper.Title, fits))
 			} else {
-				b.patchCard(active.id, buildChatStreamingContinuationCard(question, fits))
+				b.patchCard(active.id, buildChatStreamingContinuationCard(fits))
 			}
 		}
 	}
@@ -745,15 +745,15 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	lastContent := answer[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildChatDoneCard(paperID, paper.Title, question, c)
+		return buildChatDoneCard(paperID, paper.Title, c)
 	})
 
 	if overflow != "" {
 		// Last card still doesn't fit — freeze, send one more done card
 		b.patchCard(last.id, buildContinuationCard(fits))
-		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, question, overflow))
+		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, overflow))
 	} else {
-		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, question, fits))
+		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, fits))
 	}
 }
 

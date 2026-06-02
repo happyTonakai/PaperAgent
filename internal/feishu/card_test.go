@@ -300,7 +300,6 @@ func TestFitMarkdownContent_SafetyMargin(t *testing.T) {
 
 func TestMultiCardSplit_Chat(t *testing.T) {
 	// Test the chat streaming card split logic
-	question := "What are the main contributions of this paper?"
 	paperID := "test-paper-123"
 	title := "Test Paper Title"
 
@@ -342,9 +341,9 @@ func TestMultiCardSplit_Chat(t *testing.T) {
 
 		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
 			if isFirst {
-				return buildChatStreamingCard(paperID, title, question, c)
+				return buildChatStreamingCard(paperID, title, c)
 			}
-			return buildChatStreamingContinuationCard(question, c)
+			return buildChatStreamingContinuationCard(c)
 		})
 
 		if overflow != "" {
@@ -369,9 +368,9 @@ func TestMultiCardSplit_Chat(t *testing.T) {
 
 		var cardJSON string
 		if i == 0 {
-			cardJSON = buildChatDoneCard(paperID, title, question, cardContent)
+			cardJSON = buildChatDoneCard(paperID, title, cardContent)
 		} else {
-			cardJSON = buildChatStreamingContinuationCard(question, cardContent)
+			cardJSON = buildChatStreamingContinuationCard(cardContent)
 		}
 		jsonSize := len(cardJSON)
 		elements := estimateContentElements(cardContent)
