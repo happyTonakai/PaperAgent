@@ -13,6 +13,10 @@ import (
 // We leave 2KB margin for safety.
 const maxCardJSONBytes = 28000
 
+// maxCardElements is Feishu JSON 2.0 card element limit (200).
+// We leave 20 margin for hr + note + fixed card overhead.
+const maxCardElements = 180
+
 // ─── Card Schema 2.0 helpers ───
 
 func cardBase() map[string]any {
@@ -84,13 +88,68 @@ func marshalCard(card map[string]any) string {
 	return string(b)
 }
 
+// estimateContentElements estimates how many internal elements Feishu will
+// generate from the markdown content inside a card. This is a rough heuristic
+// to stay under the 200-element hard limit.
+//
+// Each non-blank line counts as ~1 element. Table rows are heavy so we
+// count them conservatively as row + cells. Blank lines are ignored.
+func estimateContentElements(content string) int {
+	count := 0
+	lines := strings.Split(content, "\n")
+	inCodeBlock := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue // blank lines don't generate elements
+		}
+
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			count++ // fence
+			continue
+		}
+
+		if inCodeBlock {
+			count++ // each code line
+			continue
+		}
+
+		// Table row: conservatively count as row + cells
+		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
+			cells := strings.Count(trimmed, "|") - 1
+			count += 1 + cells/2 // row + rough cell overhead
+			continue
+		}
+
+		// Regular line: paragraph, heading, list, etc.
+		count++
+	}
+
+	return count
+}
+
+// cardFits checks whether markdown content fits in a Feishu card, considering
+// both the JSON byte size limit and the 200-element limit.
+func cardFits(content string, builder func(content string) string) bool {
+	cardJSON := builder(content)
+	if len(cardJSON) > maxCardJSONBytes {
+		return false
+	}
+	if estimateContentElements(content) > maxCardElements {
+		return false
+	}
+	return true
+}
+
 // ─── Content fitting ───
 // fitMarkdownContent tries to fit as much markdown content as possible into a card
 // builder function. Returns (fittedContent, overflow). If everything fits, overflow is "".
 // The builder receives the content and returns a card JSON string.
+// Checks both JSON byte size AND estimated element count.
 func fitMarkdownContent(content string, builder func(content string) string) (fits string, overflow string) {
-	cardJSON := builder(content)
-	if len(cardJSON) <= maxCardJSONBytes {
+	if cardFits(content, builder) {
 		return content, ""
 	}
 
@@ -101,8 +160,7 @@ func fitMarkdownContent(content string, builder func(content string) string) (fi
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
 		testContent := string(runes[:mid])
-		testCard := builder(testContent)
-		if len(testCard) <= maxCardJSONBytes {
+		if cardFits(testContent, builder) {
 			lo = mid
 		} else {
 			hi = mid - 1
@@ -168,15 +226,14 @@ func buildDoneCard(paperID, title, content string) string {
 	elements := []map[string]any{
 		mdElement(content),
 		hrElement(),
-		buttonElement("💬 开始问答", "qa:"+paperID, "primary", map[string]string{"paper_id": paperID}),
-		noteElement("直接在聊天中提问即可，无需再次 @ 机器人 🎉"),
+		noteElement("直接在聊天中提问即可 🎉"),
 	}
 
 	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)
 }
 
-// ─── Continuation card (for overflow content when summary is too long) ───
+// ─── Frozen continuation card (mid-stream, no more updates) ───
 
 func buildContinuationCard(content string) string {
 	c := cardBase()
@@ -185,7 +242,23 @@ func buildContinuationCard(content string) string {
 		"elements": []map[string]any{
 			mdElement(content),
 			hrElement(),
-			noteElement("接上文卡片 ✨"),
+			noteElement("后续内容在下方卡片中继续 ✨"),
+		},
+	}
+	return marshalCard(c)
+}
+
+// ─── Streaming continuation card (updates during overflow) ───
+
+func buildStreamingContinuationCard(content string) string {
+	c := cardBase()
+	c["config"].(map[string]any)["update_multi"] = true
+	c["header"] = cardHeader("📄 总结（续）", "blue")
+	c["body"] = map[string]any{
+		"elements": []map[string]any{
+			mdElement(content),
+			hrElement(),
+			noteElement("⏳ 正在更新中..."),
 		},
 	}
 	return marshalCard(c)
@@ -244,6 +317,22 @@ func buildChatDoneCard(paperID, title, question, answer string) string {
 		noteElement("继续提问即可进行多轮对话 ✨"),
 	}
 	c["body"] = map[string]any{"elements": elements}
+	return marshalCard(c)
+}
+
+// ─── Chat streaming continuation card ───
+
+func buildChatStreamingContinuationCard(question, content string) string {
+	c := cardBase()
+	c["config"].(map[string]any)["update_multi"] = true
+	c["header"] = cardHeader("💭 回答（续）", "blue")
+	c["body"] = map[string]any{
+		"elements": []map[string]any{
+			mdElement(fmt.Sprintf("**Q:** %s\n\n%s", question, content)),
+			hrElement(),
+			noteElement("⏳ 正在更新中..."),
+		},
+	}
 	return marshalCard(c)
 }
 

@@ -347,13 +347,11 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	b.streamSummary(chatID, paper)
 }
 
-// streamSummary streams the summary generation progress via an interactive card.
-func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
-	cardJSON := buildLoadingCard(paper.Ref(), paper.Title)
+// sendInteractiveCard sends an interactive card and returns the message ID (may be empty on failure).
+func (b *Bot) sendInteractiveCard(chatID, cardJSON string) string {
 	ctx := context.Background()
-
-	var cardMsgID string
-	err := b.doFeishuCall(ctx, "send loading card", func(client *lark.Client) error {
+	var msgID string
+	_ = b.doFeishuCall(ctx, "send card", func(client *lark.Client) error {
 		resp, e := client.Im.Message.Create(ctx,
 			larkim.NewCreateMessageReqBuilder().
 				ReceiveIdType("chat_id").
@@ -364,22 +362,36 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 					Build()).
 				Build())
 		if e != nil {
-			return fmt.Errorf("create message: %w", e)
+			return fmt.Errorf("send card: %w", e)
 		}
 		if !resp.Success() {
-			return fmt.Errorf("create message: code=%d msg=%s", resp.Code, resp.Msg)
+			return fmt.Errorf("send card: code=%d msg=%s", resp.Code, resp.Msg)
 		}
 		if resp.Data != nil && resp.Data.MessageId != nil {
-			cardMsgID = *resp.Data.MessageId
+			msgID = *resp.Data.MessageId
 		}
 		return nil
 	})
+	return msgID
+}
 
-	if err != nil {
-		log.Printf("[feishu] failed to send loading card: %v", err)
+// streamSummary streams the summary generation progress via interactive cards.
+// When a card fills up, it is frozen and a new streaming continuation card is sent.
+func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
+	// Send loading card
+	cardMsgID := b.sendInteractiveCard(chatID, buildLoadingCard(paper.Ref(), paper.Title))
+	if cardMsgID == "" {
+		log.Printf("[feishu] failed to send loading card")
 		b.sendText(chatID, "❌ 发送进度卡片失败")
 		return
 	}
+
+	// Multi-card streaming state
+	type cardSlot struct {
+		id      string // Feishu message ID
+		startAt int    // byte offset in totalContent where this card's content starts
+	}
+	slots := []cardSlot{{id: cardMsgID, startAt: 0}}
 
 	// Build messages for summary
 	messages := []api.ChatMessage{
@@ -388,7 +400,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	}
 
 	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
-	var summaryBuilder strings.Builder
+	var totalContent strings.Builder
 	lastPatch := 0
 
 	for chunk := range ch {
@@ -400,38 +412,75 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 		if chunk.Done {
 			break
 		}
-		summaryBuilder.WriteString(chunk.Content)
+		totalContent.WriteString(chunk.Content)
+		total := totalContent.String()
 
-		// Patch card every ~200 chars for smooth streaming
-		if cardMsgID != "" && (len(summaryBuilder.String())-lastPatch) >= 200 {
-			lastPatch = len(summaryBuilder.String())
-			streamingCard := buildStreamingCard(paper.Ref(), paper.Title, summaryBuilder.String())
-			// If card JSON exceeds limit during streaming, stop patching this card.
-			// The final done phase will handle overflow properly.
-			if len(streamingCard) <= maxCardJSONBytes {
-				b.patchCard(cardMsgID, streamingCard)
+		// Patch active card every ~200 new chars
+		if len(total)-lastPatch < 200 {
+			continue
+		}
+		lastPatch = len(total)
+
+		active := &slots[len(slots)-1]
+		cardContent := total[active.startAt:]
+		isFirst := len(slots) == 1
+
+		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
+			if isFirst {
+				return buildStreamingCard(paper.Ref(), paper.Title, c)
+			}
+			return buildStreamingContinuationCard(c)
+		})
+
+		if overflow != "" {
+			// Freeze current card
+			b.patchCard(active.id, buildContinuationCard(fits))
+
+			// Send new streaming continuation card
+			overflowStart := active.startAt + len(fits)
+			overflowContent := total[overflowStart:]
+			newID := b.sendInteractiveCard(chatID, buildStreamingContinuationCard(overflowContent))
+			if newID != "" {
+				slots = append(slots, cardSlot{id: newID, startAt: overflowStart})
+				log.Printf("[feishu] summary card full -> card #%d (total so far: %d chars)", len(slots), len(total))
+			} else {
+				log.Printf("[feishu] failed to send continuation card, overflow lost")
+			}
+		} else {
+			// Normal streaming update
+			if isFirst {
+				b.patchCard(active.id, buildStreamingCard(paper.Ref(), paper.Title, fits))
+			} else {
+				b.patchCard(active.id, buildStreamingContinuationCard(fits))
 			}
 		}
 	}
 
-	summary := summaryBuilder.String()
-	log.Printf("[feishu] summary complete: %d chars", len(summary))
+	summary := totalContent.String()
+	log.Printf("[feishu] summary complete: %d chars across %d cards", len(summary), len(slots))
 
 	// Save summary
 	paper.SetInitialSummary(summary)
 	paper.Save()
 
-	// Update card to done state, handling overflow
-	if cardMsgID != "" {
-		fits, overflow := fitMarkdownContent(summary, func(c string) string {
-			return buildDoneCard(paper.Ref(), paper.Title, c)
-		})
-		b.patchCard(cardMsgID, buildDoneCard(paper.Ref(), paper.Title, fits))
+	// Finalize last card (may still overflow at the very end)
+	last := &slots[len(slots)-1]
+	lastContent := summary[last.startAt:]
 
-		// Send overflow as continuation cards or text
-		if overflow != "" {
-			b.sendOverflowAsText(chatID, overflow, "📄 总结（续）")
-		}
+	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
+		return buildDoneCard(paper.Ref(), paper.Title, c)
+	})
+
+	if overflow != "" {
+		// Last card's content still doesn't fit — freeze as continuation, send one more done card
+		b.patchCard(last.id, buildContinuationCard(fits))
+		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, overflow))
+	} else if len(slots) == 1 {
+		// Single card: patch from streaming to done in-place
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits))
+	} else {
+		// Last of multiple cards: patch to done
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits))
 	}
 }
 
@@ -600,34 +649,9 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 
 	// Send initial "thinking" card
-	cardJSON := buildThinkingCard(paperID, paper.Title, question)
-	ctx := context.Background()
-
-	var cardMsgID string
-	err2 := b.doFeishuCall(ctx, "send thinking card", func(client *lark.Client) error {
-		resp, e := client.Im.Message.Create(ctx,
-			larkim.NewCreateMessageReqBuilder().
-				ReceiveIdType("chat_id").
-				Body(larkim.NewCreateMessageReqBodyBuilder().
-					ReceiveId(chatID).
-					MsgType(larkim.MsgTypeInteractive).
-					Content(cardJSON).
-					Build()).
-				Build())
-		if e != nil {
-			return fmt.Errorf("create message: %w", e)
-		}
-		if !resp.Success() {
-			return fmt.Errorf("create message: code=%d msg=%s", resp.Code, resp.Msg)
-		}
-		if resp.Data != nil && resp.Data.MessageId != nil {
-			cardMsgID = *resp.Data.MessageId
-		}
-		return nil
-	})
-
-	if err2 != nil {
-		log.Printf("[feishu] failed to send thinking card: %v", err2)
+	cardMsgID := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title, question))
+	if cardMsgID == "" {
+		log.Printf("[feishu] failed to send thinking card")
 		// Fall back to text
 		result, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages)
 		if chatErr != nil {
@@ -638,9 +662,16 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 		return
 	}
 
+	// Multi-card streaming state
+	type chatCardSlot struct {
+		id      string
+		startAt int // byte offset in totalContent
+	}
+	slots := []chatCardSlot{{id: cardMsgID, startAt: 0}}
+
 	// Stream the answer
 	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
-	var answerBuilder strings.Builder
+	var totalContent strings.Builder
 	lastPatch := 0
 
 	for chunk := range ch {
@@ -652,18 +683,47 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 		if chunk.Done {
 			break
 		}
-		answerBuilder.WriteString(chunk.Content)
+		totalContent.WriteString(chunk.Content)
+		total := totalContent.String()
 
-		if cardMsgID != "" && (len(answerBuilder.String())-lastPatch) >= 200 {
-			lastPatch = len(answerBuilder.String())
-			streamingCard := buildChatStreamingCard(paperID, paper.Title, question, answerBuilder.String())
-			if len(streamingCard) <= maxCardJSONBytes {
-				b.patchCard(cardMsgID, streamingCard)
+		if len(total)-lastPatch < 200 {
+			continue
+		}
+		lastPatch = len(total)
+
+		active := &slots[len(slots)-1]
+		cardContent := total[active.startAt:]
+		isFirst := len(slots) == 1
+
+		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
+			if isFirst {
+				return buildChatStreamingCard(paperID, paper.Title, question, c)
+			}
+			return buildChatStreamingContinuationCard(question, c)
+		})
+
+		if overflow != "" {
+			// Freeze current card as a continuation card
+			b.patchCard(active.id, buildContinuationCard(fits))
+
+			// Send new streaming continuation card
+			overflowStart := active.startAt + len(fits)
+			overflowContent := total[overflowStart:]
+			newID := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(question, overflowContent))
+			if newID != "" {
+				slots = append(slots, chatCardSlot{id: newID, startAt: overflowStart})
+				log.Printf("[feishu] chat card full -> card #%d (total so far: %d chars)", len(slots), len(total))
+			}
+		} else {
+			if isFirst {
+				b.patchCard(active.id, buildChatStreamingCard(paperID, paper.Title, question, fits))
+			} else {
+				b.patchCard(active.id, buildChatStreamingContinuationCard(question, fits))
 			}
 		}
 	}
 
-	answer := answerBuilder.String()
+	answer := totalContent.String()
 
 	// Save messages
 	paper.AddMessage(session.Message{
@@ -680,16 +740,20 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	})
 	paper.Save()
 
-	// Update card to done state, handling overflow
-	if cardMsgID != "" {
-		fits, overflow := fitMarkdownContent(answer, func(c string) string {
-			return buildChatDoneCard(paperID, paper.Title, question, c)
-		})
-		b.patchCard(cardMsgID, buildChatDoneCard(paperID, paper.Title, question, fits))
+	// Finalize last card
+	last := &slots[len(slots)-1]
+	lastContent := answer[last.startAt:]
 
-		if overflow != "" {
-			b.sendOverflowAsText(chatID, overflow, "💬 回答（续）")
-		}
+	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
+		return buildChatDoneCard(paperID, paper.Title, question, c)
+	})
+
+	if overflow != "" {
+		// Last card still doesn't fit — freeze, send one more done card
+		b.patchCard(last.id, buildContinuationCard(fits))
+		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, question, overflow))
+	} else {
+		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, question, fits))
 	}
 }
 
