@@ -281,6 +281,18 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 			return
 		}
 
+		if paperID == "" {
+			// Fall back to global active paper (survives restarts)
+			paperID = session.GetActivePaper()
+			if paperID != "" {
+				// Restore per-chat session from global state
+				s.mu.Lock()
+				s.paperID = paperID
+				s.mu.Unlock()
+				log.Printf("[feishu] restored active paper %s for chat %s", paperID, chatID)
+			}
+		}
+
 		if paperID != "" {
 			b.cmdChat(chatID, messageID, paperID, text)
 		} else {
@@ -336,10 +348,13 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		return
 	}
 
-	// Set as active paper for this chat
+	// Set as active paper for this chat AND globally
 	s.mu.Lock()
 	s.paperID = paper.Ref()
 	s.mu.Unlock()
+	if err := session.SetActivePaper(paper.Ref()); err != nil {
+		log.Printf("[feishu] set active paper error: %v", err)
+	}
 
 	log.Printf("[feishu] paper created: %s", paper.Ref())
 
@@ -549,6 +564,15 @@ func (b *Bot) cmdSummary(chatID string) {
 	s.mu.Unlock()
 
 	if paperID == "" {
+		paperID = session.GetActivePaper()
+		if paperID != "" {
+			s.mu.Lock()
+			s.paperID = paperID
+			s.mu.Unlock()
+		}
+	}
+
+	if paperID == "" {
 		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
 		return
 	}
@@ -570,6 +594,15 @@ func (b *Bot) cmdFetch(chatID, text string) {
 	s.mu.Lock()
 	paperID := s.paperID
 	s.mu.Unlock()
+
+	if paperID == "" {
+		paperID = session.GetActivePaper()
+		if paperID != "" {
+			s.mu.Lock()
+			s.paperID = paperID
+			s.mu.Unlock()
+		}
+	}
 
 	if paperID == "" {
 		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
@@ -770,6 +803,11 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string) (*callback.CardActionT
 	s.paperID = paperID
 	s.mu.Unlock()
 
+	// Set as global active paper
+	if err := session.SetActivePaper(paperID); err != nil {
+		log.Printf("[feishu] set active paper error: %v", err)
+	}
+
 	// Rebuild the list card with the selected paper highlighted
 	papers, _ := session.ListPapers()
 	if len(papers) > 10 {
@@ -806,6 +844,11 @@ func (b *Bot) handleCardResumeQA(paperID, chatID string) (*callback.CardActionTr
 	s.mu.Lock()
 	s.paperID = paperID
 	s.mu.Unlock()
+
+	// Set as global active paper
+	if err := session.SetActivePaper(paperID); err != nil {
+		log.Printf("[feishu] set active paper error: %v", err)
+	}
 
 	title := paper.Title
 	if title == "" {

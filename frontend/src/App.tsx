@@ -11,6 +11,15 @@ import { useConnection } from './hooks/useConnection'
 import { useAppStore, applyTheme } from './stores/appStore'
 import { useQueryClient } from '@tanstack/react-query'
 
+// Helper: sync the active paper ID to the server.
+export async function setActivePaperOnServer(id: string | null) {
+  await fetch('/api/active-paper', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id ?? '' }),
+  }).catch(() => {})
+}
+
 export default function App() {
   useConnection()
   const qc = useQueryClient()
@@ -27,6 +36,17 @@ export default function App() {
     } else if (paperIdToOpen) {
       window.history.replaceState({}, '', '/')
       useAppStore.getState().setCurrentPaperId(paperIdToOpen)
+      setActivePaperOnServer(paperIdToOpen)
+    } else {
+      // No URL or paper param — restore the persisted active paper
+      fetch('/api/active-paper')
+        .then((res) => res.json())
+        .then((data: { id: string | null }) => {
+          if (data.id) {
+            useAppStore.getState().setCurrentPaperId(data.id)
+          }
+        })
+        .catch(() => {})
     }
 
     async function createPaperFromUrl(url: string) {

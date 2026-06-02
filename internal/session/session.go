@@ -480,6 +480,34 @@ func paperPathByRef(ref string) (string, error) {
 	return "", os.ErrNotExist
 }
 
+// activePaperPath returns the path to the active paper file.
+func activePaperPath() string {
+	return filepath.Join(config.ConfigDir(), "active_paper")
+}
+
+// SetActivePaper persists the currently active paper ID.
+func SetActivePaper(ref string) error {
+	dir := config.ConfigDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(activePaperPath(), []byte(strings.TrimSpace(ref)), 0644)
+}
+
+// GetActivePaper returns the persisted active paper ID, or empty string if none.
+func GetActivePaper() string {
+	data, err := os.ReadFile(activePaperPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// ClearActivePaper removes the active paper persistence file.
+func ClearActivePaper() error {
+	return os.Remove(activePaperPath())
+}
+
 func newSessionID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

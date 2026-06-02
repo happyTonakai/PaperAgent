@@ -98,6 +98,11 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-set as active paper
+	if err := session.SetActivePaper(paper.Ref()); err != nil {
+		log.Printf("[new-paper] set active paper error: %v", err)
+	}
+
 	log.Printf("[new-paper] paper created: %s", paper.Ref())
 
 	// Start SSE stream
@@ -896,6 +901,51 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleGetActivePaper returns the persisted active paper ID.
+func (s *Server) handleGetActivePaper(w http.ResponseWriter, r *http.Request) {
+	id := session.GetActivePaper()
+	if id == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"id": nil})
+		return
+	}
+	// Verify the paper still exists
+	paper, err := session.LoadPaperByRef(id)
+	if err != nil {
+		// Paper was deleted, clear stale active paper
+		session.ClearActivePaper()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"id": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"id": paper.Ref()})
+}
+
+// handleSetActivePaper persists the active paper ID.
+func (s *Server) handleSetActivePaper(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<12) // 4KB
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.ID == "" {
+		session.ClearActivePaper()
+		writeJSON(w, http.StatusOK, map[string]string{"status": "cleared"})
+		return
+	}
+	// Verify the paper exists
+	if _, err := session.LoadPaperByRef(req.ID); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "paper not found"})
+		return
+	}
+	if err := session.SetActivePaper(req.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
 
 func (s *Server) handleFeishuStatus(w http.ResponseWriter, r *http.Request) {

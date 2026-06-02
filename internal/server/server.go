@@ -77,6 +77,8 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/feishu/status", s.handleFeishuStatus)
+	mux.HandleFunc("GET /api/active-paper", s.handleGetActivePaper)
+	mux.HandleFunc("PUT /api/active-paper", s.handleSetActivePaper)
 
 	s.registerStatic()
 }

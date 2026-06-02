@@ -2,6 +2,7 @@ import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Set
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
+import { setActivePaperOnServer } from '../App'
 import { toast } from 'sonner'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { PaperSummary } from '../types'
@@ -155,7 +156,10 @@ export function PaperList() {
     try {
       await deletePaper.mutateAsync(id)
       toast.success('论文已删除')
-      if (currentPaperId === id) setCurrentPaperId(null)
+      if (currentPaperId === id) {
+      setCurrentPaperId(null)
+      setActivePaperOnServer(null)
+    }
     } catch {
       toast.error('删除失败')
     }
@@ -392,8 +396,18 @@ export function PaperList() {
               role="button"
               tabIndex={0}
               className="cursor-pointer outline-none"
-              onClick={() => { if (editingTitle !== p.id) setCurrentPaperId(p.id) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && editingTitle !== p.id) setCurrentPaperId(p.id) }}
+              onClick={() => {
+                if (editingTitle !== p.id) {
+                  setCurrentPaperId(p.id)
+                  setActivePaperOnServer(p.id)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && editingTitle !== p.id) {
+                  setCurrentPaperId(p.id)
+                  setActivePaperOnServer(p.id)
+                }
+              }}
             >
               {editingTitle === p.id ? (
                 <div className="flex items-center gap-1">
