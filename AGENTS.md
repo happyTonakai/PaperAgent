@@ -39,7 +39,7 @@ go vet ./...
 ### Two-phase state machine
 
 - **INIT phase**: Paper content + `heavy.txt` prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted from URL via HTML parsing.
-- **CHAT phase**: Each question sends paper content + `light.txt` prompt + last 5 rounds.
+- **CHAT phase**: Each question sends paper content + `light.txt` prompt + last 5 rounds (excluding btw rounds).
 
 ### Module layout (`internal/`)
 
@@ -47,20 +47,21 @@ go vet ./...
 |---|---|
 | `config/` | `~/.paperagent/config.yaml` loading, env var overrides, path helpers |
 | `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` helper for title extraction. |
-| `session/` | `Paper` and `Message` data models. Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.paperagent/papers/{id}.json`. Uses UUID-based session IDs. |
+| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` returns last N rounds excluding btw messages. |
 | `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.paperagent/prompts/{name}.txt` first. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
 | `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.paperagent/prompts/export.md`. |
-| `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
+| `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/btw`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
 
 ### Data flow
 
 1. User provides paper → `urlparse` fetches content
 2. `session.NewPaper()` creates paper object
 3. INIT: full paper + HEAVY_PROMPT → streamed summary
-4. CHAT: each question → paper + LIGHT_PROMPT + last 5 rounds → streamed answer
-5. Title extracted from URL via HTML parsing (urlparse)
-6. All persisted as JSON in `~/.paperagent/papers/`
+4. CHAT: each question → paper + LIGHT_PROMPT + last 5 non-btw rounds → streamed answer
+5. BTW questions (sent via `/btw <question>`) are persisted with `SkipContext: true` and excluded from step 4's context
+6. Title extracted from URL via HTML parsing (urlparse)
+7. All persisted as JSON in `~/.paperagent/papers/`
 
 ### Entry point
 

@@ -16,12 +16,15 @@ const (
 )
 
 type SSEEvent struct {
-	Type     string `json:"type"`
-	Content  string `json:"content,omitempty"`
-	Error    string `json:"error,omitempty"`
-	PaperID  string `json:"paper_id,omitempty"`
-	Title    string `json:"title,omitempty"`
-	RoundID  int    `json:"round_id,omitempty"`
+	Type             string `json:"type"`
+	Content          string `json:"content,omitempty"`
+	Error            string `json:"error,omitempty"`
+	PaperID          string `json:"paper_id,omitempty"`
+	Title            string `json:"title,omitempty"`
+	RoundID          int    `json:"round_id,omitempty"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	CachedTokens     int    `json:"cached_tokens,omitempty"`
 }
 
 type sseWriter struct {
@@ -66,6 +69,16 @@ func (s *sseWriter) WriteCreated(paperID string) error {
 
 func (s *sseWriter) WriteDone(paperID string) error {
 	return s.WriteEvent(SSEEvent{Type: SSEEventDone, PaperID: paperID})
+}
+
+func (s *sseWriter) WriteDoneWithTokens(paperID string, promptTokens, completionTokens, cachedTokens int) error {
+	return s.WriteEvent(SSEEvent{
+		Type:             SSEEventDone,
+		PaperID:          paperID,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+	})
 }
 
 func (s *sseWriter) WriteError(errMsg string) error {

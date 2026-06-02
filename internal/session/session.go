@@ -19,11 +19,15 @@ import (
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type Message struct {
-	RoundNumber int       `json:"round_number"`
-	Role        string    `json:"role"`
-	Content     string    `json:"content"`
-	TokenCount  int       `json:"token_count"`
-	CreatedAt   time.Time `json:"created_at"`
+	RoundNumber      int       `json:"round_number"`
+	Role             string    `json:"role"`
+	Content          string    `json:"content"`
+	TokenCount       int       `json:"token_count"`
+	PromptTokens     int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens int       `json:"completion_tokens,omitempty"`
+	CachedTokens     int       `json:"cached_tokens,omitempty"`
+	SkipContext      bool      `json:"skip_context,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 type Paper struct {
@@ -35,9 +39,12 @@ type Paper struct {
 	SourceURL      string    `json:"source_url"`
 	Content        string    `json:"content"`
 	InitialSummary string    `json:"initial_summary"`
-	ModelUsed      string    `json:"model_used"`
-	TotalTokens    int       `json:"total_tokens_used"`
-	Rating         int       `json:"rating"`
+	ModelUsed                string    `json:"model_used"`
+	TotalTokens              int       `json:"total_tokens_used"`
+	TotalPromptTokens        int       `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens    int       `json:"total_completion_tokens,omitempty"`
+	TotalCachedTokens        int       `json:"total_cached_tokens,omitempty"`
+	Rating                   int       `json:"rating"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Messages       []Message `json:"messages"`
@@ -63,6 +70,9 @@ func (p *Paper) AddMessage(msg Message) {
 	p.Messages = append(p.Messages, msg)
 	p.UpdatedAt = time.Now()
 	p.TotalTokens += msg.TokenCount
+	p.TotalPromptTokens += msg.PromptTokens
+	p.TotalCompletionTokens += msg.CompletionTokens
+	p.TotalCachedTokens += msg.CachedTokens
 }
 
 func (p *Paper) SetInitialSummary(summary string) {
@@ -112,6 +122,32 @@ func (p *Paper) RecentMessages(n int) []Message {
 	return msgs[len(msgs)-n*2:]
 }
 
+// RecentContextMessages returns the last n rounds of messages where SkipContext is false.
+// Each round consists of a user+assistant pair. Messages with SkipContext=true are skipped.
+func (p *Paper) RecentContextMessages(n int) []Message {
+	if p == nil || n <= 0 {
+		return nil
+	}
+	// Walk backwards, collecting complete rounds (user+assistant) that are not skipped.
+	var result []Message
+	roundsFound := 0
+	for i := len(p.Messages) - 1; i >= 0 && roundsFound < n; {
+		if p.Messages[i].Role == "assistant" && !p.Messages[i].SkipContext {
+			// Found an assistant message that is context-bearing. Look for its user counterpart.
+			end := i + 1
+			for i >= 0 && p.Messages[i].RoundNumber == p.Messages[end-1].RoundNumber {
+				i--
+			}
+			start := i + 1
+			result = append(p.Messages[start:end], result...)
+			roundsFound++
+		} else {
+			i--
+		}
+	}
+	return result
+}
+
 func (p *Paper) Save() error {
 	if p == nil {
 		return nil
@@ -147,10 +183,13 @@ func (m *Manager) AddMessage(msg Message) {
 		m.paper.Messages = append(m.paper.Messages, msg)
 		m.paper.UpdatedAt = time.Now()
 		m.paper.TotalTokens += msg.TokenCount
+		m.paper.TotalPromptTokens += msg.PromptTokens
+		m.paper.TotalCompletionTokens += msg.CompletionTokens
+		m.paper.TotalCachedTokens += msg.CachedTokens
 	}
 }
 
-func (m *Manager) UpdateLastAssistant(content string, tokenCount int) {
+func (m *Manager) UpdateLastAssistant(content string, tokenCount int, promptTokens, completionTokens, cachedTokens int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.paper == nil || len(m.paper.Messages) == 0 {
@@ -160,6 +199,9 @@ func (m *Manager) UpdateLastAssistant(content string, tokenCount int) {
 		if m.paper.Messages[i].Role == "assistant" {
 			m.paper.Messages[i].Content = content
 			m.paper.Messages[i].TokenCount = tokenCount
+			m.paper.Messages[i].PromptTokens = promptTokens
+			m.paper.Messages[i].CompletionTokens = completionTokens
+			m.paper.Messages[i].CachedTokens = cachedTokens
 			m.paper.UpdatedAt = time.Now()
 			return
 		}

@@ -267,8 +267,30 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		b.cmdFetch(chatID, text)
 	case text == "/help":
 		b.sendText(chatID, helpText)
+	case strings.HasPrefix(text, "/btw "):
+		btwQuestion := strings.TrimSpace(strings.TrimPrefix(text, "/btw "))
+		if btwQuestion == "" {
+			b.sendText(chatID, "请提供问题，例如：\n`/btw 什么是注意力机制？`")
+			return
+		}
+		s.mu.Lock()
+		paperID := s.paperID
+		s.mu.Unlock()
+		if paperID == "" {
+			paperID = session.GetActivePaper()
+			if paperID != "" {
+				s.mu.Lock()
+				s.paperID = paperID
+				s.mu.Unlock()
+			}
+		}
+		if paperID != "" {
+			b.cmdChat(chatID, messageID, paperID, btwQuestion, true)
+		} else {
+			b.sendText(chatID, "请先使用 `/new <链接>` 创建一篇论文，然后再进行问答。")
+		}
 	case strings.HasPrefix(text, "/"):
-		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/help` — 查看帮助")
+		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/help` — 查看帮助")
 	default:
 		// Treat as Q&A if there's an active paper
 		s.mu.Lock()
@@ -294,7 +316,7 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		}
 
 		if paperID != "" {
-			b.cmdChat(chatID, messageID, paperID, text)
+			b.cmdChat(chatID, messageID, paperID, text, false)
 		} else {
 			b.sendText(chatID, "请先使用 `/new <链接>` 创建一篇论文，然后再进行问答。\n\n使用 `/help` 查看所有命令。")
 		}
@@ -416,6 +438,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 
 	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
 	var totalContent strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 	lastPatch := 0
 
 	for chunk := range ch {
@@ -425,6 +448,9 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		totalContent.WriteString(chunk.Content)
@@ -483,19 +509,19 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	lastContent := summary[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildDoneCard(paper.Ref(), paper.Title, c)
+		return buildDoneCard(paper.Ref(), paper.Title, c, promptTokens, completionTokens, cachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card's content still doesn't fit — freeze as continuation, send one more done card
 		b.patchCard(last.id, buildContinuationCard(fits))
-		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, overflow))
+		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, overflow, promptTokens, completionTokens, cachedTokens))
 	} else if len(slots) == 1 {
 		// Single card: patch from streaming to done in-place
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, promptTokens, completionTokens, cachedTokens))
 	} else {
 		// Last of multiple cards: patch to done
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, promptTokens, completionTokens, cachedTokens))
 	}
 }
 
@@ -654,7 +680,7 @@ func (b *Bot) cmdFetch(chatID, text string) {
 }
 
 // cmdChat handles a Q&A round for an active paper.
-func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
+func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext bool) {
 	paper, err := session.LoadPaperByRef(paperID)
 	if err != nil {
 		b.sendText(chatID, "❌ 找不到该文章，请重新 `/new` 创建。")
@@ -669,8 +695,8 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 
 	round := paper.CurrentRound() + 1
 
-	// Build messages
-	recent := paper.RecentMessages(b.cfg.UI.MaxRecentRounds)
+	// Build messages (exclude btw rounds from context)
+	recent := paper.RecentContextMessages(b.cfg.UI.MaxRecentRounds)
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetLight()},
 		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
@@ -686,7 +712,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	if cardMsgID == "" {
 		log.Printf("[feishu] failed to send thinking card")
 		// Fall back to text
-		result, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages)
+		result, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages)
 		if chatErr != nil {
 			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
 			return
@@ -705,6 +731,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	// Stream the answer
 	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
 	var totalContent strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 	lastPatch := 0
 
 	for chunk := range ch {
@@ -714,6 +741,9 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		totalContent.WriteString(chunk.Content)
@@ -764,12 +794,17 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 		Role:        "user",
 		Content:     question,
 		TokenCount:  session.EstimateTokens(question),
+		SkipContext: skipContext,
 	})
 	paper.AddMessage(session.Message{
-		RoundNumber: round,
-		Role:        "assistant",
-		Content:     answer,
-		TokenCount:  session.EstimateTokens(answer),
+		RoundNumber:      round,
+		Role:             "assistant",
+		Content:          answer,
+		TokenCount:       session.EstimateTokens(answer),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+		SkipContext:      skipContext,
 	})
 	paper.Save()
 
@@ -778,15 +813,15 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string) {
 	lastContent := answer[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildChatDoneCard(paperID, paper.Title, c)
+		return buildChatDoneCard(paperID, paper.Title, c, round, promptTokens, completionTokens, cachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card still doesn't fit — freeze, send one more done card
 		b.patchCard(last.id, buildContinuationCard(fits))
-		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, overflow))
+		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, overflow, round, promptTokens, completionTokens, cachedTokens))
 	} else {
-		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, fits))
+		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, fits, round, promptTokens, completionTokens, cachedTokens))
 	}
 }
 
@@ -963,6 +998,7 @@ const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"• **/list** — 查看最近 10 篇文章\n" +
 	"• **/summary** — 查看当前论文的初始总结\n" +
 	"• **/fetch [n]** — 拉取最近 n 轮问答（默认 2）\n" +
+	"• **/btw <问题>** — 提问但不记入上下文\n" +
 	"• **/help** — 显示本帮助\n" +
 	"\n" +
 	"直接发送文字即可对当前论文进行多轮 Q&A。"

@@ -215,7 +215,7 @@ func buildStreamingCard(paperID, title, content string) string {
 
 // ─── Done card (after summary completes) ───
 
-func buildDoneCard(paperID, title, content string) string {
+func buildDoneCard(paperID, title, content string, promptTokens, completionTokens, cachedTokens int) string {
 	c := cardBase()
 	hdrTitle := "✅ 总结完成"
 	if title != "" {
@@ -223,10 +223,15 @@ func buildDoneCard(paperID, title, content string) string {
 	}
 	c["header"] = cardHeader(hdrTitle, "green")
 
+	tokenNote := "直接在聊天中提问即可 🎉"
+	if promptTokens > 0 || completionTokens > 0 {
+		tokenNote = fmt.Sprintf("输入 %d tokens · 输出 %d tokens · 缓存命中 %d tokens", promptTokens, completionTokens, cachedTokens)
+	}
+
 	elements := []map[string]any{
 		mdElement(content),
 		hrElement(),
-		noteElement("直接在聊天中提问即可 🎉"),
+		noteElement(tokenNote),
 	}
 
 	c["body"] = map[string]any{"elements": elements}
@@ -303,7 +308,7 @@ func buildChatStreamingCard(paperID, title, content string) string {
 
 // ─── Chat done card ───
 
-func buildChatDoneCard(paperID, title, answer string) string {
+func buildChatDoneCard(paperID, title, answer string, round int, promptTokens, completionTokens, cachedTokens int) string {
 	c := cardBase()
 	hdrTitle := "✅ 回答完成"
 	if title != "" {
@@ -311,10 +316,15 @@ func buildChatDoneCard(paperID, title, answer string) string {
 	}
 	c["header"] = cardHeader(hdrTitle, "green")
 
+	tokenNote := "继续提问即可进行多轮对话 ✨"
+	if promptTokens > 0 || completionTokens > 0 {
+		tokenNote = fmt.Sprintf("第 %d 轮 · 输入 %d tokens · 输出 %d tokens · 缓存命中 %d tokens", round, promptTokens, completionTokens, cachedTokens)
+	}
+
 	elements := []map[string]any{
 		mdElement(answer),
 		hrElement(),
-		noteElement("继续提问即可进行多轮对话 ✨"),
+		noteElement(tokenNote),
 	}
 	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)

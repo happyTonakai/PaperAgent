@@ -12,9 +12,20 @@ interface MessageBubbleProps {
   content: string
   roundNumber?: number
   isStreaming?: boolean
+  skipContext?: boolean
+  promptTokens?: number
+  completionTokens?: number
+  cachedTokens?: number
+  cumulativePromptTokens?: number
+  cumulativeCompletionTokens?: number
+  cumulativeCachedTokens?: number
 }
 
-export function MessageBubble({ role, content, roundNumber, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ role, content, roundNumber, isStreaming, skipContext, promptTokens, completionTokens, cachedTokens, cumulativePromptTokens, cumulativeCompletionTokens, cumulativeCachedTokens }: MessageBubbleProps) {
+  const hasTokens = role === 'assistant' && (promptTokens !== undefined || completionTokens !== undefined) &&
+    (promptTokens !== 0 || completionTokens !== 0) && !isStreaming
+  const hasCumulative = hasTokens && cumulativePromptTokens !== undefined && (cumulativePromptTokens > 0 || cumulativeCompletionTokens! > 0)
+
   return (
     <div
       className="flex gap-3 px-5 py-4 animate-fade-in-up"
@@ -45,6 +56,21 @@ export function MessageBubble({ role, content, roundNumber, isStreaming }: Messa
         {role === 'user' ? 'Q' : 'A'}
       </div>
 
+      {/* BTW badge */}
+      {skipContext && (
+        <span
+          className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded mt-1 select-none"
+          style={{
+            fontFamily: 'var(--font-ui)',
+            color: role === 'user' ? 'var(--color-accent)' : 'var(--color-text-muted)',
+            backgroundColor: role === 'user' ? 'var(--color-accent-subtle)' : 'var(--color-bg-inset)',
+            opacity: 0.7,
+          }}
+        >
+          BTW
+        </span>
+      )}
+
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="markdown-body leading-relaxed">
@@ -63,6 +89,26 @@ export function MessageBubble({ role, content, roundNumber, isStreaming }: Messa
               animation: 'cursor-blink 0.7s step-end infinite',
             }}
           />
+        )}
+        {hasTokens && (
+          <div
+            className="mt-2 text-xs leading-relaxed"
+            style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-ui)' }}
+          >
+            <span style={{ opacity: 0.6 }}>本轮</span> 输入 {(promptTokens ?? 0).toLocaleString()} · 输出 {(completionTokens ?? 0).toLocaleString()}
+            {(cachedTokens ?? 0) > 0 && (
+              <> · 缓存命中 {(cachedTokens ?? 0).toLocaleString()}</>
+            )}
+            {hasCumulative && (
+              <>
+                <span className="mx-2" style={{ opacity: 0.3 }}>|</span>
+                <span style={{ opacity: 0.6 }}>累计</span> 输入 {(cumulativePromptTokens ?? 0).toLocaleString()} · 输出 {(cumulativeCompletionTokens ?? 0).toLocaleString()}
+                {(cumulativeCachedTokens ?? 0) > 0 && (
+                  <> · 缓存命中 {(cumulativeCachedTokens ?? 0).toLocaleString()}</>
+                )}
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

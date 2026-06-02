@@ -137,7 +137,7 @@ export function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPaperId])
 
-  const handleSendQuestion = useCallback(async (question: string) => {
+  const handleSendQuestion = useCallback(async (question: string, opts?: { skipContext?: boolean }) => {
     if (!currentPaperId || isStreamingLocal) return
     setStreamingContent('')
     setPendingUserQuestion(question)
@@ -149,7 +149,11 @@ export function ChatView() {
     setPendingUserRound(nextRound)
     answeringRound.current = nextRound
     setIsStreamingLocal(true)
-    await streamRequest(`/api/papers/${currentPaperId}/chat`, { question }, {
+    const body: Record<string, unknown> = { question }
+    if (opts?.skipContext) {
+      body.skip_context = true
+    }
+    await streamRequest(`/api/papers/${currentPaperId}/chat`, body, {
       onChunk: (content) => setStreamingContent((prev) => prev + content),
       onDone: () => {
         setIsStreamingLocal(false)
@@ -487,14 +491,29 @@ export function ChatView() {
 
         {/* COMPLETED MESSAGES */}
         <div data-msg-start />
-        {allMessages.map((msg, idx) => (
-          <MessageBubble
-            key={`${msg.round_number}-${msg.role}-${idx}`}
-            role={msg.role}
-            content={msg.content}
-            roundNumber={msg.round_number}
-          />
-        ))}
+        {(() => {
+          let cumP = 0, cumC = 0, cumCache = 0
+          return allMessages.map((msg, idx) => {
+            if (msg.prompt_tokens) cumP += msg.prompt_tokens
+            if (msg.completion_tokens) cumC += msg.completion_tokens
+            if (msg.cached_tokens) cumCache += msg.cached_tokens
+            return (
+              <MessageBubble
+                key={`${msg.round_number}-${msg.role}-${idx}`}
+                role={msg.role}
+                content={msg.content}
+                roundNumber={msg.round_number}
+                promptTokens={msg.prompt_tokens}
+                completionTokens={msg.completion_tokens}
+                cachedTokens={msg.cached_tokens}
+                cumulativePromptTokens={cumP}
+                cumulativeCompletionTokens={cumC}
+                cumulativeCachedTokens={cumCache}
+                skipContext={msg.skip_context}
+              />
+            )
+          })
+        })()}
         <div data-msg-end />
 
         {/* PENDING USER QUESTION — shown during streaming and until refetch catches up */}

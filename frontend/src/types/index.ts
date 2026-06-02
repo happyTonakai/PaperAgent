@@ -5,6 +5,10 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   token_count: number
+  prompt_tokens?: number
+  completion_tokens?: number
+  cached_tokens?: number
+  skip_context?: boolean
 }
 
 export interface Paper {
@@ -13,6 +17,10 @@ export interface Paper {
   source_url: string
   initial_summary: string
   model_used: string
+  total_tokens_used?: number
+  total_prompt_tokens?: number
+  total_completion_tokens?: number
+  total_cached_tokens?: number
   rating?: number
   created_at: string
   updated_at: string
@@ -35,6 +43,9 @@ export interface SSEEvent {
   paper_id?: string
   title?: string
   round_id?: number
+  prompt_tokens?: number
+  completion_tokens?: number
+  cached_tokens?: number
 }
 
 // ---- UI State Types ----

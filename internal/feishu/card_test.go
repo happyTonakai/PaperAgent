@@ -133,7 +133,7 @@ func TestMultiCardSplit_RealPaper(t *testing.T) {
 		// Verify each card fits within limits
 		var cardJSON string
 		if i == 0 {
-			cardJSON = buildDoneCard("test", title, cardContent)
+			cardJSON = buildDoneCard("test", title, cardContent, 0, 0, 0)
 		} else {
 			cardJSON = buildContinuationCard(cardContent)
 		}
@@ -254,7 +254,7 @@ func TestMultiCardSplit_LargeContent(t *testing.T) {
 
 		var cardJSON string
 		if i == 0 {
-			cardJSON = buildDoneCard("test", "Stress Test", cardContent)
+			cardJSON = buildDoneCard("test", "Stress Test", cardContent, 0, 0, 0)
 		} else {
 			cardJSON = buildContinuationCard(cardContent)
 		}
@@ -368,7 +368,7 @@ func TestMultiCardSplit_Chat(t *testing.T) {
 
 		var cardJSON string
 		if i == 0 {
-			cardJSON = buildChatDoneCard(paperID, title, cardContent)
+			cardJSON = buildChatDoneCard(paperID, title, cardContent, 0, 0, 0, 0)
 		} else {
 			cardJSON = buildChatStreamingContinuationCard(cardContent)
 		}

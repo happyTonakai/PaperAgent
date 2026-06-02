@@ -35,7 +35,7 @@ func TestChatIntegration(t *testing.T) {
 		{Role: "user", Content: "What is 2+2? Reply with just the number."},
 	}
 
-	result, tokens, err := client.Chat(cfg.API.DefaultModel, messages)
+	result, promptTokens, completionTokens, totalTokens, cachedTokens, err := client.Chat(cfg.API.DefaultModel, messages)
 	if err != nil {
 		t.Fatalf("chat error: %v", err)
 	}
@@ -43,11 +43,11 @@ func TestChatIntegration(t *testing.T) {
 	if result == "" {
 		t.Error("expected non-empty response")
 	}
-	if tokens < 0 {
-		t.Errorf("expected non-negative tokens, got %d", tokens)
+	if completionTokens < 0 {
+		t.Errorf("expected non-negative tokens, got %d", completionTokens)
 	}
 
-	t.Logf("Response: %s (tokens: %d)", result, tokens)
+	t.Logf("Response: %s (prompt: %d, completion: %d, total: %d, cached: %d)", result, promptTokens, completionTokens, totalTokens, cachedTokens)
 }
 
 func TestChatStreamIntegration(t *testing.T) {

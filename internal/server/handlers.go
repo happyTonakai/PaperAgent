@@ -26,28 +26,37 @@ type newPaperRequest struct {
 }
 
 type chatRequest struct {
-	Question string `json:"question"`
+	Question    string `json:"question"`
+	SkipContext bool   `json:"skip_context"`
 }
 
 // --- Response types ---
 
 type paperResponse struct {
-	ID             string            `json:"id"`
-	Title          string            `json:"title"`
-	SourceURL      string            `json:"source_url"`
-	InitialSummary string            `json:"initial_summary"`
-	ModelUsed      string            `json:"model_used"`
-	Rating         int               `json:"rating"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
-	Messages       []messageResponse `json:"messages"`
+	ID                   string            `json:"id"`
+	Title                string            `json:"title"`
+	SourceURL            string            `json:"source_url"`
+	InitialSummary       string            `json:"initial_summary"`
+	ModelUsed            string            `json:"model_used"`
+	TotalTokens          int               `json:"total_tokens_used,omitempty"`
+	TotalPromptTokens    int               `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens int              `json:"total_completion_tokens,omitempty"`
+	TotalCachedTokens    int               `json:"total_cached_tokens,omitempty"`
+	Rating               int               `json:"rating"`
+	CreatedAt            string            `json:"created_at"`
+	UpdatedAt            string            `json:"updated_at"`
+	Messages             []messageResponse `json:"messages"`
 }
 
 type messageResponse struct {
-	RoundNumber int    `json:"round_number"`
-	Role        string `json:"role"`
-	Content     string `json:"content"`
-	TokenCount  int    `json:"token_count"`
+	RoundNumber      int    `json:"round_number"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	TokenCount       int    `json:"token_count"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	CachedTokens     int    `json:"cached_tokens,omitempty"`
+	SkipContext      bool   `json:"skip_context,omitempty"`
 }
 
 type paperSummaryResponse struct {
@@ -140,6 +149,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
 	var summaryBuilder strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 
 	for chunk := range ch {
 		select {
@@ -155,6 +165,9 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		summaryBuilder.WriteString(chunk.Content)
@@ -168,9 +181,18 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[new-paper] summary complete for %s: %d chars", paper.Ref(), len(summary))
 
 	paper.SetInitialSummary(summary)
+	paper.AddMessage(session.Message{
+		RoundNumber:      0,
+		Role:             "assistant",
+		Content:          summary,
+		TokenCount:       session.EstimateTokens(summary),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+	})
 	paper.Save()
 
-	sw.WriteDone(paper.Ref())
+	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 func (s *Server) handleGetPaper(w http.ResponseWriter, r *http.Request) {
@@ -297,11 +319,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Role:        "user",
 		Content:     req.Question,
 		TokenCount:  session.EstimateTokens(req.Question),
+		SkipContext: req.SkipContext,
 	}
 	paper.AddMessage(userMsg)
 
 	// Build messages for CHAT phase
-	recent := paper.RecentMessages(s.cfg.UI.MaxRecentRounds)
+	recent := paper.RecentContextMessages(s.cfg.UI.MaxRecentRounds)
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetLight()},
 		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
@@ -309,6 +332,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	for _, msg := range recent {
 		messages = append(messages, api.ChatMessage{Role: msg.Role, Content: msg.Content})
 	}
+	// Add current question
+	messages = append(messages, api.ChatMessage{Role: "user", Content: req.Question})
 	unlock() // Release lock before SSE stream
 
 	// Stream answer via SSE
@@ -321,6 +346,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
 	var answerBuilder strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 
 	for chunk := range ch {
 		select {
@@ -336,6 +362,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		answerBuilder.WriteString(chunk.Content)
@@ -350,16 +379,20 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	unlock = s.lockPaper(id)
 	// Save assistant message
 	assistantMsg := session.Message{
-		RoundNumber: round,
-		Role:        "assistant",
-		Content:     answer,
-		TokenCount:  session.EstimateTokens(answer),
+		RoundNumber:      round,
+		Role:             "assistant",
+		Content:          answer,
+		TokenCount:       session.EstimateTokens(answer),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+		SkipContext:      req.SkipContext,
 	}
 	paper.AddMessage(assistantMsg)
 	paper.Save()
 	unlock()
 
-	sw.WriteDone(paper.Ref())
+	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 func (s *Server) handleDeleteRound(w http.ResponseWriter, r *http.Request) {
@@ -456,6 +489,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, msgs)
 	var newContent strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 
 	for chunk := range ch {
 		select {
@@ -471,6 +505,9 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		newContent.WriteString(chunk.Content)
@@ -491,9 +528,27 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 
 	final := existingSummary + newContent.String()
 	paper.SetInitialSummary(final)
+
+	// Remove any existing round-0 assistant messages and add the updated one
+	var filtered []session.Message
+	for _, m := range paper.Messages {
+		if !(m.RoundNumber == 0 && m.Role == "assistant") {
+			filtered = append(filtered, m)
+		}
+	}
+	paper.Messages = filtered
+	paper.AddMessage(session.Message{
+		RoundNumber:      0,
+		Role:             "assistant",
+		Content:          final,
+		TokenCount:       session.EstimateTokens(final),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+	})
 	paper.Save()
 
-	sw.WriteDone(paper.Ref())
+	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 // handleRetryChat regenerates the assistant answer for a specific round.
@@ -544,8 +599,11 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		{Role: "system", Content: prompt.GetLight()},
 		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
 	}
-	// Include messages from rounds before this one
+	// Include messages from rounds before this one (skip btw messages)
 	for _, m := range paper.Messages {
+		if m.SkipContext {
+			continue
+		}
 		if m.RoundNumber < round || (m.RoundNumber == round && m.Role == "user") {
 			messages = append(messages, api.ChatMessage{Role: m.Role, Content: m.Content})
 		}
@@ -565,6 +623,7 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
 	var answer strings.Builder
+	var promptTokens, completionTokens, cachedTokens int
 
 	for chunk := range ch {
 		select {
@@ -580,6 +639,9 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		answer.WriteString(chunk.Content)
@@ -601,14 +663,17 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	paper.AddMessage(session.Message{
-		RoundNumber: round,
-		Role:        "assistant",
-		Content:     result,
-		TokenCount:  session.EstimateTokens(result),
+		RoundNumber:      round,
+		Role:             "assistant",
+		Content:          result,
+		TokenCount:       session.EstimateTokens(result),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
 	})
 	paper.Save()
 
-	sw.WriteDone(paper.Ref())
+	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
@@ -804,6 +869,7 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
+	var promptTokens, completionTokens, cachedTokens int
 	for chunk := range ch {
 		select {
 		case <-r.Context().Done():
@@ -816,6 +882,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if chunk.Done {
+			promptTokens = chunk.PromptTokens
+			completionTokens = chunk.CompletionTokens
+			cachedTokens = chunk.CachedTokens
 			break
 		}
 		if err := sw.WriteChunk(chunk.Content); err != nil {
@@ -823,7 +892,7 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sw.WriteDone(paper.Ref())
+	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 // handleSummarizeExport summarizes the conversation and exports the result to Obsidian.
@@ -857,7 +926,7 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: context.String()},
 	}
 
-	result, _, err := s.api.Chat(s.cfg.API.DefaultModel, messages)
+	result, _, _, _, _, err := s.api.Chat(s.cfg.API.DefaultModel, messages)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "summarize failed: " + err.Error()})
 		return
@@ -999,23 +1068,31 @@ func paperToResponse(p *session.Paper) paperResponse {
 	msgs := make([]messageResponse, 0, len(p.Messages))
 	for _, m := range p.Messages {
 		msgs = append(msgs, messageResponse{
-			RoundNumber: m.RoundNumber,
-			Role:        m.Role,
-			Content:     m.Content,
-			TokenCount:  m.TokenCount,
+			RoundNumber:      m.RoundNumber,
+			Role:             m.Role,
+			Content:          m.Content,
+			TokenCount:       m.TokenCount,
+			PromptTokens:     m.PromptTokens,
+			CompletionTokens: m.CompletionTokens,
+			CachedTokens:     m.CachedTokens,
+			SkipContext:      m.SkipContext,
 		})
 	}
 
 	return paperResponse{
-		ID:             p.Ref(),
-		Title:          p.Title,
-		SourceURL:      p.SourceURL,
-		InitialSummary: p.InitialSummary,
-		ModelUsed:      p.ModelUsed,
-		Rating:         p.Rating,
-		CreatedAt:      p.CreatedAt.Format("2006-01-02 15:04"),
-		UpdatedAt:      p.UpdatedAt.Format("2006-01-02 15:04"),
-		Messages:       msgs,
+		ID:                    p.Ref(),
+		Title:                 p.Title,
+		SourceURL:             p.SourceURL,
+		InitialSummary:        p.InitialSummary,
+		ModelUsed:             p.ModelUsed,
+		TotalTokens:           p.TotalTokens,
+		TotalPromptTokens:     p.TotalPromptTokens,
+		TotalCompletionTokens: p.TotalCompletionTokens,
+		TotalCachedTokens:     p.TotalCachedTokens,
+		Rating:                p.Rating,
+		CreatedAt:             p.CreatedAt.Format("2006-01-02 15:04"),
+		UpdatedAt:             p.UpdatedAt.Format("2006-01-02 15:04"),
+		Messages:              msgs,
 	}
 }
 

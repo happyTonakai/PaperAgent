@@ -42,7 +42,12 @@ export function InputBox() {
     {
       name: '/help',
       description: '显示帮助',
-      action: () => toast('可用命令: /export /config /help', { duration: 5000 }),
+      action: () => toast('可用命令: /export /config /help /btw', { duration: 5000 }),
+    },
+    {
+      name: '/btw',
+      description: '提问但不记入上下文',
+      action: () => toast('请使用 /btw <问题> 格式直接在后面输入问题', { duration: 3000 }),
     },
   ]
 
@@ -70,6 +75,18 @@ export function InputBox() {
     if (!trimmed || isStreaming || !currentPaperId) return
 
     if (trimmed.startsWith('/')) {
+      // Check for /btw prefix: /btw <question>
+      const btwPrefix = '/btw '
+      if (trimmed.startsWith(btwPrefix)) {
+        const btwQuestion = trimmed.slice(btwPrefix.length).trim()
+        if (btwQuestion && sendQuestion) {
+          sendQuestion(btwQuestion, { skipContext: true })
+          el.value = ''
+          setLocalValue('')
+          return
+        }
+      }
+
       const cmd = commandsRef.current.find((c) => c.name === trimmed)
       if (cmd) {
         cmd.action()

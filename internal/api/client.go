@@ -35,17 +35,23 @@ type ChatResponse struct {
 		} `json:"message"`
 	} `json:"choices"`
 	Usage *struct {
-		CompletionTokens int `json:"completion_tokens"`
-		PromptTokens     int `json:"prompt_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		CompletionTokens     int `json:"completion_tokens"`
+		PromptTokens         int `json:"prompt_tokens"`
+		TotalTokens          int `json:"total_tokens"`
+		PromptTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage"`
 }
 
 type StreamChunk struct {
-	Content    string
-	Done       bool
-	TokenCount int
-	Err        error
+	Content          string
+	Done             bool
+	TokenCount       int // deprecated, kept for backward compat
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+	Err              error
 }
 
 type Client struct {
@@ -126,6 +132,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 			return
 		}
 
+		var promptTokens, completionTokens, cachedTokens int
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -134,13 +141,21 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
-				ch <- StreamChunk{Done: true}
+				ch <- StreamChunk{Done: true, PromptTokens: promptTokens, CompletionTokens: completionTokens, CachedTokens: cachedTokens}
 				return
 			}
 
 			var chunk ChatResponse
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				continue
+			}
+
+			if chunk.Usage != nil {
+				promptTokens = chunk.Usage.PromptTokens
+				completionTokens = chunk.Usage.CompletionTokens
+				if chunk.Usage.PromptTokensDetails != nil {
+					cachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+				}
 			}
 
 			if len(chunk.Choices) > 0 {
@@ -159,7 +174,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 	return ch
 }
 
-func (c *Client) Chat(model string, messages []ChatMessage) (string, int, error) {
+func (c *Client) Chat(model string, messages []ChatMessage) (string, int, int, int, int, error) {
 	req := ChatRequest{
 		Model:    model,
 		Messages: messages,
@@ -168,43 +183,51 @@ func (c *Client) Chat(model string, messages []ChatMessage) (string, int, error)
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, 0, 0, err
 	}
 
 	url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, 0, 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", 0, 0, 0, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", 0, err
+		return "", 0, 0, 0, 0, err
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", 0, fmt.Errorf("no response from API")
+		return "", 0, 0, 0, 0, fmt.Errorf("no response from API")
 	}
 
-	tokens := 0
+	promptTokens := 0
+	completionTokens := 0
+	totalTokens := 0
+	cachedTokens := 0
 	if chatResp.Usage != nil {
-		tokens = chatResp.Usage.CompletionTokens
+		promptTokens = chatResp.Usage.PromptTokens
+		completionTokens = chatResp.Usage.CompletionTokens
+		totalTokens = chatResp.Usage.TotalTokens
+		if chatResp.Usage.PromptTokensDetails != nil {
+			cachedTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+		}
 	}
 
-	return chatResp.Choices[0].Message.Content, tokens, nil
+	return chatResp.Choices[0].Message.Content, promptTokens, completionTokens, totalTokens, cachedTokens, nil
 }
 
 func (c *Client) ExtractTitle(model string, content string) (string, error) {
@@ -217,6 +240,6 @@ func (c *Client) ExtractTitle(model string, content string) (string, error) {
 		{Role: "system", Content: "从以下论文开头提取论文标题，直接输出标题，不要加任何前缀或引号。"},
 		{Role: "user", Content: excerpt},
 	}
-	result, _, err := c.Chat(model, messages)
+	result, _, _, _, _, err := c.Chat(model, messages)
 	return result, err
 }

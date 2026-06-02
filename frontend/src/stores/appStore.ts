@@ -61,8 +61,8 @@ interface AppState {
   setInputValue: (v: string) => void
 
   // Send question callback — set by ChatView so InputBox can send
-  sendQuestion: ((q: string) => void) | null
-  setSendQuestion: (fn: ((q: string) => void) | null) => void
+  sendQuestion: ((q: string, opts?: { skipContext?: boolean }) => void) | null
+  setSendQuestion: (fn: ((q: string, opts?: { skipContext?: boolean }) => void) | null) => void
 }
 
 // --- Theme ---
