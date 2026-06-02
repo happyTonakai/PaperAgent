@@ -813,15 +813,15 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	lastContent := answer[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildChatDoneCard(paperID, paper.Title, c, round, promptTokens, completionTokens, cachedTokens)
+		return buildChatDoneCard(paperID, paper.Title, c, round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card still doesn't fit — freeze, send one more done card
 		b.patchCard(last.id, buildContinuationCard(fits))
-		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, overflow, round, promptTokens, completionTokens, cachedTokens))
+		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, overflow, round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
 	} else {
-		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, fits, round, promptTokens, completionTokens, cachedTokens))
+		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, fits, round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
 	}
 }
 

@@ -225,7 +225,7 @@ func buildDoneCard(paperID, title, content string, promptTokens, completionToken
 
 	tokenNote := "直接在聊天中提问即可 🎉"
 	if promptTokens > 0 || completionTokens > 0 {
-		tokenNote = fmt.Sprintf("输入 %d tokens · 输出 %d tokens · 缓存命中 %d tokens", promptTokens, completionTokens, cachedTokens)
+		tokenNote = fmt.Sprintf("输入 %s tokens · 输出 %s tokens · 缓存命中 %s tokens", formatInt(promptTokens), formatInt(completionTokens), formatInt(cachedTokens))
 	}
 
 	elements := []map[string]any{
@@ -308,7 +308,7 @@ func buildChatStreamingCard(paperID, title, content string) string {
 
 // ─── Chat done card ───
 
-func buildChatDoneCard(paperID, title, answer string, round int, promptTokens, completionTokens, cachedTokens int) string {
+func buildChatDoneCard(paperID, title, answer string, round int, totalPromptTokens, totalCompletionTokens, totalCachedTokens int) string {
 	c := cardBase()
 	hdrTitle := "✅ 回答完成"
 	if title != "" {
@@ -317,8 +317,8 @@ func buildChatDoneCard(paperID, title, answer string, round int, promptTokens, c
 	c["header"] = cardHeader(hdrTitle, "green")
 
 	tokenNote := "继续提问即可进行多轮对话 ✨"
-	if promptTokens > 0 || completionTokens > 0 {
-		tokenNote = fmt.Sprintf("第 %d 轮 · 输入 %d tokens · 输出 %d tokens · 缓存命中 %d tokens", round, promptTokens, completionTokens, cachedTokens)
+	if totalPromptTokens > 0 || totalCompletionTokens > 0 {
+		tokenNote = fmt.Sprintf("第 %s 轮 · 累计输入 %s tokens · 累计输出 %s tokens · 累计缓存命中 %s tokens", formatInt(round), formatInt(totalPromptTokens), formatInt(totalCompletionTokens), formatInt(totalCachedTokens))
 	}
 
 	elements := []map[string]any{
@@ -620,6 +620,42 @@ func splitTextByBytes(text string, maxBytes int) []string {
 	}
 
 	return chunks
+}
+
+// formatInt formats an integer with thousands separator (e.g. 12345 → "12,345").
+func formatInt(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	// Convert to string in chunks of 3 digits
+	var parts []string
+	for n > 0 {
+		part := n % 1000
+		n /= 1000
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%03d", part))
+		} else {
+			parts = append(parts, fmt.Sprintf("%d", part))
+		}
+	}
+	// Reverse and join
+	result := strings.Join(reverse(parts), ",")
+	if neg {
+		result = "-" + result
+	}
+	return result
+}
+
+func reverse(s []string) []string {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
 }
 
 func paperShortRef(p session.Paper) string {
