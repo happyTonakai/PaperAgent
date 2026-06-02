@@ -266,7 +266,7 @@ func buildStreamingContinuationCard(content string) string {
 
 // ─── Thinking card (initial state when Q&A starts) ───
 
-func buildThinkingCard(paperID, title, question string) string {
+func buildThinkingCard(paperID, title string) string {
 	c := cardBase()
 	hdrTitle := "💭 思考中..."
 	if title != "" {
@@ -275,7 +275,7 @@ func buildThinkingCard(paperID, title, question string) string {
 	c["header"] = cardHeader(hdrTitle, "blue")
 
 	elements := []map[string]any{
-		mdElement(fmt.Sprintf("**Q:** %s\n\n⏳ 正在思考回答...", question)),
+		mdElement("⏳ 正在思考回答..."),
 	}
 	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)
@@ -283,7 +283,7 @@ func buildThinkingCard(paperID, title, question string) string {
 
 // ─── Chat streaming card ───
 
-func buildChatStreamingCard(paperID, title, question, content string) string {
+func buildChatStreamingCard(paperID, title, content string) string {
 	c := cardBase()
 	c["config"].(map[string]any)["update_multi"] = true
 	hdrTitle := "💭 回答中..."
@@ -293,7 +293,7 @@ func buildChatStreamingCard(paperID, title, question, content string) string {
 	c["header"] = cardHeader(hdrTitle, "blue")
 
 	elements := []map[string]any{
-		mdElement(fmt.Sprintf("**Q:** %s\n\n%s", question, content)),
+		mdElement(content),
 		hrElement(),
 		noteElement("⏳ 正在更新中..."),
 	}
@@ -303,7 +303,7 @@ func buildChatStreamingCard(paperID, title, question, content string) string {
 
 // ─── Chat done card ───
 
-func buildChatDoneCard(paperID, title, question, answer string) string {
+func buildChatDoneCard(paperID, title, answer string) string {
 	c := cardBase()
 	hdrTitle := "✅ 回答完成"
 	if title != "" {
@@ -312,7 +312,7 @@ func buildChatDoneCard(paperID, title, question, answer string) string {
 	c["header"] = cardHeader(hdrTitle, "green")
 
 	elements := []map[string]any{
-		mdElement(fmt.Sprintf("**Q:** %s\n\n%s", question, answer)),
+		mdElement(answer),
 		hrElement(),
 		noteElement("继续提问即可进行多轮对话 ✨"),
 	}
@@ -322,13 +322,13 @@ func buildChatDoneCard(paperID, title, question, answer string) string {
 
 // ─── Chat streaming continuation card ───
 
-func buildChatStreamingContinuationCard(question, content string) string {
+func buildChatStreamingContinuationCard(content string) string {
 	c := cardBase()
 	c["config"].(map[string]any)["update_multi"] = true
 	c["header"] = cardHeader("💭 回答（续）", "blue")
 	c["body"] = map[string]any{
 		"elements": []map[string]any{
-			mdElement(fmt.Sprintf("**Q:** %s\n\n%s", question, content)),
+			mdElement(content),
 			hrElement(),
 			noteElement("⏳ 正在更新中..."),
 		},
