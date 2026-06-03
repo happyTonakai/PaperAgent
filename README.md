@@ -53,6 +53,20 @@ sudo mv paperagent /usr/local/bin/
 
 二进制内嵌前端静态资源（React SPA），运行时无需安装 Node.js。
 
+### 🌐 Chrome 扩展（可选）
+
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/ojkppdajbpnhppadnnfpaabakmolcbkf?label=Chrome%20%E6%89%A9%E5%B1%95)](https://chromewebstore.google.com/detail/paperagent/ojkppdajbpnhppadnnfpaabakmolcbkf)
+
+> 📦 配套扩展，非独立客户端。实际仍需在本地运行 PaperAgent 服务端。
+
+安装 [PaperAgent Chrome 扩展](https://chromewebstore.google.com/detail/paperagent/ojkppdajbpnhppadnnfpaabakmolcbkf) 后，在 arXiv 论文页面（`arxiv.org/abs/*`）的右侧栏 **View PDF** / **TeX Source** 下方会增加一个「在 PaperAgent 中打开」按钮。
+
+点击按钮会：
+1. 自动探测本地 PaperAgent 服务端口（默认 8686～8785）
+2. 打开新标签页，自动加载该论文并开始流式生成摘要
+
+> 如服务端口非默认（通过 `PAPER_ADDR` 指定），可在扩展选项页中配置自定义端口。
+
 ## 配置
 
 支持两种配置方式，按需选用即可：

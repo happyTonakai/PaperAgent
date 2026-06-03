@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,8 +70,8 @@ func TestSaveAndLoadPaper(t *testing.T) {
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Messages: []Message{
-			{RoundNumber: 0, Role: "user", Content: "question", TokenCount: 10, CreatedAt: time.Now()},
-			{RoundNumber: 0, Role: "assistant", Content: "answer", TokenCount: 50, CreatedAt: time.Now()},
+			{RoundNumber: 0, Role: "user", Content: "test content", TokenCount: 10, CreatedAt: time.Now()},
+			{RoundNumber: 0, Role: "assistant", Content: "test summary", TokenCount: 50, CreatedAt: time.Now()},
 		},
 	}
 
@@ -80,8 +81,25 @@ func TestSaveAndLoadPaper(t *testing.T) {
 	if p.SessionID == "" {
 		t.Fatal("SavePaper should assign a UUID session ID")
 	}
-	if _, err := os.Stat(filepath.Join(config.PapersDir(), p.SessionID+".json")); err != nil {
+	filePath := filepath.Join(config.PapersDir(), p.SessionID+".json")
+	if _, err := os.Stat(filePath); err != nil {
 		t.Fatalf("expected UUID-named session file: %v", err)
+	}
+
+	// Verify JSON does NOT contain top-level content/initial_summary fields
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read file error: %v", err)
+	}
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		t.Fatalf("unmarshal raw error: %v", err)
+	}
+	if _, ok := rawMap["content"]; ok {
+		t.Error("JSON should NOT contain top-level 'content' field")
+	}
+	if _, ok := rawMap["initial_summary"]; ok {
+		t.Error("JSON should NOT contain top-level 'initial_summary' field")
 	}
 
 	loaded, err := LoadPaper(1)
@@ -95,11 +113,127 @@ func TestSaveAndLoadPaper(t *testing.T) {
 	if loaded.Content != "test content" {
 		t.Errorf("unexpected content: %s", loaded.Content)
 	}
+	if loaded.InitialSummary != "test summary" {
+		t.Errorf("unexpected summary: %s", loaded.InitialSummary)
+	}
 	if len(loaded.Messages) != 2 {
 		t.Errorf("expected 2 messages, got %d", len(loaded.Messages))
 	}
 	if loaded.Messages[0].Role != "user" {
 		t.Errorf("expected user role, got %s", loaded.Messages[0].Role)
+	}
+}
+
+func TestSaveAndLoadPaper_NewFormatBackwardCompat(t *testing.T) {
+	setupTestDir(t)
+	papersDir := config.PapersDir()
+	os.MkdirAll(papersDir, 0755)
+
+	// Simulate old-format JSON with top-level content/initial_summary fields
+	oldFormat := `{
+		"session_id": "11111111-1111-4111-8111-111111111111",
+		"title": "Old Format Paper",
+		"content": "old paper content",
+		"initial_summary": "old summary",
+		"messages": [
+			{"round_number": 0, "role": "user", "content": "", "token_count": 0},
+			{"round_number": 0, "role": "assistant", "content": "", "token_count": 0}
+		]
+	}`
+	filePath := filepath.Join(papersDir, "11111111-1111-4111-8111-111111111111.json")
+	if err := os.WriteFile(filePath, []byte(oldFormat), 0644); err != nil {
+		t.Fatalf("write old format error: %v", err)
+	}
+
+	loaded, err := LoadPaperByRef("11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if loaded.Content != "old paper content" {
+		t.Errorf("expected content 'old paper content', got %s", loaded.Content)
+	}
+	if loaded.InitialSummary != "old summary" {
+		t.Errorf("expected summary 'old summary', got %s", loaded.InitialSummary)
+	}
+}
+
+func TestSavePaper_OmitsRedundantFields(t *testing.T) {
+	setupTestDir(t)
+
+	p := &Paper{
+		Title:          "Test",
+		Content:        "paper content here",
+		InitialSummary: "paper summary here",
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "paper content here", TokenCount: 10},
+			{RoundNumber: 0, Role: "assistant", Content: "paper summary here", TokenCount: 50, SkipContext: true},
+		},
+	}
+
+	if err := SavePaper(p); err != nil {
+		t.Fatalf("save error: %v", err)
+	}
+
+	filePath := filepath.Join(config.PapersDir(), p.SessionID+".json")
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read error: %v", err)
+	}
+
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal(raw, &rawMap); err != nil {
+		t.Fatalf("unmarshal raw error: %v", err)
+	}
+	if _, ok := rawMap["content"]; ok {
+		t.Error("SavePaper should omit 'content' field from JSON")
+	}
+	if _, ok := rawMap["initial_summary"]; ok {
+		t.Error("SavePaper should omit 'initial_summary' field from JSON")
+	}
+	if _, ok := rawMap["title"]; !ok {
+		t.Error("SavePaper should keep other fields like 'title'")
+	}
+	if _, ok := rawMap["messages"]; !ok {
+		t.Error("SavePaper should keep 'messages' field")
+	}
+
+	// Verify in-memory object is untouched
+	if p.Content != "paper content here" {
+		t.Errorf("in-memory Content should be preserved, got %s", p.Content)
+	}
+	if p.InitialSummary != "paper summary here" {
+		t.Errorf("in-memory InitialSummary should be preserved, got %s", p.InitialSummary)
+	}
+}
+
+func TestLoadPaper_NewFormat_ReconstructsFromMessages(t *testing.T) {
+	setupTestDir(t)
+	papersDir := config.PapersDir()
+	os.MkdirAll(papersDir, 0755)
+
+	// New format: no top-level content/initial_summary, only in messages[0]
+	newFormat := `{
+		"session_id": "33333333-3333-4333-8333-333333333333",
+		"title": "New Format Paper",
+		"messages": [
+			{"round_number": 0, "role": "user", "content": "reconstructed content", "token_count": 10},
+			{"round_number": 0, "role": "assistant", "content": "reconstructed summary", "token_count": 50, "skip_context": true}
+		]
+	}`
+	filePath := filepath.Join(papersDir, "33333333-3333-4333-8333-333333333333.json")
+	if err := os.WriteFile(filePath, []byte(newFormat), 0644); err != nil {
+		t.Fatalf("write new format error: %v", err)
+	}
+
+	loaded, err := LoadPaperByRef("33333333-3333-4333-8333-333333333333")
+	if err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if loaded.Content != "reconstructed content" {
+		t.Errorf("expected content from messages[0], got %s", loaded.Content)
+	}
+	if loaded.InitialSummary != "reconstructed summary" {
+		t.Errorf("expected summary from messages[0], got %s", loaded.InitialSummary)
 	}
 }
 
