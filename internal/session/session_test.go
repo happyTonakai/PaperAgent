@@ -284,6 +284,133 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+func TestRecentContextMessages_SkipsInitRound(t *testing.T) {
+	// Simulate real scenario:
+	// Round 0: init summary (user=paper content, assistant=summary, SkipContext=true)
+	// Round 1: first Q&A
+	// Round 2: second Q&A
+	p := &Paper{
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "论文全文内容很长很长", TokenCount: 1000},
+			{RoundNumber: 0, Role: "assistant", Content: "init summary", TokenCount: 500, SkipContext: true},
+			{RoundNumber: 1, Role: "user", Content: "Q1: 这篇论文的贡献是什么", TokenCount: 10},
+			{RoundNumber: 1, Role: "assistant", Content: "A1: 主要贡献是...", TokenCount: 50},
+			{RoundNumber: 2, Role: "user", Content: "Q2: 实验用的什么数据集", TokenCount: 8},
+			{RoundNumber: 2, Role: "assistant", Content: "A2: 使用了...", TokenCount: 40},
+		},
+	}
+
+	recent := p.RecentContextMessages(5)
+
+	// Should only have rounds 1 and 2 (4 messages), round 0 should be skipped
+	if len(recent) != 4 {
+		t.Errorf("expected 4 messages (rounds 1+2), got %d: %+v", len(recent), recent)
+	}
+
+	// Verify no round 0 messages
+	for _, msg := range recent {
+		if msg.RoundNumber == 0 {
+			t.Errorf("round 0 should be skipped, but found: role=%s content=%s", msg.Role, msg.Content)
+		}
+	}
+
+	// Verify paper content is NOT in recent messages
+	for _, msg := range recent {
+		if msg.Content == "论文全文内容很长很长" {
+			t.Error("paper content should NOT leak into recent context")
+		}
+	}
+
+	// Verify rounds are in order
+	if recent[0].RoundNumber != 1 || recent[2].RoundNumber != 2 {
+		t.Errorf("wrong round order: %v", recent)
+	}
+}
+
+func TestRecentContextMessages_SkipsBtwMessages(t *testing.T) {
+	// Btw messages (SkipContext=true) should be excluded
+	p := &Paper{
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "论文全文", TokenCount: 100},
+			{RoundNumber: 0, Role: "assistant", Content: "summary", TokenCount: 50, SkipContext: true},
+			{RoundNumber: 1, Role: "user", Content: "正常 Q1", TokenCount: 5},
+			{RoundNumber: 1, Role: "assistant", Content: "正常 A1", TokenCount: 20},
+			{RoundNumber: 2, Role: "user", Content: "btw question", TokenCount: 3, SkipContext: true},
+			{RoundNumber: 2, Role: "assistant", Content: "btw answer", TokenCount: 10, SkipContext: true},
+			{RoundNumber: 3, Role: "user", Content: "正常 Q3", TokenCount: 5},
+			{RoundNumber: 3, Role: "assistant", Content: "正常 A3", TokenCount: 20},
+		},
+	}
+
+	recent := p.RecentContextMessages(5)
+
+	// Should have rounds 1 and 3 only (4 messages)
+	if len(recent) != 4 {
+		t.Errorf("expected 4 messages (rounds 1+3), got %d", len(recent))
+	}
+
+	for _, msg := range recent {
+		if msg.RoundNumber == 0 || msg.RoundNumber == 2 {
+			t.Errorf("round %d should be skipped", msg.RoundNumber)
+		}
+	}
+}
+
+func TestRecentContextMessages_OnlyInitRoundWithSkipContext(t *testing.T) {
+	// Q1 scenario: only round 0 exists (init), it's skipped
+	// RecentContextMessages should return empty
+	p := &Paper{
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "论文全文内容", TokenCount: 1000},
+			{RoundNumber: 0, Role: "assistant", Content: "init summary", TokenCount: 500, SkipContext: true},
+		},
+	}
+
+	recent := p.RecentContextMessages(5)
+
+	if len(recent) != 0 {
+		t.Errorf("expected empty recent messages for Q1, got %d", len(recent))
+	}
+}
+
+func TestRecentContextMessages_WithoutSkipContext(t *testing.T) {
+	// Regression: if SkipContext is NOT set on init (the old bug),
+	// round 0 leaked into context. This test documents the OLD behavior.
+	p := &Paper{
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "论文全文", TokenCount: 1000},
+			{RoundNumber: 0, Role: "assistant", Content: "summary", TokenCount: 500},
+			{RoundNumber: 1, Role: "user", Content: "Q1", TokenCount: 5},
+		},
+	}
+
+	recent := p.RecentContextMessages(5)
+
+	// Without SkipContext, round 0 IS included (the old bug behavior)
+	if len(recent) != 2 {
+		t.Errorf("without SkipContext, round 0 should be included, got %d messages", len(recent))
+	}
+}
+
+func TestRecentContextMessages_LimitsRounds(t *testing.T) {
+	p := &Paper{Messages: []Message{}}
+	for i := 1; i <= 10; i++ {
+		p.Messages = append(p.Messages,
+			Message{RoundNumber: i, Role: "user", Content: "q", TokenCount: 1},
+			Message{RoundNumber: i, Role: "assistant", Content: "a", TokenCount: 1},
+		)
+	}
+
+	// Only last 3 rounds
+	recent := p.RecentContextMessages(3)
+	if len(recent) != 6 {
+		t.Errorf("expected 6 messages (3 rounds), got %d", len(recent))
+	}
+	if recent[0].RoundNumber != 8 {
+		t.Errorf("expected first round to be 8, got %d", recent[0].RoundNumber)
+	}
+}
+
 func TestManagerConcurrency(t *testing.T) {
 	m := NewManager()
 	p := NewPaper("content", "")

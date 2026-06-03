@@ -510,6 +510,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		CachedTokens:     cachedTokens,
+		SkipContext:      true,
 	})
 	paper.Save()
 
