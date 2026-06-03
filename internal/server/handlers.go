@@ -189,6 +189,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		CachedTokens:     cachedTokens,
+		SkipContext:      true,
 	})
 	paper.Save()
 
