@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X, Loader2, Save } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
@@ -49,6 +49,7 @@ export function SettingsDialog() {
     return () => clearTimeout(timer)
   }, [closing])
 
+  const pointerDownRef = useRef<EventTarget | null>(null)
   const close = () => setSettingsOpen(false)
 
   // Config
@@ -121,13 +122,14 @@ export function SettingsDialog() {
     if (form.feishu_enabled !== (config?.feishu?.enabled ?? false)) body['feishu_enabled'] = form.feishu_enabled
     if (form.feishu_app_id && form.feishu_app_id !== '••••••' && form.feishu_app_id !== config?.feishu?.app_id) body['feishu_app_id'] = form.feishu_app_id
     if (form.feishu_app_secret && form.feishu_app_secret !== '••••••' && form.feishu_app_secret !== config?.feishu?.app_secret) body['feishu_app_secret'] = form.feishu_app_secret
-    if (Object.keys(body).length === 0) { toast('没有需要保存的更改'); setSaving(false); return }
+    if (Object.keys(body).length === 0) { toast('没有需要保存的更改'); setSaving(false); close(); return }
     try {
       const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
       toast.success('配置已保存')
       setApiKeyDirty(false)
       if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
+      close()
     } catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
     finally { setSaving(false) }
   }
@@ -135,13 +137,14 @@ export function SettingsDialog() {
   const handleSavePrompts = async () => {
     setPromptsSaving(true)
     const changed = prompts.filter((p) => promptEdits[p.name] !== p.content)
-    if (changed.length === 0) { toast('没有需要保存的更改'); setPromptsSaving(false); return }
+    if (changed.length === 0) { toast('没有需要保存的更改'); setPromptsSaving(false); close(); return }
     try {
       const body = changed.map((p) => ({ name: p.name, content: promptEdits[p.name] }))
       const res = await fetch('/api/prompts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
       toast.success('提示词已保存')
       setPrompts((prev) => prev.map((p) => ({ ...p, content: promptEdits[p.name], source: 'custom' as const })))
+      close()
     } catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
     finally { setPromptsSaving(false) }
   }
@@ -154,7 +157,8 @@ export function SettingsDialog() {
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
-      onClick={(e) => { if (e.target === e.currentTarget) close() }}
+      onPointerDown={(e) => { pointerDownRef.current = e.target }}
+      onClick={(e) => { if (e.target === e.currentTarget && pointerDownRef.current === e.currentTarget) close() }}
     >
       <div className={`bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col ${closing ? 'animate-scale-out' : 'animate-scale-in'}`}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
