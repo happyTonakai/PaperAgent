@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import type { Message } from '../types'
 
@@ -17,7 +17,6 @@ const COL_WIDTH = 30
 const ROW_HEIGHT = 14
 
 export function RoundNav({ messages, containerRef, narrow }: RoundNavProps) {
-  const [visible, setVisible] = useState(false)
   const [hovered, setHovered] = useState(false)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null)
@@ -40,12 +39,7 @@ export function RoundNav({ messages, containerRef, narrow }: RoundNavProps) {
     }
   }
 
-  // Show nav whenever there are Q&A rounds
-  useEffect(() => {
-    setVisible(rounds.length > 0)
-  }, [rounds.length])
-
-  if (!visible || rounds.length === 0) return null
+  const hasRounds = rounds.length > 0
 
   const scrollTo = (selector: string) => {
     const el = containerRef.current
@@ -62,64 +56,66 @@ export function RoundNav({ messages, containerRef, narrow }: RoundNavProps) {
       onMouseLeave={handleLeave}
     >
       {/* Top arrow */}
-      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
+      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0.35 }}>
         <button onClick={() => scrollTo('[data-msg-start]')} className="flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
           <ChevronUp size={16} />
         </button>
       </div>
 
-      {/* Bars — packed compactly, vertically centered */}
-      <div className="flex-shrink-0 flex flex-col items-center">
-        {rounds.map((r, i) => {
-          const baseLen = i % 2 === 0 ? 6 : 14
-          const isActive = hoveredIdx === i
-          const barLen = isActive ? 24 : (hovered ? baseLen + 4 : baseLen)
+      {/* Bars — only when there are Q&A rounds */}
+      {hasRounds && (
+        <div className="flex-shrink-0 flex flex-col items-center">
+          {rounds.map((r, i) => {
+            const baseLen = i % 2 === 0 ? 6 : 14
+            const isActive = hoveredIdx === i
+            const barLen = isActive ? 24 : (hovered ? baseLen + 4 : baseLen)
 
-          return (
-            <div key={r.round} className="relative" style={{ width: COL_WIDTH, height: ROW_HEIGHT }}>
-              {/* Tooltip */}
-              <div
-                className="absolute right-9 whitespace-nowrap text-sm rounded-md px-2.5 py-1.5 pointer-events-none transition-all duration-150"
-                style={{
-                  backgroundColor: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  boxShadow: 'var(--shadow-lg)',
-                  color: 'var(--color-text)',
-                  fontFamily: 'var(--font-ui)',
-                  opacity: isActive ? 1 : 0,
-                  transform: isActive ? 'translateX(0)' : 'translateX(6px)',
-                  zIndex: 30,
-                }}
-              >
-                <span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>#{r.round}</span>
-                {' '}{truncate(r.label, 35)}
-              </div>
-
-              {/* Hit area fills entire COL_WIDTH × ROW_HEIGHT */}
-              <button
-                onClick={() => scrollTo(`[data-round="${r.round}"]`)}
-                onMouseEnter={() => setHoveredIdx(i)}
-                onMouseLeave={() => setHoveredIdx(null)}
-                className="absolute inset-0 flex items-center justify-end cursor-pointer"
-              >
-                <span
-                  className="block rounded-l transition-all duration-150"
+            return (
+              <div key={r.round} className="relative" style={{ width: COL_WIDTH, height: ROW_HEIGHT }}>
+                {/* Tooltip */}
+                <div
+                  className="absolute right-9 whitespace-nowrap text-sm rounded-md px-2.5 py-1.5 pointer-events-none transition-all duration-150"
                   style={{
-                    width: barLen,
-                    height: 3,
-                    backgroundColor: 'var(--color-accent)',
-                    opacity: hovered ? 0.7 : 0.35,
-                    borderRadius: '2px 0 0 2px',
+                    backgroundColor: 'var(--color-surface)',
+                    border: '1px solid var(--color-border)',
+                    boxShadow: 'var(--shadow-lg)',
+                    color: 'var(--color-text)',
+                    fontFamily: 'var(--font-ui)',
+                    opacity: isActive ? 1 : 0,
+                    transform: isActive ? 'translateX(0)' : 'translateX(6px)',
+                    zIndex: 30,
                   }}
-                />
-              </button>
-            </div>
-          )
-        })}
-      </div>
+                >
+                  <span style={{ color: 'var(--color-accent)', fontWeight: 600 }}>#{r.round}</span>
+                  {' '}{truncate(r.label, 35)}
+                </div>
+
+                {/* Hit area fills entire COL_WIDTH × ROW_HEIGHT */}
+                <button
+                  onClick={() => scrollTo(`[data-round="${r.round}"]`)}
+                  onMouseEnter={() => setHoveredIdx(i)}
+                  onMouseLeave={() => setHoveredIdx(null)}
+                  className={`absolute inset-0 flex items-center cursor-pointer ${narrow ? 'justify-center' : 'justify-end'}`}
+                >
+                  <span
+                    className="block transition-all duration-150"
+                    style={{
+                      width: barLen,
+                      height: 3,
+                      backgroundColor: 'var(--color-accent)',
+                      opacity: hovered ? 0.7 : 0.35,
+                      borderRadius: narrow ? '2px' : '2px 0 0 2px',
+                    }}
+                  />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Bottom arrow */}
-      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0 }}>
+      <div className="flex-shrink-0 flex justify-center transition-all duration-200" style={{ height: 36, width: COL_WIDTH, opacity: hovered ? 1 : 0.35 }}>
         <button onClick={() => scrollTo('[data-msg-end]')} className="flex items-center justify-center w-8 h-8 rounded hover:bg-[var(--color-bg-elevated)]" style={{ color: 'var(--color-text-muted)' }}>
           <ChevronDown size={16} />
         </button>
