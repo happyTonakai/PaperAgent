@@ -502,6 +502,15 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 
 	// Save summary
 	paper.SetInitialSummary(summary)
+	paper.AddMessage(session.Message{
+		RoundNumber:      0,
+		Role:             "assistant",
+		Content:          summary,
+		TokenCount:       session.EstimateTokens(summary),
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		CachedTokens:     cachedTokens,
+	})
 	paper.Save()
 
 	// Finalize last card (may still overflow at the very end)
@@ -509,19 +518,19 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	lastContent := summary[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildDoneCard(paper.Ref(), paper.Title, c, promptTokens, completionTokens, cachedTokens)
+		return buildDoneCard(paper.Ref(), paper.Title, c, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card's content still doesn't fit — freeze as continuation, send one more done card
 		b.patchCard(last.id, buildContinuationCard(fits))
-		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, overflow, promptTokens, completionTokens, cachedTokens))
+		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, overflow, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
 	} else if len(slots) == 1 {
 		// Single card: patch from streaming to done in-place
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, promptTokens, completionTokens, cachedTokens))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
 	} else {
 		// Last of multiple cards: patch to done
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, promptTokens, completionTokens, cachedTokens))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, fits, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
 	}
 }
 

@@ -318,12 +318,16 @@ export function ChatView() {
 
   // --- Build message list ---
   const allMessages: (Message & { isInitial?: boolean })[] = []
+  const summaryMsg = paper?.messages?.find(m => m.round_number === 0)
   if (paper?.initial_summary) {
     allMessages.push({
       round_number: 0,
       role: 'assistant',
       content: paper.initial_summary,
       token_count: 0,
+      prompt_tokens: summaryMsg?.prompt_tokens,
+      completion_tokens: summaryMsg?.completion_tokens,
+      cached_tokens: summaryMsg?.cached_tokens,
       isInitial: true,
     })
   }
