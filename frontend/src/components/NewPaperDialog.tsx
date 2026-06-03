@@ -121,6 +121,10 @@ export function NewPaperDialog() {
                   }
                   break
                 case 'done':
+                  if (paperId) {
+                    qc.invalidateQueries({ queryKey: ['paper', paperId] })
+                    qc.invalidateQueries({ queryKey: ['papers'] })
+                  }
                   clearPending()
                   break
                 case 'error':

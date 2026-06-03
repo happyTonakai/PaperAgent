@@ -63,6 +63,7 @@ export function ChatView() {
   const { streamRequest } = useSSE()
   const containerRef = useRef<HTMLDivElement>(null)
   const [streamingContent, setStreamingContent] = useState('')
+  const pendingSummaryRef = useRef('')
   const [isStreamingLocal, setIsStreamingLocal] = useState(false)
   const [streamError, setStreamError] = useState<string | null>(null)
   const [retryingSummary, setRetryingSummary] = useState(false)
@@ -76,7 +77,7 @@ export function ChatView() {
   const retryCompletedRoundRef = useRef<number | null>(null)
 
   const isPending = pendingPaperId === currentPaperId && currentPaperId !== null
-  const needsSummaryRetry = !isLoading && !isPending && !retryingSummary && paper && !paper.initial_summary
+  const needsSummaryRetry = !isLoading && !isPending && !retryingSummary && paper && !paper.initial_summary && !pendingSummaryRef.current
 
   const scrollToBottom = useCallback(() => {
     if (containerRef.current) {
@@ -167,6 +168,13 @@ export function ChatView() {
       },
     })
   }, [currentPaperId, isStreamingLocal, streamRequest, refetch, paper?.messages])
+
+  // Track last pending summary so it survives clearPending
+  useEffect(() => {
+    if (pendingSummary) {
+      pendingSummaryRef.current = pendingSummary
+    }
+  }, [pendingSummary])
 
   // Clean up local state when refetched data catches up after streaming/retry ends
   useEffect(() => {
@@ -489,6 +497,28 @@ export function ChatView() {
                   }}
                 />
               )}
+            </div>
+          </div>
+        )}
+
+        {/* TRANSITION: keep pending content visible until paper data catches up */}
+        {!isPending && !paper?.initial_summary && pendingSummaryRef.current && (
+          <div
+            className="flex gap-3 px-5 py-4"
+            style={{ borderBottom: '1px solid var(--color-border-light)' }}
+          >
+            <div
+              className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 select-none"
+              style={{
+                backgroundColor: 'var(--color-bg-inset)',
+                color: 'var(--color-text-secondary)',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              A
+            </div>
+            <div className="flex-1 min-w-0">
+              <StreamRenderer content={pendingSummaryRef.current} />
             </div>
           </div>
         )}
