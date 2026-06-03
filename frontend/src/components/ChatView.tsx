@@ -318,7 +318,7 @@ export function ChatView() {
 
   // --- Build message list ---
   const allMessages: (Message & { isInitial?: boolean })[] = []
-  const summaryMsg = paper?.messages?.find(m => m.round_number === 0)
+  const summaryMsg = paper?.messages?.find(m => m.round_number === 0 && m.role === 'assistant')
   if (paper?.initial_summary) {
     allMessages.push({
       round_number: 0,
