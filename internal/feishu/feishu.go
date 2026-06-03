@@ -370,6 +370,14 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		return
 	}
 
+	// Add round 0 user message (consistent with web handler)
+	paper.AddMessage(session.Message{
+		RoundNumber: 0,
+		Role:        "user",
+		Content:     content,
+		TokenCount:  session.EstimateTokens(content),
+	})
+
 	// Set as active paper for this chat AND globally
 	s.mu.Lock()
 	s.paperID = paper.Ref()

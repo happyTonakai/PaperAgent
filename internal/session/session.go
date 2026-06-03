@@ -37,14 +37,16 @@ type Paper struct {
 	ID             int       `json:"id,omitempty"`
 	Title          string    `json:"title"`
 	SourceURL      string    `json:"source_url"`
-	Content        string    `json:"content"`
-	InitialSummary string    `json:"initial_summary"`
-	ModelUsed                string    `json:"model_used"`
-	TotalTokens              int       `json:"total_tokens_used"`
+	// Content and InitialSummary are redundant with messages[0]; omitted from JSON when empty.
+	// SavePaper clears them before marshaling; unmarshal from old files still works.
+	Content        string    `json:"content,omitempty"`
+	InitialSummary string    `json:"initial_summary,omitempty"`
+	ModelUsed      string    `json:"model_used"`
+	TotalTokens    int       `json:"total_tokens_used"`
 	TotalPromptTokens        int       `json:"total_prompt_tokens,omitempty"`
 	TotalCompletionTokens    int       `json:"total_completion_tokens,omitempty"`
 	TotalCachedTokens        int       `json:"total_cached_tokens,omitempty"`
-	Rating                   int       `json:"rating"`
+	Rating         int       `json:"rating"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Messages       []Message `json:"messages"`
@@ -338,7 +340,11 @@ func SavePaper(p *Paper) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(p, "", "  ")
+	// Create a copy to avoid mutating the in-memory object.
+	copy := *p
+	copy.Content = ""
+	copy.InitialSummary = ""
+	data, err := json.MarshalIndent(&copy, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -461,6 +467,23 @@ func loadPaperPath(path string) (*Paper, error) {
 		name := strings.TrimSuffix(filepath.Base(path), ".json")
 		if uuidPattern.MatchString(name) {
 			p.SessionID = name
+		}
+	}
+	// Reconstruct Content/InitialSummary from messages[0] for new-format files (no top-level fields).
+	if p.Content == "" && len(p.Messages) > 0 {
+		for _, m := range p.Messages {
+			if m.RoundNumber == 0 && m.Role == "user" {
+				p.Content = m.Content
+				break
+			}
+		}
+	}
+	if p.InitialSummary == "" && len(p.Messages) > 0 {
+		for _, m := range p.Messages {
+			if m.RoundNumber == 0 && m.Role == "assistant" {
+				p.InitialSummary = m.Content
+				break
+			}
 		}
 	}
 	return &p, nil
