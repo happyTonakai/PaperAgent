@@ -55,10 +55,26 @@ async function openInPaperAgent(arxivUrl, sourceTabId) {
   const encodedUrl = encodeURIComponent(arxivUrl);
   const tabUrl = `http://localhost:${port}/?url=${encodedUrl}`;
 
-  await chrome.tabs.create({
-    url: tabUrl,
-    index: sourceTabId != null ? sourceTabId + 1 : undefined,
-  });
+  // 查所有标签页，手动匹配 localhost:<port>，避免 URL match pattern 歧义（如无斜杠路径）
+  const allTabs = await chrome.tabs.query({});
+  const reusable = allTabs.find(
+    (t) => t.id !== sourceTabId && t.url?.startsWith(`http://localhost:${port}`)
+  );
+
+  if (reusable) {
+    // 已有 PaperAgent 标签页 → 更新 URL 并激活
+    await chrome.tabs.update(reusable.id, {
+      url: tabUrl,
+      active: true,
+    });
+    await chrome.windows.update(reusable.windowId, { focused: true });
+  } else {
+    // 没有 → 新建标签页（在源标签页右侧）
+    await chrome.tabs.create({
+      url: tabUrl,
+      index: sourceTabId != null ? sourceTabId + 1 : undefined,
+    });
+  }
 
   return { ok: true, port };
 }
