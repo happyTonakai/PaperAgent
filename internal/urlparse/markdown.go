@@ -64,7 +64,11 @@ func convertMathMLToLaTeX(html string) string {
 		if latex == "" {
 			return ""
 		}
-		if strings.Contains(m, `display="block"`) || strings.Contains(m, `display=block`) {
+		// Check if the opening <math> tag has display="block" — only look in the tag prefix,
+		// not in the annotation body (which may contain the literal string)
+		tagEnd := strings.Index(m, ">")
+		tagPrefix := m[:tagEnd]
+		if strings.Contains(tagPrefix, `display="block"`) || strings.Contains(tagPrefix, `display=block`) {
 			return "\n$$\n" + latex + "\n$$\n"
 		}
 		return "$" + latex + "$"
@@ -90,11 +94,13 @@ func extractTitle(html string) string {
 // ---------------------------------------------------------------------------
 
 func extractArticleBody(html string) string {
-	startMarker := `class="ltx_page_content"`
-	idx := strings.Index(html, startMarker)
-	if idx < 0 {
+	// Match class containing ltx_page_content (possibly multi-class like "ltx_page_main ltx_page_content")
+	re := regexp.MustCompile(`class="[^"]*\bltx_page_content\b[^"]*"`)
+	loc := re.FindStringIndex(html)
+	if loc == nil {
 		return html
 	}
+	idx := loc[0]
 	openEnd := strings.Index(html[idx:], ">")
 	if openEnd < 0 {
 		return html
@@ -114,6 +120,9 @@ func extractArticleBody(html string) string {
 var tableFigureRe = regexp.MustCompile(`(?is)<figure[^>]*class="[^"]*ltx_table[^"]*"[^>]*>(.*?)</figure>`)
 var tableCaptionRe = regexp.MustCompile(`(?is)<figcaption[^>]*>(.*?)</figcaption>`)
 var tabularRe = regexp.MustCompile(`(?is)<table\s+class="ltx_tabular[^"]*"[^>]*>(.*?)</table>`)
+var trRe = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
+var tdRe = regexp.MustCompile(`(?is)<td[^>]*>(.*?)</td>`)
+var wsRe = regexp.MustCompile(`\s+`)
 
 type tableInfo struct {
 	placeholder string
@@ -170,18 +179,16 @@ func convertTableToMarkdown(figureHTML string) string {
 	alignments := detectHTMLColumnAlignments(tabularHTML)
 
 	// Parse rows
-	trRe := regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
 	trMatches := trRe.FindAllStringSubmatch(tabularHTML, -1)
 
 	var rows [][]string
 	for _, tr := range trMatches {
-		tdRe := regexp.MustCompile(`(?is)<td[^>]*>(.*?)</td>`)
 		tdMatches := tdRe.FindAllStringSubmatch(tr[1], -1)
 		var cells []string
 		for _, td := range tdMatches {
 			c := stripHTMLTags(td[1])
 			c = decodeEntities(c)
-			c = regexp.MustCompile(`\s+`).ReplaceAllString(c, " ")
+			c = wsRe.ReplaceAllString(c, " ")
 			cells = append(cells, strings.TrimSpace(c))
 		}
 		if len(cells) > 0 {
@@ -244,7 +251,6 @@ func convertTableToMarkdown(figureHTML string) string {
 // detectHTMLColumnAlignments extracts alignment from the first row's td classes
 // (ltx_align_left, ltx_align_center, ltx_align_right).
 func detectHTMLColumnAlignments(tabularHTML string) []string {
-	trRe := regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
 	trMatch := trRe.FindStringSubmatch(tabularHTML)
 	if len(trMatch) < 2 {
 		return nil
