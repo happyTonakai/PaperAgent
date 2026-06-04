@@ -136,9 +136,10 @@ jobs:
       - name: Write custom release notes
         if: ${{ inputs.release_notes != '' }}
         shell: bash
-        env:
-          NOTES: ${{ inputs.release_notes }}
-        run: printf '%s\n' "$NOTES" > /tmp/release_body.md
+        run: |
+          cat > /tmp/release_body.md << 'RELEOF'
+${{ inputs.release_notes }}
+RELEOF
 
       - name: Create release (custom notes)
         if: ${{ inputs.release_notes != '' }}
