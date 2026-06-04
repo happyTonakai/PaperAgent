@@ -98,7 +98,7 @@ export function ChatView() {
       const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 5
       if (isNearBottom) {
         userScrolledUp.current = false
-      } else if (isStreamingLocal || isPending) {
+      } else if (isStreamingLocal || isPending || retryingSummary) {
         userScrolledUp.current = true
       }
     }
@@ -107,7 +107,7 @@ export function ChatView() {
     // Wheel fires before scroll — catches user intent early, immune to isAutoScrolling
     const handleWheel = (e: WheelEvent) => {
       // deltaY > 0 = scroll down, deltaY < 0 = scroll up
-      if (e.deltaY < 0 && (isStreamingLocal || isPending)) {
+      if (e.deltaY < 0 && (isStreamingLocal || isPending || retryingSummary)) {
         userScrolledUp.current = true
       }
     }
@@ -117,7 +117,7 @@ export function ChatView() {
       el.removeEventListener('scroll', handleScroll)
       el.removeEventListener('wheel', handleWheel)
     }
-  }, [isStreamingLocal, isPending])
+  }, [isStreamingLocal, isPending, retryingSummary])
 
   useEffect(() => {
     if ((isStreamingLocal || isPending) && !userScrolledUp.current) {
