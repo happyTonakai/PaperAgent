@@ -45,12 +45,12 @@ go vet ./...
 
 | Package | Responsibility |
 |---|---|
-| `config/` | `~/.paperagent/config.yaml` loading, env var overrides, path helpers |
+| `config/` | `~/.config/paperagent/config.yaml` loading, env var overrides, path helpers |
 | `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` helper for title extraction. |
-| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` returns last N rounds excluding btw messages. |
-| `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.paperagent/prompts/{name}.txt` first. |
+| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.config/paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` returns last N rounds excluding btw messages. |
+| `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.config/paperagent/prompts/{name}.txt` first. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
-| `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.paperagent/prompts/export.md`. |
+| `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.config/paperagent/prompts/export.md`. |
 | `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/btw`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
 
 ### Data flow
@@ -61,7 +61,7 @@ go vet ./...
 4. CHAT: each question → paper + LIGHT_PROMPT + last 5 non-btw rounds → streamed answer
 5. BTW questions (sent via `/btw <question>`) are persisted with `SkipContext: true` and excluded from step 4's context
 6. Title extracted from URL via HTML parsing (urlparse)
-7. All persisted as JSON in `~/.paperagent/papers/`
+7. All persisted as JSON in `~/.config/paperagent/papers/`
 
 ### Entry point
 
@@ -73,7 +73,7 @@ Uses `len(text) / 4` — lightweight, no external dependency.
 
 ## Configuration
 
-Three layers (in priority order): environment variables (`PAPER_API_KEY`, `PAPER_BASE_URL`, etc.) > `~/.paperagent/config.yaml` > built-in defaults. Custom prompts override embedded defaults from `~/.paperagent/prompts/`.
+Three layers (in priority order): environment variables (`PAPER_API_KEY`, `PAPER_BASE_URL`, etc.) > `~/.config/paperagent/config.yaml` > built-in defaults. Custom prompts override embedded defaults from `~/.config/paperagent/prompts/`.
 
 ### Feishu bot
 

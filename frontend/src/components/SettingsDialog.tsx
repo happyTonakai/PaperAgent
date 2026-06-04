@@ -241,7 +241,7 @@ export function SettingsDialog() {
 
         {!loading && (
           <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-between gap-2">
-            <p className="text-xs text-gray-400 self-center">{tab === 'prompts' ? '提示词保存后立即生效' : '配置保存在 ~/.paperagent/config.yaml'}</p>
+            <p className="text-xs text-gray-400 self-center">{tab === 'prompts' ? '提示词保存后立即生效' : '配置保存在 ~/.config/paperagent/config.yaml'}</p>
             <div className="flex gap-2">
               <button onClick={() => close()} className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">关闭</button>
               <button onClick={tab === 'prompts' ? handleSavePrompts : handleSaveConfig} disabled={tab === 'prompts' ? promptsSaving : saving} className="px-4 py-2 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center gap-1.5">

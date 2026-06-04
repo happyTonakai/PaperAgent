@@ -9,17 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/session"
 )
 
-// loadLatestPaper loads the most recently modified paper from ~/.paperagent/papers/.
+// loadLatestPaper loads the most recently modified paper from the user's papers directory.
 func loadLatestPaper(t *testing.T) *session.Paper {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := filepath.Join(home, ".paperagent", "papers")
+	dir := config.PapersDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read %s: %v", dir, err)
