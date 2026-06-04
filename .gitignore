@@ -19,4 +19,5 @@ internal/server/frontend-dist/
 # Misc dev artifacts
 paperagent-web
 skills-lock.json
-\n.DS_Store
+.DS_Store
+*.zip

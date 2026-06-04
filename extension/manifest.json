@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PaperAgent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "一键在 PaperAgent 中打开 arXiv 论文",
   "icons": {
     "16": "icons/icon16.png",

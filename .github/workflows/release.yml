@@ -12,6 +12,11 @@ on:
           - patch
           - minor
           - major
+      release_notes:
+        description: "Release notes (markdown). Leave empty for auto-generated from commits"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -42,7 +47,7 @@ jobs:
           git fetch --tags
           LATEST=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
           if [ -z "$LATEST" ]; then
-            NEXT="v0.1.0"
+            NEXT="v1.0.0"
           else
             MAJOR=$(echo "$LATEST" | sed 's/v//;s/\..*//')
             MINOR=$(echo "$LATEST" | sed 's/v[0-9]*\.//;s/\..*//')
@@ -128,7 +133,24 @@ jobs:
           git tag "${{ needs.prepare.outputs.version }}"
           git push origin "${{ needs.prepare.outputs.version }}"
 
-      - name: Create release
+      - name: Write custom release notes
+        if: ${{ inputs.release_notes != '' }}
+        shell: bash
+        env:
+          NOTES: ${{ inputs.release_notes }}
+        run: printf '%s\n' "$NOTES" > /tmp/release_body.md
+
+      - name: Create release (custom notes)
+        if: ${{ inputs.release_notes != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: ${{ needs.prepare.outputs.version }}
+          body_path: /tmp/release_body.md
+          files: dist/*
+
+      - name: Create release (auto-generated notes)
+        if: ${{ inputs.release_notes == '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.version }}
