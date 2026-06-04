@@ -581,11 +581,18 @@ func (b *Bot) cmdList(chatID string) {
 	}
 	pagePapers := papers[:end]
 
-	// Check if there's a currently selected paper to highlight
+	// Determine selected paper — check session first, then global fallback
 	s := b.getSession(chatID)
 	s.mu.Lock()
 	selectedID := s.paperID
+	if selectedID == "" {
+		selectedID = session.GetActivePaper()
+		if selectedID != "" {
+			s.paperID = selectedID
+		}
+	}
 	s.mu.Unlock()
+	log.Printf("[feishu] cmdList: selectedID=%q pagePapers=%d total=%d", selectedID, len(pagePapers), totalCount)
 
 	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID, "", ""))
 
@@ -1049,11 +1056,25 @@ func (b *Bot) handlePageNav(targetPage int, chatID string, searchKeyword string)
 		headerTitle = fmt.Sprintf("🔍 搜索结果：%s", searchKeyword)
 	}
 
-	// Get currently selected paper
+	// Get currently selected paper — check session first, then global fallback
 	s := b.getSession(chatID)
 	s.mu.Lock()
 	selectedID := s.paperID
+	if selectedID == "" {
+		selectedID = session.GetActivePaper()
+		if selectedID != "" {
+			s.paperID = selectedID
+		}
+	}
 	s.mu.Unlock()
+	log.Printf("[feishu] handlePageNav: page=%d selectedID=%q pagePapers=%d total=%d search=%q", page, selectedID, len(pagePapers), totalCount, searchKeyword)
+
+	// Log each paper's ref for debugging
+	for _, p := range pagePapers {
+		if p.Ref() == selectedID {
+			log.Printf("[feishu] handlePageNav: selected paper FOUND on this page: %s", p.Title)
+		}
+	}
 
 	return &callback.CardActionTriggerResponse{
 		Card: &callback.Card{
