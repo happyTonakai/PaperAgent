@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/urlparse"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -37,6 +38,7 @@ type Paper struct {
 	ID             int       `json:"id,omitempty"`
 	Title          string    `json:"title"`
 	SourceURL      string    `json:"source_url"`
+	ArxivID        string    `json:"arxiv_id,omitempty"`
 	// Content and InitialSummary are redundant with messages[0]; omitted from JSON when empty.
 	// SavePaper clears them before marshaling; unmarshal from old files still works.
 	Content        string    `json:"content,omitempty"`
@@ -320,11 +322,12 @@ func nextID() int {
 	return maxID + 1
 }
 
-func NewPaper(content string, sourceURL string) *Paper {
+func NewPaper(content string, sourceURL string, arxivID string) *Paper {
 	now := time.Now()
 	return &Paper{
 		SessionID: newSessionID(),
 		SourceURL: sourceURL,
+		ArxivID:   arxivID,
 		Content:   content,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -469,6 +472,21 @@ func loadPaperPath(path string) (*Paper, error) {
 			p.SessionID = name
 		}
 	}
+	// Migrate: extract arxiv_id from source_url for old papers.
+	if p.ArxivID == "" && p.SourceURL != "" {
+		if _, id, ok := urlparse.NormalizeArxivInput(p.SourceURL); ok {
+			p.ArxivID = id
+			// Persist back — only touch arxiv_id, keep original file intact.
+			var raw map[string]interface{}
+			if err := json.Unmarshal(data, &raw); err == nil {
+				raw["arxiv_id"] = id
+				if data2, err := json.MarshalIndent(raw, "", "  "); err == nil {
+					os.WriteFile(path, data2, 0644)
+				}
+			}
+		}
+	}
+
 	// Reconstruct Content/InitialSummary from messages[0] for new-format files (no top-level fields).
 	if p.Content == "" && len(p.Messages) > 0 {
 		for _, m := range p.Messages {

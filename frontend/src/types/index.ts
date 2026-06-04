@@ -15,6 +15,7 @@ export interface Paper {
   id: string
   title: string
   source_url: string
+  arxiv_id?: string
   initial_summary: string
   model_used: string
   total_tokens_used?: number

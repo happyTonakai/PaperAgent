@@ -36,6 +36,7 @@ type paperResponse struct {
 	ID                   string            `json:"id"`
 	Title                string            `json:"title"`
 	SourceURL            string            `json:"source_url"`
+	ArxivID              string            `json:"arxiv_id,omitempty"`
 	InitialSummary       string            `json:"initial_summary"`
 	ModelUsed            string            `json:"model_used"`
 	TotalTokens          int               `json:"total_tokens_used,omitempty"`
@@ -79,7 +80,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] fetching content for URL: %s", req.URL)
 
-	content, sourceURL, err := s.fetchPaperContent(req)
+	content, sourceURL, arxivID, err := s.fetchPaperContent(req)
 	if err != nil {
 		log.Printf("[new-paper] fetch error: %v", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -88,11 +89,11 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] fetched %d chars, creating paper", len(content))
 
-	paper := session.NewPaper(content, sourceURL)
+	paper := session.NewPaper(content, sourceURL, arxivID)
 	paper.ModelUsed = s.cfg.API.DefaultModel
 
 	// Try HTML title extraction for arXiv papers (instant, no LLM call)
-	if _, arxivID, ok := urlparse.NormalizeArxivInput(sourceURL); ok {
+	if arxivID != "" {
 		if title, err := urlparse.FetchArxivTitle(arxivID); err == nil && title != "" {
 			paper.SetTitle(title)
 			log.Printf("[new-paper] title from HTML: %s", title)
@@ -300,7 +301,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sourceURL := paper.SourceURL
 		unlock()
 
-		content, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		content, _, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
 		if err != nil {
 			log.Printf("[chat] re-fetch failed: %v", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("paper content lost and re-fetch from source URL failed: %v", err)})
@@ -506,7 +507,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		sourceURL := paper.SourceURL
 		unlock()
 
-		content, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		content, _, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
 		if err != nil {
 			log.Printf("[retry-summary] re-fetch failed: %v", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("re-fetch from source URL failed: %v", err)})
@@ -1107,27 +1108,28 @@ func (s *Server) handleFeishuStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) fetchPaperContent(req newPaperRequest) (content string, sourceURL string, err error) {
+func (s *Server) fetchPaperContent(req newPaperRequest) (content string, sourceURL string, arxivID string, err error) {
 	if req.URL != "" {
 		sourceURL = req.URL
-		if arxivURL, _, ok := urlparse.NormalizeArxivInput(req.URL); ok {
+		if arxivURL, id, ok := urlparse.NormalizeArxivInput(req.URL); ok {
 			sourceURL = arxivURL
+			arxivID = id
 			content, err = urlparse.FetchURL(arxivURL)
 		} else {
 			content, err = urlparse.FetchURL(req.URL)
 		}
 		if err != nil {
-			return "", "", fmt.Errorf("fetch URL failed: %w", err)
+			return "", "", "", fmt.Errorf("fetch URL failed: %w", err)
 		}
 		if content == "" {
-			return "", "", fmt.Errorf("empty content from URL")
+			return "", "", "", fmt.Errorf("empty content from URL")
 		}
 	} else if req.Content != "" {
 		content = req.Content
 	} else {
-		return "", "", fmt.Errorf("url or content required")
+		return "", "", "", fmt.Errorf("url or content required")
 	}
-	return content, sourceURL, nil
+	return content, sourceURL, arxivID, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
@@ -1157,6 +1159,7 @@ func paperToResponse(p *session.Paper) paperResponse {
 		ID:                    p.Ref(),
 		Title:                 p.Title,
 		SourceURL:             p.SourceURL,
+		ArxivID:               p.ArxivID,
 		InitialSummary:        p.InitialSummary,
 		ModelUsed:             p.ModelUsed,
 		TotalTokens:           p.TotalTokens,

@@ -21,7 +21,7 @@ func setupTestDir(t *testing.T) string {
 func TestNewPaper(t *testing.T) {
 	setupTestDir(t)
 
-	p := NewPaper("test content", "https://example.com")
+	p := NewPaper("test content", "https://example.com", "")
 
 	if p.SessionID == "" {
 		t.Fatal("expected non-empty session ID")
@@ -272,7 +272,7 @@ func TestListPapers(t *testing.T) {
 
 func TestManagerAddMessage(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	msg := Message{RoundNumber: 0, Role: "user", Content: "test", TokenCount: 10}
@@ -288,7 +288,7 @@ func TestManagerAddMessage(t *testing.T) {
 
 func TestManagerGetRecentMessages(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	for i := 0; i < 10; i++ {
@@ -309,7 +309,7 @@ func TestManagerGetRecentMessages(t *testing.T) {
 
 func TestManagerDeleteRound(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	for i := 0; i < 3; i++ {
@@ -333,7 +333,7 @@ func TestManagerDeleteRound(t *testing.T) {
 
 func TestManagerDeleteLastRound(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	for i := 0; i < 3; i++ {
@@ -356,7 +356,7 @@ func TestManagerDeleteLastRound(t *testing.T) {
 
 func TestManagerGetLastUserMessage(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	// No messages yet
@@ -384,7 +384,7 @@ func TestManagerCurrentRound(t *testing.T) {
 		t.Error("expected round 0 for no paper")
 	}
 
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	m.AddMessage(Message{RoundNumber: 0, Role: "user", Content: "q", TokenCount: 1})
@@ -547,7 +547,7 @@ func TestRecentContextMessages_LimitsRounds(t *testing.T) {
 
 func TestManagerConcurrency(t *testing.T) {
 	m := NewManager()
-	p := NewPaper("content", "")
+	p := NewPaper("content", "", "")
 	m.SetPaper(p)
 
 	done := make(chan bool, 10)

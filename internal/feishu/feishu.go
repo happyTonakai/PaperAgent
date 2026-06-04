@@ -357,7 +357,7 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	}()
 
 	// Fetch paper content
-	content, sourceURL, err := b.fetchContent(url)
+	content, sourceURL, arxivID, err := b.fetchContent(url)
 	if err != nil {
 		log.Printf("[feishu] fetch error: %v", err)
 		b.sendText(chatID, fmt.Sprintf("❌ 获取论文失败：%v", err))
@@ -367,11 +367,11 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	log.Printf("[feishu] fetched %d chars for %s", len(content), sourceURL)
 
 	// Create paper
-	paper := session.NewPaper(content, sourceURL)
+	paper := session.NewPaper(content, sourceURL, arxivID)
 	paper.ModelUsed = b.cfg.API.DefaultModel
 
 	// Try HTML title extraction for arXiv
-	if _, arxivID, ok := urlparse.NormalizeArxivInput(sourceURL); ok {
+	if arxivID != "" {
 		if title, err := urlparse.FetchArxivTitle(arxivID); err == nil && title != "" {
 			paper.SetTitle(title)
 			log.Printf("[feishu] title from HTML: %s", title)
@@ -1117,21 +1117,22 @@ func (b *Bot) handleCardResumeQA(paperID, chatID string) (*callback.CardActionTr
 }
 
 // fetchContent fetches paper content from a URL.
-func (b *Bot) fetchContent(url string) (content, sourceURL string, err error) {
-	if arxivURL, _, ok := urlparse.NormalizeArxivInput(url); ok {
+func (b *Bot) fetchContent(url string) (content, sourceURL, arxivID string, err error) {
+	if arxivURL, id, ok := urlparse.NormalizeArxivInput(url); ok {
 		sourceURL = arxivURL
+		arxivID = id
 		content, err = urlparse.FetchURL(arxivURL)
 	} else {
 		sourceURL = url
 		content, err = urlparse.FetchURL(url)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("获取论文失败: %w", err)
+		return "", "", "", fmt.Errorf("获取论文失败: %w", err)
 	}
 	if content == "" {
-		return "", "", fmt.Errorf("论文内容为空")
+		return "", "", "", fmt.Errorf("论文内容为空")
 	}
-	return content, sourceURL, nil
+	return content, sourceURL, arxivID, nil
 }
 
 // sendOverflowAsText sends overflow content as one or more text messages,
