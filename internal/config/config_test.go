@@ -72,7 +72,7 @@ func TestLoadNonExistent(t *testing.T) {
 
 func TestLoadFromFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".paperagent")
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
 	os.MkdirAll(configDir, 0755)
 
 	configContent := `
@@ -110,7 +110,7 @@ ui:
 
 func TestLoadEnvVarExpansion(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".paperagent")
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
 	os.MkdirAll(configDir, 0755)
 
 	configContent := `
@@ -139,7 +139,7 @@ api:
 
 func TestSave(t *testing.T) {
 	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".paperagent")
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
@@ -196,13 +196,13 @@ func TestExpandHome(t *testing.T) {
 func TestConfigDirPaths(t *testing.T) {
 	home, _ := os.UserHomeDir()
 
-	if ConfigDir() != filepath.Join(home, ".paperagent") {
+	if ConfigDir() != filepath.Join(home, ".config", "paperagent") {
 		t.Errorf("unexpected ConfigDir: %s", ConfigDir())
 	}
-	if ConfigPath() != filepath.Join(home, ".paperagent", "config.yaml") {
+	if ConfigPath() != filepath.Join(home, ".config", "paperagent", "config.yaml") {
 		t.Errorf("unexpected ConfigPath: %s", ConfigPath())
 	}
-	if PapersDir() != filepath.Join(home, ".paperagent", "papers") {
+	if PapersDir() != filepath.Join(home, ".config", "paperagent", "papers") {
 		t.Errorf("unexpected PapersDir: %s", PapersDir())
 	}
 }

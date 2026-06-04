@@ -41,7 +41,7 @@ type FeishuConfig struct {
 
 func ConfigDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".paperagent")
+	return filepath.Join(home, ".config", "paperagent")
 }
 
 func ConfigPath() string {

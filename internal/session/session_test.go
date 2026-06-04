@@ -41,8 +41,8 @@ func TestNewPaper(t *testing.T) {
 }
 
 func TestNextID(t *testing.T) {
-	tmpDir := setupTestDir(t)
-	papersDir := filepath.Join(tmpDir, ".paperagent", "papers")
+	setupTestDir(t)
+	papersDir := config.PapersDir()
 	os.MkdirAll(papersDir, 0755)
 
 	// Create some paper files

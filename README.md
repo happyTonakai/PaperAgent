@@ -73,7 +73,7 @@ sudo mv paperagent /usr/local/bin/
 
 ### 1. 直接编辑配置文件
 
-`~/.paperagent/config.yaml` 是主配置文件：
+`~/.config/paperagent/config.yaml` 是主配置文件：
 
 ```yaml
 api:
@@ -100,7 +100,7 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 
 然后在 `config.yaml` 中用 `api_key: "${OPENAI_API_KEY}"` 引用即可。
 
-自定义 Prompt 也属于文件配置的一部分，在 `~/.paperagent/prompts/` 下放置同名文件即可覆盖内置模板：
+自定义 Prompt 也属于文件配置的一部分，在 `~/.config/paperagent/prompts/` 下放置同名文件即可覆盖内置模板：
 
 - `heavy.txt` — 初始深度摘要的 system prompt
 - `light.txt` — 问答阶段的 system prompt
@@ -230,7 +230,7 @@ PAPER_ADDR=":9000" paperagent
 
 ### 数据持久化
 
-每篇论文以 JSON 文件保存在 `~/.paperagent/papers/{uuid}.json`，包含完整论文内容、摘要、对话历史。支持 UUID 会话 ID 和旧版数字 ID 向后兼容。
+每篇论文以 JSON 文件保存在 `~/.config/paperagent/papers/{uuid}.json`，包含完整论文内容、摘要、对话历史。支持 UUID 会话 ID 和旧版数字 ID 向后兼容。
 
 ## 开发
 
@@ -269,7 +269,7 @@ just clean
 | 后端 | Go 1.25+ (net/http, embed) |
 | SSE 流式 | Server-Sent Events |
 | LLM API | OpenAI 兼容接口 |
-| 持久化 | JSON 文件 (~/.paperagent/papers/) |
+| 持久化 | JSON 文件 (~/.config/paperagent/papers/) |
 | 飞书 | larksuite/oapi-sdk-go v3, WebSocket + 交互卡片 |
 
 

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/happyTonakai/paperagent/internal/config"
 )
 
 func TestEmbeddedPrompts(t *testing.T) {
@@ -55,17 +57,15 @@ func TestGetSummarize(t *testing.T) {
 func TestGetWithUserOverride(t *testing.T) {
 	// Create a temp dir for user prompts
 	tmpDir := t.TempDir()
-	promptsDir := filepath.Join(tmpDir, ".paperagent", "prompts")
+	os.Setenv("HOME", tmpDir)
+	t.Cleanup(func() { os.Unsetenv("HOME") })
+
+	promptsDir := config.PromptsDir()
 	os.MkdirAll(promptsDir, 0755)
 
 	// Write custom prompt
 	customPrompt := "This is a custom heavy prompt"
 	os.WriteFile(filepath.Join(promptsDir, "heavy.txt"), []byte(customPrompt), 0644)
-
-	// Override HOME so config.PromptsDir() returns our temp dir
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
 
 	result := Get("heavy", "default fallback")
 	if result != customPrompt {
