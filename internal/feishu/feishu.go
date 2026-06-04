@@ -239,7 +239,14 @@ func (b *Bot) onCardAction(ctx context.Context, event *callback.CardActionTrigge
 	case strings.HasPrefix(actionVal, "open:"):
 		// User clicked a paper in /list to open it
 		paperID = strings.TrimPrefix(actionVal, "open:")
-		return b.handleCardOpenPaper(paperID, chatID)
+		pageStr, _ := event.Event.Action.Value["page"].(string)
+		currentPage, _ := strconv.Atoi(pageStr)
+		return b.handleCardOpenPaper(paperID, chatID, currentPage)
+	case actionVal == "page_nav":
+		// User clicked pagination button in /list
+		pageStr, _ := event.Event.Action.Value["page"].(string)
+		targetPage, _ := strconv.Atoi(pageStr)
+		return b.handlePageNav(targetPage, chatID)
 	case strings.HasPrefix(actionVal, "qa:"):
 		// Resume Q&A for a paper that already has a summary
 		paperID = strings.TrimPrefix(actionVal, "qa:")
@@ -543,7 +550,10 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	}
 }
 
-// cmdList shows recent 10 papers as an interactive card.
+// pageSize is the number of papers per page in the /list card.
+const pageSize = 8
+
+// cmdList shows papers as a paginated interactive card.
 func (b *Bot) cmdList(chatID string) {
 	papers, err := session.ListPapers()
 	if err != nil {
@@ -556,10 +566,13 @@ func (b *Bot) cmdList(chatID string) {
 		return
 	}
 
-	// Take most recent 10
-	if len(papers) > 10 {
-		papers = papers[:10]
+	totalCount := len(papers)
+	page := 0
+	end := pageSize
+	if end > totalCount {
+		end = totalCount
 	}
+	pagePapers := papers[:end]
 
 	// Check if there's a currently selected paper to highlight
 	s := b.getSession(chatID)
@@ -567,12 +580,7 @@ func (b *Bot) cmdList(chatID string) {
 	selectedID := s.paperID
 	s.mu.Unlock()
 
-	var cardJSON string
-	if selectedID != "" {
-		cardJSON = marshalCard(buildPaperListCardWithSelection(papers, selectedID))
-	} else {
-		cardJSON = buildPaperListCard(papers)
-	}
+	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID))
 
 	ctx := context.Background()
 	err2 := b.doFeishuCall(ctx, "send list card", func(client *lark.Client) error {
@@ -843,7 +851,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	}
 }
 
-func (b *Bot) handleCardOpenPaper(paperID, chatID string) (*callback.CardActionTriggerResponse, error) {
+func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int) (*callback.CardActionTriggerResponse, error) {
 	paper, err := session.LoadPaperByRef(paperID)
 	if err != nil {
 		return &callback.CardActionTriggerResponse{
@@ -861,11 +869,19 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string) (*callback.CardActionT
 		log.Printf("[feishu] set active paper error: %v", err)
 	}
 
-	// Rebuild the list card with the selected paper highlighted
-	papers, _ := session.ListPapers()
-	if len(papers) > 10 {
-		papers = papers[:10]
+	// Rebuild the paginated list card with the selected paper highlighted
+	allPapers, _ := session.ListPapers()
+	totalCount := len(allPapers)
+	page := currentPage
+	if page*pageSize >= totalCount && totalCount > 0 {
+		page = 0
 	}
+	start := page * pageSize
+	end := start + pageSize
+	if end > totalCount {
+		end = totalCount
+	}
+	pagePapers := allPapers[start:end]
 
 	title := paper.Title
 	if title == "" {
@@ -879,7 +895,52 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string) (*callback.CardActionT
 		},
 		Card: &callback.Card{
 			Type: "raw",
-			Data: buildPaperListCardWithSelection(papers, paperID),
+			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, paperID),
+		},
+	}, nil
+}
+
+// handlePageNav navigates to a specific page in the /list card.
+func (b *Bot) handlePageNav(targetPage int, chatID string) (*callback.CardActionTriggerResponse, error) {
+	allPapers, err := session.ListPapers()
+	if err != nil {
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "获取文章列表失败"},
+		}, nil
+	}
+
+	totalCount := len(allPapers)
+	if totalCount == 0 {
+		return nil, nil
+	}
+
+	// Clamp to valid range
+	page := targetPage
+	totalPages := (totalCount + pageSize - 1) / pageSize
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * pageSize
+	end := start + pageSize
+	if end > totalCount {
+		end = totalCount
+	}
+	pagePapers := allPapers[start:end]
+
+	// Get currently selected paper
+	s := b.getSession(chatID)
+	s.mu.Lock()
+	selectedID := s.paperID
+	s.mu.Unlock()
+
+	return &callback.CardActionTriggerResponse{
+		Card: &callback.Card{
+			Type: "raw",
+			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID),
 		},
 	}, nil
 }
@@ -1013,7 +1074,7 @@ func stripAtMentions(text string) string {
 const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"可用命令：\n" +
 	"• **/new <链接>** — 创建新的论文总结\n" +
-	"• **/list** — 查看最近 10 篇文章\n" +
+	"• **/list** — 查看文章列表（支持翻页）\n" +
 	"• **/summary** — 查看当前论文的初始总结\n" +
 	"• **/fetch [n]** — 拉取最近 n 轮问答（默认 2）\n" +
 	"• **/btw <问题>** — 提问但不记入上下文\n" +

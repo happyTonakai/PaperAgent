@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/happyTonakai/paperagent/internal/session"
@@ -346,16 +347,27 @@ func buildChatStreamingContinuationCard(content string) string {
 	return marshalCard(c)
 }
 
-// ─── Paper list card ───
+// ─── Paper list card (paginated) ───
 
-func buildPaperListCard(papers []session.PaperSummary) string {
+func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, page, pageSize int, selectedID string) map[string]any {
 	c := cardBase()
 	c["header"] = cardHeader("📚 最近的文章", "blue")
 
-	elements := make([]map[string]any, 0, len(papers)+2)
-	elements = append(elements, mdElement(fmt.Sprintf("共 **%d** 篇文章，以下是最近 **%d** 篇：", len(papers), len(papers))))
+	totalPages := (totalCount + pageSize - 1) / pageSize
+	start := page*pageSize + 1
 
-	for i, p := range papers {
+	elements := make([]map[string]any, 0, len(pagePapers)+6)
+
+	// Header info
+	headerText := fmt.Sprintf("共 **%d** 篇文章", totalCount)
+	if totalCount > pageSize {
+		end := page*pageSize + len(pagePapers)
+		headerText = fmt.Sprintf("共 **%d** 篇文章（第 %d-%d 篇）", totalCount, start, end)
+	}
+	elements = append(elements, mdElement(headerText))
+
+	// Paper entries
+	for i, p := range pagePapers {
 		title := p.Title
 		if title == "" {
 			title = "Paper " + p.ShortRef()
@@ -366,7 +378,20 @@ func buildPaperListCard(papers []session.PaperSummary) string {
 		}
 		timeStr := p.UpdatedAt.Format("01-02 15:04")
 
-		text := fmt.Sprintf("**%d.** %s%s\n_%s · %s_", i+1, title, ratingStr, timeStr, p.ShortRef())
+		text := fmt.Sprintf("**%d.** %s%s\n_%s · %s_", start+i, title, ratingStr, timeStr, p.ShortRef())
+
+		var btn map[string]any
+		if p.Ref() == selectedID {
+			btn = map[string]any{
+				"tag":      "button",
+				"text":     plainText("已选中 ✓"),
+				"type":     "primary",
+				"disabled": true,
+				"width":    "default",
+			}
+		} else {
+			btn = buttonElement("选择", "open:"+p.Ref(), "default", map[string]string{"paper_id": p.Ref(), "page": strconv.Itoa(page)})
+		}
 
 		colSet := map[string]any{
 			"tag":       "column_set",
@@ -385,23 +410,73 @@ func buildPaperListCard(papers []session.PaperSummary) string {
 					"tag":            "column",
 					"width":          "auto",
 					"vertical_align": "center",
-					"elements": []map[string]any{
-						buttonElement("选择", "open:"+p.Ref(), "default", map[string]string{"paper_id": p.Ref()}),
-					},
+					"elements": []map[string]any{btn},
 				},
 			},
 		}
 		elements = append(elements, colSet)
-		if i < len(papers)-1 {
+		if i < len(pagePapers)-1 {
 			elements = append(elements, hrElement())
 		}
 	}
 
-	elements = append(elements, hrElement())
-	elements = append(elements, noteElement("点击「选择」切换当前文章，然后可以直接提问。"))
+	// Pagination controls
+	if totalCount > pageSize {
+		elements = append(elements, hrElement())
+
+		prevBtn := map[string]any{
+			"tag":   "button",
+			"text":  plainText("« 上一页"),
+			"type":  "default",
+			"width": "default",
+		}
+		if page > 0 {
+			prevBtn["value"] = map[string]string{"action": "page_nav", "page": strconv.Itoa(page - 1)}
+		} else {
+			prevBtn["disabled"] = true
+		}
+
+		nextBtn := map[string]any{
+			"tag":   "button",
+			"text":  plainText("下一页 »"),
+			"type":  "default",
+			"width": "default",
+		}
+		if page < totalPages-1 {
+			nextBtn["value"] = map[string]string{"action": "page_nav", "page": strconv.Itoa(page + 1)}
+		} else {
+			nextBtn["disabled"] = true
+		}
+
+		pageInfo := map[string]any{
+			"tag":       "column_set",
+			"flex_mode": "bisect",
+			"columns": []map[string]any{
+				{
+					"tag":            "column",
+					"width":          "weighted",
+					"weight":         1,
+					"vertical_align": "center",
+					"elements":       []map[string]any{prevBtn},
+				},
+				{
+					"tag":            "column",
+					"width":          "weighted",
+					"weight":         1,
+					"vertical_align": "center",
+					"elements":       []map[string]any{nextBtn},
+				},
+			},
+		}
+		elements = append(elements, pageInfo)
+		elements = append(elements, noteElement(fmt.Sprintf("第 %d/%d 页 · 点击「选择」切换当前文章", page+1, totalPages)))
+	} else {
+		elements = append(elements, hrElement())
+		elements = append(elements, noteElement("点击「选择」切换当前文章，然后可以直接提问。"))
+	}
 
 	c["body"] = map[string]any{"elements": elements}
-	return marshalCard(c)
+	return c
 }
 
 // ─── Paper detail card (when clicking a paper from list) ───
@@ -441,75 +516,6 @@ func buildCardMarkdown(content string) string {
 		},
 	}
 	return marshalCard(c)
-}
-
-// ─── Paper list card with selection highlight ───
-
-func buildPaperListCardWithSelection(papers []session.PaperSummary, selectedID string) map[string]any {
-	c := cardBase()
-	c["header"] = cardHeader("📚 最近的文章", "blue")
-
-	elements := make([]map[string]any, 0, len(papers)+2)
-	elements = append(elements, mdElement(fmt.Sprintf("共 **%d** 篇文章，以下是最近 **%d** 篇：", len(papers), len(papers))))
-
-	for i, p := range papers {
-		title := p.Title
-		if title == "" {
-			title = "Paper " + p.ShortRef()
-		}
-		ratingStr := ""
-		if p.Rating > 0 {
-			ratingStr = fmt.Sprintf(" ⭐%d", p.Rating)
-		}
-		timeStr := p.UpdatedAt.Format("01-02 15:04")
-
-		text := fmt.Sprintf("**%d.** %s%s\n_%s · %s_", i+1, title, ratingStr, timeStr, p.ShortRef())
-
-		var btn map[string]any
-		if p.Ref() == selectedID {
-			btn = map[string]any{
-				"tag":   "button",
-				"text":  plainText("已选中 ✓"),
-				"type":  "primary",
-				"disabled": true,
-				"width": "default",
-			}
-		} else {
-			btn = buttonElement("选择", "open:"+p.Ref(), "default", map[string]string{"paper_id": p.Ref()})
-		}
-
-		colSet := map[string]any{
-			"tag":       "column_set",
-			"flex_mode": "none",
-			"columns": []map[string]any{
-				{
-					"tag":            "column",
-					"width":          "weighted",
-					"weight":         4,
-					"vertical_align": "center",
-					"elements": []map[string]any{
-						{"tag": "markdown", "content": text},
-					},
-				},
-				{
-					"tag":            "column",
-					"width":          "auto",
-					"vertical_align": "center",
-					"elements": []map[string]any{btn},
-				},
-			},
-		}
-		elements = append(elements, colSet)
-		if i < len(papers)-1 {
-			elements = append(elements, hrElement())
-		}
-	}
-
-	elements = append(elements, hrElement())
-	elements = append(elements, noteElement("点击「选择」切换当前文章，然后可以直接提问。"))
-
-	c["body"] = map[string]any{"elements": elements}
-	return c
 }
 
 // ─── Helpers ───
