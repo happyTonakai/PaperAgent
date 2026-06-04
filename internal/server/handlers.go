@@ -89,6 +89,31 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] fetched %d chars, creating paper", len(content))
 
+	// Check for existing paper with the same arXiv ID.
+	if arxivID != "" {
+		if existing, err := session.FindPaperByArxivID(arxivID); err == nil && existing != nil {
+			log.Printf("[new-paper] paper with arxiv ID %s already exists: %s", arxivID, existing.Ref())
+			// Set as active paper.
+			if err := session.SetActivePaper(existing.Ref()); err != nil {
+				log.Printf("[new-paper] set active paper error: %v", err)
+			}
+			title := existing.Title
+			if title == "" {
+				if existing.SessionID != "" && len(existing.SessionID) >= 8 {
+					title = existing.SessionID[:8]
+				} else {
+					title = "Paper " + existing.Ref()
+				}
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"existing": true,
+				"id":       existing.Ref(),
+				"title":    title,
+			})
+			return
+		}
+	}
+
 	paper := session.NewPaper(content, sourceURL, arxivID)
 	paper.ModelUsed = s.cfg.API.DefaultModel
 

@@ -453,6 +453,35 @@ func ListPapers() ([]PaperSummary, error) {
 	return papers, nil
 }
 
+// FindPaperByArxivID looks for a paper with the given arXiv ID.
+// Returns the paper if found, or os.ErrNotExist if not found.
+func FindPaperByArxivID(arxivID string) (*Paper, error) {
+	if arxivID == "" {
+		return nil, os.ErrNotExist
+	}
+	dir := config.PapersDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, os.ErrNotExist
+		}
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		p, err := loadPaperPath(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if p.ArxivID == arxivID {
+			return p, nil
+		}
+	}
+	return nil, os.ErrNotExist
+}
+
 func EstimateTokens(text string) int {
 	return len(text) / 4
 }

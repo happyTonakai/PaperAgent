@@ -306,6 +306,12 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 	case strings.HasPrefix(text, "/"):
 		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/help` — 查看帮助")
 	default:
+		// Check if the input is just an arXiv URL/ID — auto-create new paper.
+		if arxivURL, _, ok := urlparse.NormalizeArxivInput(text); ok {
+			b.cmdNew(chatID, messageID, arxivURL)
+			return
+		}
+
 		// Treat as Q&A if there's an active paper
 		s.mu.Lock()
 		paperID := s.paperID
@@ -365,6 +371,29 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	}
 
 	log.Printf("[feishu] fetched %d chars for %s", len(content), sourceURL)
+
+	// Check for existing paper with the same arXiv ID.
+	if arxivID != "" {
+		if existing, err := session.FindPaperByArxivID(arxivID); err == nil && existing != nil {
+			log.Printf("[feishu] paper with arxiv ID %s already exists: %s", arxivID, existing.Ref())
+			// Set as active paper
+			s.mu.Lock()
+			s.paperID = existing.Ref()
+			s.mu.Unlock()
+			if err := session.SetActivePaper(existing.Ref()); err != nil {
+				log.Printf("[feishu] set active paper error: %v", err)
+			}
+			title := existing.Title
+			if title == "" {
+				title = paperRef(existing)
+			}
+			b.sendText(chatID, fmt.Sprintf(
+				"📋 **%s**\n\n该论文已存在，已激活。\n如果需要继续提问直接问就行。\n如果需要原始总结请输入 `/summary`\n如果需要最近几轮的QA请输入 `/fetch n`",
+				title,
+			))
+			return
+		}
+	}
 
 	// Create paper
 	paper := session.NewPaper(content, sourceURL, arxivID)
