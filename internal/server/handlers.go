@@ -101,6 +101,14 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Add initial user message FIRST so the paper has content before any save.
+	paper.AddMessage(session.Message{
+		RoundNumber: 0,
+		Role:        "user",
+		Content:     content,
+		TokenCount:  session.EstimateTokens(content),
+	})
+
 	if err := paper.Save(); err != nil {
 		log.Printf("[new-paper] save error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save failed"})
@@ -133,14 +141,6 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[new-paper] starting summary stream for %s", paper.Ref())
-
-	// Add initial user message
-	paper.AddMessage(session.Message{
-		RoundNumber: 0,
-		Role:        "user",
-		Content:     content,
-		TokenCount:  session.EstimateTokens(content),
-	})
 
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetHeavy()},
@@ -291,6 +291,43 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		unlock()
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "paper not found"})
+		return
+	}
+
+	// Auto-recover lost content from source URL if possible
+	if paper.Content == "" && paper.SourceURL != "" {
+		log.Printf("[chat] content empty for %s, re-fetching from %s", id, paper.SourceURL)
+		sourceURL := paper.SourceURL
+		unlock()
+
+		content, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		if err != nil {
+			log.Printf("[chat] re-fetch failed: %v", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("paper content lost and re-fetch from source URL failed: %v", err)})
+			return
+		}
+
+		unlock = s.lockPaper(id)
+		paper, err = session.LoadPaperByRef(id)
+		if err != nil {
+			unlock()
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "paper not found"})
+			return
+		}
+
+		for i, m := range paper.Messages {
+			if m.RoundNumber == 0 && m.Role == "user" {
+				paper.Messages[i].Content = content
+				paper.Messages[i].TokenCount = session.EstimateTokens(content)
+				break
+			}
+		}
+		paper.Content = content
+		paper.Save()
+		log.Printf("[chat] recovered %d chars from source URL", len(content))
+	} else if paper.Content == "" {
+		unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "paper content is empty and no source URL to recover from"})
 		return
 	}
 
@@ -456,10 +493,46 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If content was lost (e.g. old-format paper corrupted by SavePaper),
+	// try to recover from source URL.
 	if paper.Content == "" {
+		if paper.SourceURL == "" {
+			unlock()
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "paper content is empty and no source URL to recover from"})
+			return
+		}
+
+		log.Printf("[retry-summary] content empty for %s, re-fetching from %s", id, paper.SourceURL)
+		sourceURL := paper.SourceURL
 		unlock()
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "paper content is empty"})
-		return
+
+		content, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		if err != nil {
+			log.Printf("[retry-summary] re-fetch failed: %v", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("re-fetch from source URL failed: %v", err)})
+			return
+		}
+
+		// Lock again and update paper with recovered content
+		unlock = s.lockPaper(id)
+		paper, err = session.LoadPaperByRef(id)
+		if err != nil {
+			unlock()
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "paper not found"})
+			return
+		}
+
+		// Update the round-0 user message with recovered content
+		for i, m := range paper.Messages {
+			if m.RoundNumber == 0 && m.Role == "user" {
+				paper.Messages[i].Content = content
+				paper.Messages[i].TokenCount = session.EstimateTokens(content)
+				break
+			}
+		}
+		paper.Content = content
+		paper.Save()
+		log.Printf("[retry-summary] recovered %d chars from source URL", len(content))
 	}
 
 	existingSummary := paper.InitialSummary

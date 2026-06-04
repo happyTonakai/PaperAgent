@@ -378,19 +378,19 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		}
 	}
 
-	if err := paper.Save(); err != nil {
-		log.Printf("[feishu] save error: %v", err)
-		b.sendText(chatID, "❌ 保存论文失败")
-		return
-	}
-
-	// Add round 0 user message (consistent with web handler)
+	// Add round 0 user message FIRST so the paper has content before any save.
 	paper.AddMessage(session.Message{
 		RoundNumber: 0,
 		Role:        "user",
 		Content:     content,
 		TokenCount:  session.EstimateTokens(content),
 	})
+
+	if err := paper.Save(); err != nil {
+		log.Printf("[feishu] save error: %v", err)
+		b.sendText(chatID, "❌ 保存论文失败")
+		return
+	}
 
 	// Set as active paper for this chat AND globally
 	s.mu.Lock()
