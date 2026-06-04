@@ -237,16 +237,18 @@ func (b *Bot) onCardAction(ctx context.Context, event *callback.CardActionTrigge
 
 	switch {
 	case strings.HasPrefix(actionVal, "open:"):
-		// User clicked a paper in /list to open it
+		// User clicked a paper in list/search card to open it
 		paperID = strings.TrimPrefix(actionVal, "open:")
 		pageStr, _ := event.Event.Action.Value["page"].(string)
 		currentPage, _ := strconv.Atoi(pageStr)
-		return b.handleCardOpenPaper(paperID, chatID, currentPage)
+		searchKeyword, _ := event.Event.Action.Value["search"].(string)
+		return b.handleCardOpenPaper(paperID, chatID, currentPage, searchKeyword)
 	case actionVal == "page_nav":
-		// User clicked pagination button in /list
+		// User clicked pagination button in list/search card
 		pageStr, _ := event.Event.Action.Value["page"].(string)
 		targetPage, _ := strconv.Atoi(pageStr)
-		return b.handlePageNav(targetPage, chatID)
+		searchKeyword, _ := event.Event.Action.Value["search"].(string)
+		return b.handlePageNav(targetPage, chatID, searchKeyword)
 	case strings.HasPrefix(actionVal, "qa:"):
 		// Resume Q&A for a paper that already has a summary
 		paperID = strings.TrimPrefix(actionVal, "qa:")
@@ -268,6 +270,11 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		b.sendText(chatID, "请提供论文链接，例如：\n`/new https://arxiv.org/abs/2106.09685`")
 	case text == "/list":
 		b.cmdList(chatID)
+	case strings.HasPrefix(text, "/search "):
+		keywords := strings.TrimSpace(strings.TrimPrefix(text, "/search "))
+		b.cmdSearch(chatID, keywords)
+	case text == "/search":
+		b.sendText(chatID, "请提供搜索关键词，例如：\n`/search transformer`")
 	case text == "/summary":
 		b.cmdSummary(chatID)
 	case strings.HasPrefix(text, "/fetch"):
@@ -550,7 +557,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	}
 }
 
-// pageSize is the number of papers per page in the /list card.
+// pageSize is the number of papers per page in list/search cards.
 const pageSize = 8
 
 // cmdList shows papers as a paginated interactive card.
@@ -580,7 +587,7 @@ func (b *Bot) cmdList(chatID string) {
 	selectedID := s.paperID
 	s.mu.Unlock()
 
-	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID))
+	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID, "", ""))
 
 	ctx := context.Background()
 	err2 := b.doFeishuCall(ctx, "send list card", func(client *lark.Client) error {
@@ -605,6 +612,75 @@ func (b *Bot) cmdList(chatID string) {
 	if err2 != nil {
 		log.Printf("[feishu] failed to send list card: %v", err2)
 		b.sendText(chatID, "❌ 发送列表卡片失败")
+	}
+}
+
+// cmdSearch searches papers by title keyword and shows a paginated card.
+func (b *Bot) cmdSearch(chatID, keyword string) {
+	if keyword == "" {
+		b.sendText(chatID, "请提供搜索关键词，例如：\n`/search transformer`")
+		return
+	}
+
+	allPapers, err := session.ListPapers()
+	if err != nil {
+		b.sendText(chatID, fmt.Sprintf("❌ 搜索失败：%v", err))
+		return
+	}
+
+	keywordLower := strings.ToLower(keyword)
+	var matched []session.PaperSummary
+	for _, p := range allPapers {
+		if strings.Contains(strings.ToLower(p.Title), keywordLower) {
+			matched = append(matched, p)
+		}
+	}
+
+	if len(matched) == 0 {
+		b.sendText(chatID, fmt.Sprintf("🔍 没有找到标题包含「%s」的文章", keyword))
+		return
+	}
+
+	totalCount := len(matched)
+	page := 0
+	end := pageSize
+	if end > totalCount {
+		end = totalCount
+	}
+	pagePapers := matched[:end]
+
+	// Check if there's a currently selected paper to highlight
+	s := b.getSession(chatID)
+	s.mu.Lock()
+	selectedID := s.paperID
+	s.mu.Unlock()
+
+	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID,
+		fmt.Sprintf("🔍 搜索结果：%s", keyword), keyword))
+
+	ctx := context.Background()
+	err2 := b.doFeishuCall(ctx, "send search card", func(client *lark.Client) error {
+		resp, e := client.Im.Message.Create(ctx,
+			larkim.NewCreateMessageReqBuilder().
+				ReceiveIdType("chat_id").
+				Body(larkim.NewCreateMessageReqBodyBuilder().
+					ReceiveId(chatID).
+					MsgType(larkim.MsgTypeInteractive).
+					Content(cardJSON).
+					Build()).
+				Build())
+		if e != nil {
+			return fmt.Errorf("create message: %w", e)
+		}
+		if !resp.Success() {
+			return fmt.Errorf("create message: code=%d msg=%s", resp.Code, resp.Msg)
+		}
+		return nil
+	})
+
+	if err2 != nil {
+		log.Printf("[feishu] failed to send search card: %v", err2)
+		b.sendText(chatID, "❌ 发送搜索结果卡片失败")
 	}
 }
 
@@ -851,7 +927,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	}
 }
 
-func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int) (*callback.CardActionTriggerResponse, error) {
+func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int, searchKeyword string) (*callback.CardActionTriggerResponse, error) {
 	paper, err := session.LoadPaperByRef(paperID)
 	if err != nil {
 		return &callback.CardActionTriggerResponse{
@@ -869,9 +945,24 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int) (*cal
 		log.Printf("[feishu] set active paper error: %v", err)
 	}
 
-	// Rebuild the paginated list card with the selected paper highlighted
 	allPapers, _ := session.ListPapers()
-	totalCount := len(allPapers)
+
+	// Filter by search keyword if in search mode
+	var pagePapers []session.PaperSummary
+	totalCount := 0
+	if searchKeyword != "" {
+		kw := strings.ToLower(searchKeyword)
+		for _, p := range allPapers {
+			if strings.Contains(strings.ToLower(p.Title), kw) {
+				pagePapers = append(pagePapers, p)
+			}
+		}
+		totalCount = len(pagePapers)
+	} else {
+		pagePapers = allPapers
+		totalCount = len(allPapers)
+	}
+
 	page := currentPage
 	if page*pageSize >= totalCount && totalCount > 0 {
 		page = 0
@@ -881,7 +972,13 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int) (*cal
 	if end > totalCount {
 		end = totalCount
 	}
-	pagePapers := allPapers[start:end]
+	pagePapers = pagePapers[start:end]
+
+	// Determine header title
+	headerTitle := ""
+	if searchKeyword != "" {
+		headerTitle = fmt.Sprintf("🔍 搜索结果：%s", searchKeyword)
+	}
 
 	title := paper.Title
 	if title == "" {
@@ -895,13 +992,13 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int) (*cal
 		},
 		Card: &callback.Card{
 			Type: "raw",
-			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, paperID),
+			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, paperID, headerTitle, searchKeyword),
 		},
 	}, nil
 }
 
-// handlePageNav navigates to a specific page in the /list card.
-func (b *Bot) handlePageNav(targetPage int, chatID string) (*callback.CardActionTriggerResponse, error) {
+// handlePageNav navigates to a specific page in the list/search card.
+func (b *Bot) handlePageNav(targetPage int, chatID string, searchKeyword string) (*callback.CardActionTriggerResponse, error) {
 	allPapers, err := session.ListPapers()
 	if err != nil {
 		return &callback.CardActionTriggerResponse{
@@ -909,7 +1006,22 @@ func (b *Bot) handlePageNav(targetPage int, chatID string) (*callback.CardAction
 		}, nil
 	}
 
-	totalCount := len(allPapers)
+	// Filter by search keyword if in search mode
+	var pagePapers []session.PaperSummary
+	totalCount := 0
+	if searchKeyword != "" {
+		kw := strings.ToLower(searchKeyword)
+		for _, p := range allPapers {
+			if strings.Contains(strings.ToLower(p.Title), kw) {
+				pagePapers = append(pagePapers, p)
+			}
+		}
+		totalCount = len(pagePapers)
+	} else {
+		pagePapers = allPapers
+		totalCount = len(allPapers)
+	}
+
 	if totalCount == 0 {
 		return nil, nil
 	}
@@ -929,7 +1041,13 @@ func (b *Bot) handlePageNav(targetPage int, chatID string) (*callback.CardAction
 	if end > totalCount {
 		end = totalCount
 	}
-	pagePapers := allPapers[start:end]
+	pagePapers = pagePapers[start:end]
+
+	// Determine header title
+	headerTitle := ""
+	if searchKeyword != "" {
+		headerTitle = fmt.Sprintf("🔍 搜索结果：%s", searchKeyword)
+	}
 
 	// Get currently selected paper
 	s := b.getSession(chatID)
@@ -940,7 +1058,7 @@ func (b *Bot) handlePageNav(targetPage int, chatID string) (*callback.CardAction
 	return &callback.CardActionTriggerResponse{
 		Card: &callback.Card{
 			Type: "raw",
-			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID),
+			Data: buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID, headerTitle, searchKeyword),
 		},
 	}, nil
 }
@@ -1075,6 +1193,7 @@ const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"可用命令：\n" +
 	"• **/new <链接>** — 创建新的论文总结\n" +
 	"• **/list** — 查看文章列表（支持翻页）\n" +
+		"• **/search <关键词>** — 搜索论文标题\n" +
 	"• **/summary** — 查看当前论文的初始总结\n" +
 	"• **/fetch [n]** — 拉取最近 n 轮问答（默认 2）\n" +
 	"• **/btw <问题>** — 提问但不记入上下文\n" +

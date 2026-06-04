@@ -349,9 +349,12 @@ func buildChatStreamingContinuationCard(content string) string {
 
 // ─── Paper list card (paginated) ───
 
-func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, page, pageSize int, selectedID string) map[string]any {
+func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, page, pageSize int, selectedID string, headerTitle string, searchKeyword string) map[string]any {
 	c := cardBase()
-	c["header"] = cardHeader("📚 最近的文章", "blue")
+	if headerTitle == "" {
+		headerTitle = "📚 最近的文章"
+	}
+	c["header"] = cardHeader(headerTitle, "blue")
 
 	totalPages := (totalCount + pageSize - 1) / pageSize
 	start := page*pageSize + 1
@@ -365,6 +368,14 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 		headerText = fmt.Sprintf("共 **%d** 篇文章（第 %d-%d 篇）", totalCount, start, end)
 	}
 	elements = append(elements, mdElement(headerText))
+
+	// Helper: conditionally attach search keyword to button value
+	btnExtra := func(base map[string]string) map[string]string {
+		if searchKeyword != "" {
+			base["search"] = searchKeyword
+		}
+		return base
+	}
 
 	// Paper entries
 	for i, p := range pagePapers {
@@ -390,7 +401,7 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 				"width":    "default",
 			}
 		} else {
-			btn = buttonElement("选择", "open:"+p.Ref(), "default", map[string]string{"paper_id": p.Ref(), "page": strconv.Itoa(page)})
+			btn = buttonElement("选择", "open:"+p.Ref(), "default", btnExtra(map[string]string{"paper_id": p.Ref(), "page": strconv.Itoa(page)}))
 		}
 
 		colSet := map[string]any{
@@ -431,7 +442,7 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 			"width": "default",
 		}
 		if page > 0 {
-			prevBtn["value"] = map[string]string{"action": "page_nav", "page": strconv.Itoa(page - 1)}
+			prevBtn["value"] = btnExtra(map[string]string{"action": "page_nav", "page": strconv.Itoa(page - 1)})
 		} else {
 			prevBtn["disabled"] = true
 		}
@@ -443,7 +454,7 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 			"width": "default",
 		}
 		if page < totalPages-1 {
-			nextBtn["value"] = map[string]string{"action": "page_nav", "page": strconv.Itoa(page + 1)}
+			nextBtn["value"] = btnExtra(map[string]string{"action": "page_nav", "page": strconv.Itoa(page + 1)})
 		} else {
 			nextBtn["disabled"] = true
 		}

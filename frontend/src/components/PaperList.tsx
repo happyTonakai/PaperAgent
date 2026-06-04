@@ -1,4 +1,4 @@
-import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle, Search, X } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
@@ -82,6 +82,11 @@ export function PaperList() {
   const [sortBy, setSortBy] = useState<SortBy>(getInitialSortBy)
   const [sortOrder, setSortOrder] = useState<SortOrder>(getInitialSortOrder)
 
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
   // Resize state
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -151,6 +156,23 @@ export function PaperList() {
       document.removeEventListener('scroll', handler as EventListener, true)
     }
   }, [menuOpen, contextMenu])
+
+  // Keyboard shortcut for search (Cmd+F / Ctrl+F)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault()
+        setSearchOpen(true)
+        requestAnimationFrame(() => searchInputRef.current?.focus())
+      }
+      if (e.key === 'Escape' && searchOpen) {
+        setSearchOpen(false)
+        setSearchQuery('')
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [searchOpen])
 
   const handleDeleteConfirm = async (id: string) => {
     try {
@@ -265,6 +287,13 @@ export function PaperList() {
     return sorted
   }, [papers, sortBy, sortOrder])
 
+  // Filter papers by search query (client-side, case-insensitive title match)
+  const filteredPapers = useMemo(() => {
+    if (!searchQuery) return sortedPapers
+    const q = searchQuery.toLowerCase()
+    return sortedPapers.filter((p) => p.title.toLowerCase().includes(q))
+  }, [sortedPapers, searchQuery])
+
   return (
     <div
       className="flex-shrink-0 flex flex-col h-full relative"
@@ -286,27 +315,66 @@ export function PaperList() {
           论文列表
         </h1>
         <div className="flex items-center gap-1">
-          <button
-            onClick={toggleSortBy}
-            className="p-1 rounded-md transition-all duration-200 hover:scale-105 active:scale-95 text-xs"
-            style={{
-              color: sortBy === 'rating' ? 'var(--color-accent)' : 'var(--color-text-muted)',
-              fontFamily: 'var(--font-ui)',
-            }}
-            title={`排序: ${sortBy === 'time' ? '时间' : '评分'}`}
-            aria-label={`按${sortBy === 'time' ? '评分' : '时间'}排序`}
-          >
-            {sortBy === 'time' ? '时间' : '评分'}
-          </button>
-          <button
-            onClick={toggleSortOrder}
-            className="p-1 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
-            style={{ color: 'var(--color-text-muted)' }}
-            title={sortOrder === 'desc' ? '降序' : '升序'}
-            aria-label={sortOrder === 'desc' ? '切换升序' : '切换降序'}
-          >
-            {sortOrder === 'desc' ? <ArrowDown size={11} /> : <ArrowUp size={11} />}
-          </button>
+          {searchOpen ? (
+            <>
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索论文标题..."
+                className="w-36 px-2 py-1 text-xs rounded border outline-none transition-all duration-200"
+                style={{
+                  fontFamily: 'var(--font-ui)',
+                  borderColor: 'var(--color-accent)',
+                  backgroundColor: 'var(--color-surface)',
+                  color: 'var(--color-text)',
+                }}
+              />
+              <button
+                onClick={() => { setSearchOpen(false); setSearchQuery('') }}
+                className="p-1 rounded-md transition-all duration-200 hover:bg-[var(--color-bg-inset)]"
+                style={{ color: 'var(--color-text-muted)' }}
+                title="关闭搜索"
+                aria-label="关闭搜索"
+              >
+                <X size={13} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={toggleSortBy}
+                className="p-1 rounded-md transition-all duration-200 hover:scale-105 active:scale-95 text-xs"
+                style={{
+                  color: sortBy === 'rating' ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                  fontFamily: 'var(--font-ui)',
+                }}
+                title={`排序: ${sortBy === 'time' ? '时间' : '评分'}`}
+                aria-label={`按${sortBy === 'time' ? '评分' : '时间'}排序`}
+              >
+                {sortBy === 'time' ? '时间' : '评分'}
+              </button>
+              <button
+                onClick={toggleSortOrder}
+                className="p-1 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
+                style={{ color: 'var(--color-text-muted)' }}
+                title={sortOrder === 'desc' ? '降序' : '升序'}
+                aria-label={sortOrder === 'desc' ? '切换升序' : '切换降序'}
+              >
+                {sortOrder === 'desc' ? <ArrowDown size={11} /> : <ArrowUp size={11} />}
+              </button>
+              <button
+                onClick={() => { setSearchOpen(true); requestAnimationFrame(() => searchInputRef.current?.focus()) }}
+                className="p-1 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
+                style={{ color: searchQuery ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
+                title="搜索论文 (Cmd+F)"
+                aria-label="搜索"
+              >
+                <Search size={12} />
+              </button>
+            </>
+          )}
           <button
             onClick={() => setNewPaperOpen(true)}
             className="p-1.5 rounded-md transition-all duration-200 hover:scale-110 active:scale-95 ml-2"
@@ -363,18 +431,18 @@ export function PaperList() {
           </div>
         )}
 
-        {!isLoading && !isError && sortedPapers.length === 0 && (
+        {!isLoading && !isError && filteredPapers.length === 0 && (
           <div className="p-8 text-center">
             <p className="text-sm" style={{ color: 'var(--color-text-muted)', fontFamily: 'var(--font-body)' }}>
-              暂无论文
+              {searchQuery ? '没有匹配的文章' : '暂无论文'}
             </p>
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              点击 + 新建
+              {searchQuery ? '试试其他关键词' : '点击 + 新建'}
             </p>
           </div>
         )}
 
-        {sortedPapers.map((p) => (
+        {filteredPapers.map((p) => (
           <div
             key={p.id}
             className="group relative px-4 py-3 transition-all duration-200"
