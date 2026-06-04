@@ -96,15 +96,164 @@ func extractArxivIDFromURL(raw string) (string, bool) {
 	return "", false
 }
 
-// FetchURL fetches content from a URL, trying arxiv2text first, then falling back to HTTP.
+// FetchURL fetches content from an arXiv URL.
+// Priority:
+//  1. HTML version (https://arxiv.org/html/{id}/)
+//  2. TeX source (via arxiv2text binary)
 func FetchURL(url string) (string, error) {
-	// Try arxiv2text first
-	if content, err := tryArxiv2Text(url); err == nil && content != "" {
+	_, id, ok := extractArxivIDFromAbsURL(url)
+	if !ok {
+		return "", fmt.Errorf("not a valid arXiv URL: %s", url)
+	}
+
+	// Priority 1: Try HTML version
+	htmlURL := fmt.Sprintf("https://arxiv.org/html/%s/", id)
+	if content, err := fetchArxivHTML(htmlURL); err == nil && content != "" {
 		return content, nil
 	}
 
-	// Fallback to HTTP fetch
-	return httpFetch(url)
+	// Priority 2: Fallback to TeX source via arxiv2text
+	absURL := fmt.Sprintf("https://arxiv.org/abs/%s", id)
+	if content, err := tryArxiv2Text(absURL); err == nil && content != "" {
+		return content, nil
+	}
+
+	return "", fmt.Errorf("failed to fetch paper from arXiv: HTML and TeX source both unavailable for %s", id)
+}
+
+// extractArxivIDFromAbsURL extracts the arXiv ID from an arXiv abs URL like
+// https://arxiv.org/abs/2301.00001v2.
+func extractArxivIDFromAbsURL(url string) (string, string, bool) {
+	trimmed := strings.TrimSpace(url)
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "http://arxiv.org/") &&
+		!strings.HasPrefix(lower, "https://arxiv.org/") &&
+		!strings.HasPrefix(lower, "http://www.arxiv.org/") &&
+		!strings.HasPrefix(lower, "https://www.arxiv.org/") {
+		return "", "", false
+	}
+
+	path := trimmed
+	if idx := strings.Index(path, "://"); idx >= 0 {
+		path = path[idx+3:]
+		if slash := strings.Index(path, "/"); slash >= 0 {
+			path = path[slash+1:]
+		} else {
+			return "", "", false
+		}
+	}
+	if q := strings.IndexAny(path, "?#"); q >= 0 {
+		path = path[:q]
+	}
+	path = strings.Trim(path, "/")
+
+	if !strings.HasPrefix(path, "abs/") {
+		return "", "", false
+	}
+
+	id := strings.TrimPrefix(path, "abs/")
+	if !isArxivID(id) {
+		return "", "", false
+	}
+
+	return "https://arxiv.org/abs/" + id, id, true
+}
+
+// FetchArxivAsMarkdown fetches the HTML version of an arXiv paper and converts
+// it to Markdown, preserving tables and document structure.
+func FetchArxivAsMarkdown(arxivID string) (string, error) {
+	htmlURL := fmt.Sprintf("https://arxiv.org/html/%s/", arxivID)
+
+	html, err := fetchArxivHTMLRaw(htmlURL)
+	if err != nil {
+		return "", err
+	}
+
+	return HTMLToMarkdown(html), nil
+}
+
+// fetchArxivHTML fetches the HTML version of an arXiv paper, converting to
+// plain text for LLM consumption.
+func fetchArxivHTML(url string) (string, error) {
+	html, err := fetchArxivHTMLRaw(url)
+	if err != nil {
+		return "", err
+	}
+	return stripHTML(html), nil
+}
+
+// fetchArxivHTMLRaw fetches the raw HTML from an arXiv HTML URL.
+func fetchArxivHTMLRaw(url string) (string, error) {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Don't follow redirects; if arXiv redirects away from /html/, the
+			// HTML version likely doesn't exist.
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("fetching arxiv HTML: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// arXiv returns 302 or 404 when HTML version is not available
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("arxiv HTML HTTP %d", resp.StatusCode)
+	}
+
+	// Check content type is HTML
+	ct := resp.Header.Get("Content-Type")
+	if !strings.Contains(strings.ToLower(ct), "text/html") {
+		return "", fmt.Errorf("unexpected content type: %s", ct)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading arxiv HTML: %w", err)
+	}
+
+	if len(body) < 1000 {
+		return "", fmt.Errorf("arxiv HTML too short (%d bytes), likely not a real paper HTML", len(body))
+	}
+
+	return string(body), nil
+}
+
+// stripHTML removes HTML tags from the input, returning plain text with
+// whitespace normalized.
+func stripHTML(html string) string {
+	// Remove scripts and styles first
+	reScript := regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	html = reScript.ReplaceAllString(html, "")
+	reStyle := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	html = reStyle.ReplaceAllString(html, "")
+
+	// Replace <br> and block-level tags with newlines
+	reBr := regexp.MustCompile(`(?is)<br\s*/?>`)
+	html = reBr.ReplaceAllString(html, "\n")
+	reBlock := regexp.MustCompile(`(?is)</?(p|div|h[1-6]|li|tr|blockquote|section|pre|article)[^>]*>`)
+	html = reBlock.ReplaceAllString(html, "\n")
+
+	// Remove remaining tags
+	reTag := regexp.MustCompile(`<[^>]*>`)
+	html = reTag.ReplaceAllString(html, "")
+
+	// Decode common HTML entities
+	html = strings.ReplaceAll(html, "&amp;", "&")
+	html = strings.ReplaceAll(html, "&lt;", "<")
+	html = strings.ReplaceAll(html, "&gt;", ">")
+	html = strings.ReplaceAll(html, "&quot;", "\"")
+	html = strings.ReplaceAll(html, "&#39;", "'")
+	html = strings.ReplaceAll(html, "&nbsp;", " ")
+
+	// Normalize whitespace: collapse multiple newlines, trim
+	reBlankLines := regexp.MustCompile(`\n{3,}`)
+	html = reBlankLines.ReplaceAllString(html, "\n\n")
+
+	return strings.TrimSpace(html)
 }
 
 var arxivTitleRe = regexp.MustCompile(`<title>\[([^\]]+)\]\s+(.*?)</title>`)

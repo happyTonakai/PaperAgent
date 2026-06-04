@@ -42,6 +42,12 @@ build-go:
 serve: build
     ./{{bin}}
 
+# ---- arxiv2md ----
+
+# 编译 standalone arxiv2md 二进制
+arxiv2md:
+	GOCACHE={{gocache}} go build -o arxiv2md ./cmd/arxiv2md/
+
 # ---- 代码质量 ----
 
 # Go 代码检查
