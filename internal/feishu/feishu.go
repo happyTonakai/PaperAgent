@@ -483,8 +483,9 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 
 	// Build messages for summary
 	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetHeavy()},
+		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
 	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
@@ -836,8 +837,9 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	// Build messages (exclude btw rounds from context)
 	recent := paper.RecentContextMessages(b.cfg.UI.MaxRecentRounds)
 	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetLight()},
-		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
+		{Role: "system", Content: prompt.GetSystem()},
+		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: prompt.GetLight()},
 	}
 	for _, msg := range recent {
 		messages = append(messages, api.ChatMessage{Role: msg.Role, Content: msg.Content})

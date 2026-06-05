@@ -171,8 +171,9 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[new-paper] starting summary stream for %s", paper.Ref())
 
 	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetHeavy()},
+		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: content},
+		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
@@ -413,8 +414,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Build messages for CHAT phase
 	recent := paper.RecentContextMessages(s.cfg.UI.MaxRecentRounds)
 	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetLight()},
-		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
+		{Role: "system", Content: prompt.GetSystem()},
+		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: prompt.GetLight()},
 	}
 	for _, msg := range recent {
 		messages = append(messages, api.ChatMessage{Role: msg.Role, Content: msg.Content})
@@ -589,8 +591,9 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 
 	// Build messages
 	msgs := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetHeavy()},
+		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
 	if existingSummary != "" {
@@ -719,8 +722,9 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 
 	// Build messages: paper + recent rounds up to (but not including) this round
 	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetLight()},
-		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paper.Content)},
+		{Role: "system", Content: prompt.GetSystem()},
+		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: prompt.GetLight()},
 	}
 	// Include messages from rounds before this one (skip btw messages)
 	for _, m := range paper.Messages {
@@ -732,8 +736,8 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Cap recent context
-	if len(messages) > s.cfg.UI.MaxRecentRounds*2+2 {
-		messages = append([]api.ChatMessage{messages[0], messages[1]}, messages[len(messages)-s.cfg.UI.MaxRecentRounds*2:]...)
+	if len(messages) > s.cfg.UI.MaxRecentRounds*2+3 {
+		messages = append([]api.ChatMessage{messages[0], messages[1], messages[2]}, messages[len(messages)-s.cfg.UI.MaxRecentRounds*2:]...)
 	}
 	unlock() // Release lock before SSE stream
 
