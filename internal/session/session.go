@@ -72,6 +72,7 @@ func (p *Paper) AddMessage(msg Message) {
 	if p == nil {
 		return
 	}
+	msg.CreatedAt = time.Now()
 	p.Messages = append(p.Messages, msg)
 	p.UpdatedAt = time.Now()
 	p.TotalTokens += msg.TokenCount
@@ -191,6 +192,7 @@ func (m *Manager) AddMessage(msg Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.paper != nil {
+		msg.CreatedAt = time.Now()
 		m.paper.Messages = append(m.paper.Messages, msg)
 		m.paper.UpdatedAt = time.Now()
 		m.paper.TotalTokens += msg.TokenCount

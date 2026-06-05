@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
@@ -674,6 +675,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		CompletionTokens: completionTokens,
 		CachedTokens:     cachedTokens,
 		SkipContext:      true,
+		CreatedAt:        time.Now(),
 	}
 
 	// Find index of first non-round-0 message to insert after round-0 user
@@ -685,6 +687,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	paper.Messages = append(filtered[:insertAt], append([]session.Message{newMsg}, filtered[insertAt:]...)...)
+	paper.UpdatedAt = time.Now()
 	paper.Save()
 
 	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
