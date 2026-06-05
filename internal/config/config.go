@@ -30,7 +30,8 @@ type ObsidianConfig struct {
 }
 
 type UIConfig struct {
-	MaxRecentRounds int `yaml:"max_recent_rounds"`
+	MinRecentRounds int `yaml:"min_recent_rounds"`
+	MaxInputTokens  int `yaml:"max_input_tokens"`
 }
 
 type FeishuConfig struct {
@@ -99,7 +100,8 @@ func defaultConfig() *Config {
 			ExportFolder: "Papers",
 		},
 		UI: UIConfig{
-			MaxRecentRounds: 5,
+			MinRecentRounds: 2,
+			MaxInputTokens:  30000,
 		},
 	}
 
@@ -148,7 +150,8 @@ func (c *Config) Save() error {
 			ExportFolder: c.Obsidian.ExportFolder,
 		},
 		UI: UIConfig{
-			MaxRecentRounds: c.UI.MaxRecentRounds,
+			MinRecentRounds: c.UI.MinRecentRounds,
+			MaxInputTokens:  c.UI.MaxInputTokens,
 		},
 	}
 

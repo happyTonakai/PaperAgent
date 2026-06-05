@@ -834,8 +834,12 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 
 	round := paper.CurrentRound() + 1
 
-	// Build messages (exclude btw rounds from context)
-	recent := paper.RecentContextMessages(b.cfg.UI.MaxRecentRounds)
+	// Build messages (exclude btw rounds from context) — dynamic token-aware truncation
+	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
+		session.EstimateTokens(paper.Content) +
+		session.EstimateTokens(prompt.GetLight()) +
+		session.EstimateTokens(question)
+	recent := paper.RecentContextMessages(b.cfg.UI.MinRecentRounds, b.cfg.UI.MaxInputTokens, baseTokens)
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: paper.Content},

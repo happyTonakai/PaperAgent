@@ -8,13 +8,13 @@ type Tab = 'config' | 'prompts'
 interface ConfigData {
   api: { base_url: string; api_key: string; api_key_source: string; default_model: string }
   obsidian: { vault_path: string; export_folder: string }
-  ui: { max_recent_rounds: number }
+  ui: { min_recent_rounds: number; max_input_tokens: number }
   feishu?: { enabled: boolean; app_id: string; app_secret: string }
 }
 
 interface ConfigForm {
   api_key: string; base_url: string; default_model: string
-  max_recent_rounds: string; obsidian_vault_path: string; obsidian_export_folder: string
+  min_recent_rounds: string; max_input_tokens: string; obsidian_vault_path: string; obsidian_export_folder: string
   feishu_enabled: boolean; feishu_app_id: string; feishu_app_secret: string
 }
 
@@ -56,7 +56,7 @@ export function SettingsDialog() {
   const [config, setConfig] = useState<ConfigData | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', max_recent_rounds: '5', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '' })
+  const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '' })
   const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
   // Prompts
@@ -83,7 +83,7 @@ export function SettingsDialog() {
       .then((r) => r.json())
       .then((data: ConfigData) => {
         setConfig(data)
-        setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, max_recent_rounds: String(data.ui.max_recent_rounds), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '' })
+        setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, min_recent_rounds: String(data.ui.min_recent_rounds), max_input_tokens: String(data.ui.max_input_tokens), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '' })
         setApiKeyDirty(false)
       })
       .catch((err) => toast.error('加载配置失败: ' + (err instanceof Error ? err.message : '未知错误')))
@@ -116,7 +116,8 @@ export function SettingsDialog() {
     if (apiKeyDirty && form.api_key.trim()) body['api_key'] = form.api_key.trim()
     if (form.base_url !== config?.api.base_url) body['base_url'] = form.base_url
     if (form.default_model !== config?.api.default_model) body['default_model'] = form.default_model
-    if (String(form.max_recent_rounds) !== String(config?.ui.max_recent_rounds)) body['max_recent_rounds'] = Number(form.max_recent_rounds)
+    if (String(form.min_recent_rounds) !== String(config?.ui.min_recent_rounds)) body['min_recent_rounds'] = Number(form.min_recent_rounds)
+    if (String(form.max_input_tokens) !== String(config?.ui.max_input_tokens)) body['max_input_tokens'] = Number(form.max_input_tokens)
     if (form.obsidian_vault_path !== config?.obsidian.vault_path) body['obsidian_vault_path'] = form.obsidian_vault_path
     if (form.obsidian_export_folder !== config?.obsidian.export_folder) body['obsidian_export_folder'] = form.obsidian_export_folder
     if (form.feishu_enabled !== (config?.feishu?.enabled ?? false)) body['feishu_enabled'] = form.feishu_enabled
@@ -184,7 +185,8 @@ export function SettingsDialog() {
                 </div>
                 <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Base URL</label><input type="text" value={form.base_url} onChange={(e) => updateForm('base_url', e.target.value)} className={inputClass} /></div>
                 <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Default Model</label><input type="text" value={form.default_model} onChange={(e) => updateForm('default_model', e.target.value)} className={inputClass} /></div>
-                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Max Recent Rounds</label><input type="number" value={form.max_recent_rounds} onChange={(e) => updateForm('max_recent_rounds', e.target.value)} min={1} max={50} className={inputClass} /></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">最小保留轮数</label><input type="number" value={form.min_recent_rounds} onChange={(e) => updateForm('min_recent_rounds', e.target.value)} min={1} max={50} className={inputClass} /><p className="text-xs text-gray-400 mt-1">当输入 token 接近上限时，至少保留此轮数的最近上下文</p></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">最大输入 Token</label><input type="number" value={form.max_input_tokens} onChange={(e) => updateForm('max_input_tokens', e.target.value)} min={1000} max={200000} step={1000} className={inputClass} /><p className="text-xs text-gray-400 mt-1">输入超过此值时自动截断上下文到最小轮数（默认 30000）</p></div>
               </fieldset>
               <hr className="border-gray-200 dark:border-gray-800" />
               <fieldset className="space-y-3">

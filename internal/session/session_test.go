@@ -434,7 +434,7 @@ func TestRecentContextMessages_SkipsInitRound(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5)
+	recent := p.RecentContextMessages(5, 999999, 0)
 
 	// Should only have rounds 1 and 2 (4 messages), round 0 should be skipped
 	if len(recent) != 4 {
@@ -476,7 +476,7 @@ func TestRecentContextMessages_SkipsBtwMessages(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5)
+	recent := p.RecentContextMessages(5, 999999, 0)
 
 	// Should have rounds 1 and 3 only (4 messages)
 	if len(recent) != 4 {
@@ -500,7 +500,7 @@ func TestRecentContextMessages_OnlyInitRoundWithSkipContext(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5)
+	recent := p.RecentContextMessages(5, 999999, 0)
 
 	if len(recent) != 0 {
 		t.Errorf("expected empty recent messages for Q1, got %d", len(recent))
@@ -518,7 +518,7 @@ func TestRecentContextMessages_WithoutSkipContext(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5)
+	recent := p.RecentContextMessages(5, 999999, 0)
 
 	// Without SkipContext, round 0 IS included (the old bug behavior)
 	if len(recent) != 2 {
@@ -535,13 +535,77 @@ func TestRecentContextMessages_LimitsRounds(t *testing.T) {
 		)
 	}
 
-	// Only last 3 rounds
-	recent := p.RecentContextMessages(3)
+	// With huge budget, all 10 rounds returned
+	recent := p.RecentContextMessages(3, 999999, 0)
+	if len(recent) != 20 {
+		t.Errorf("expected 20 messages (10 rounds), got %d", len(recent))
+	}
+
+	// With tight budget (base=0, each round=2 tokens, max=15): cum exceeds at R3, hard-truncate to 3 rounds
+	recent = p.RecentContextMessages(3, 15, 0)
 	if len(recent) != 6 {
-		t.Errorf("expected 6 messages (3 rounds), got %d", len(recent))
+		t.Errorf("expected 6 messages (3 rounds after hard truncation), got %d", len(recent))
 	}
 	if recent[0].RoundNumber != 8 {
 		t.Errorf("expected first round to be 8, got %d", recent[0].RoundNumber)
+	}
+	if p.TruncationAnchor != 8 {
+		t.Errorf("expected anchor=8 after truncation, got %d", p.TruncationAnchor)
+	}
+}
+
+func TestRecentContextMessages_AnchorGrowthCycle(t *testing.T) {
+	// Simulate the KV-cache-friendly growth cycle:
+	// After truncation to [R10,R11,R12], the anchor is 10.
+	// New rounds R13,R14 are counted FROM anchor=10, not from scratch.
+	p := &Paper{Messages: []Message{}}
+	for i := 1; i <= 12; i++ {
+		p.Messages = append(p.Messages,
+			Message{RoundNumber: i, Role: "user", Content: "q", TokenCount: 1},
+			Message{RoundNumber: i, Role: "assistant", Content: "a", TokenCount: 1},
+		)
+	}
+
+	// First: trigger truncation. 12 rounds = 24 tokens + base=0. max=15.
+	// Backwards: 7 rounds fit (14 tokens), 8th exceeds → truncate to last 3.
+	recent := p.RecentContextMessages(3, 15, 0)
+	if p.TruncationAnchor != 10 {
+		t.Fatalf("expected anchor=10, got %d", p.TruncationAnchor)
+	}
+	if len(recent) != 6 {
+		t.Fatalf("expected 6 msgs after truncation, got %d", len(recent))
+	}
+
+	// Simulate round 13: add new Q&A pair.
+	p.Messages = append(p.Messages,
+		Message{RoundNumber: 13, Role: "user", Content: "q", TokenCount: 1},
+		Message{RoundNumber: 13, Role: "assistant", Content: "a", TokenCount: 1},
+	)
+	// Now count from anchor=10: R10+R11+R12+R13 = 4 rounds = 8 tokens ≤ 15. Should all fit.
+	recent = p.RecentContextMessages(3, 15, 0)
+	if len(recent) != 8 {
+		t.Errorf("expected 8 messages (4 rounds from anchor), got %d", len(recent))
+	}
+	if p.TruncationAnchor != 10 {
+		t.Errorf("anchor should stay 10 when under budget, got %d", p.TruncationAnchor)
+	}
+
+	// Add rounds 14-18 (5 more rounds). R10..R18 = 9 rounds = 18 > 15 → re-truncate.
+	for i := 14; i <= 18; i++ {
+		p.Messages = append(p.Messages,
+			Message{RoundNumber: i, Role: "user", Content: "q", TokenCount: 1},
+			Message{RoundNumber: i, Role: "assistant", Content: "a", TokenCount: 1},
+		)
+	}
+	recent = p.RecentContextMessages(3, 15, 0)
+	if len(recent) != 6 {
+		t.Errorf("expected 6 messages (re-truncated), got %d", len(recent))
+	}
+	if p.TruncationAnchor != 16 {
+		t.Errorf("expected new anchor=16, got %d", p.TruncationAnchor)
+	}
+	if recent[0].RoundNumber != 16 {
+		t.Errorf("expected first round=16 after re-truncation, got %d", recent[0].RoundNumber)
 	}
 }
 

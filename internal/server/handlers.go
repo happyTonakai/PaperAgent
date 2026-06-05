@@ -412,8 +412,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	paper.AddMessage(userMsg)
 
-	// Build messages for CHAT phase
-	recent := paper.RecentContextMessages(s.cfg.UI.MaxRecentRounds)
+	// Build messages for CHAT phase — dynamic token-aware truncation
+	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
+		session.EstimateTokens(paper.Content) +
+		session.EstimateTokens(prompt.GetLight()) +
+		session.EstimateTokens(req.Question)
+	recent := paper.RecentContextMessages(s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: paper.Content},
@@ -737,24 +741,33 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	paper.Messages = filtered
 
 	// Build messages: paper + recent rounds up to (but not including) this round
+	// Collect context messages from rounds BEFORE target round (skip btw messages)
+	var prevMsgs []session.Message
+	for _, m := range paper.Messages {
+		if m.SkipContext {
+			continue
+		}
+		if m.RoundNumber < round {
+			prevMsgs = append(prevMsgs, m)
+		}
+	}
+	// Apply dynamic token-aware truncation (include question in base token count)
+	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
+		session.EstimateTokens(paper.Content) +
+		session.EstimateTokens(prompt.GetLight()) +
+		session.EstimateTokens(question)
+	prevMsgs = session.TruncateContextMessages(prevMsgs, s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
+
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: paper.Content},
 		{Role: "user", Content: prompt.GetLight()},
 	}
-	// Include messages from rounds before this one (skip btw messages)
-	for _, m := range paper.Messages {
-		if m.SkipContext {
-			continue
-		}
-		if m.RoundNumber < round || (m.RoundNumber == round && m.Role == "user") {
-			messages = append(messages, api.ChatMessage{Role: m.Role, Content: m.Content})
-		}
+	for _, m := range prevMsgs {
+		messages = append(messages, api.ChatMessage{Role: m.Role, Content: m.Content})
 	}
-	// Cap recent context
-	if len(messages) > s.cfg.UI.MaxRecentRounds*2+3 {
-		messages = append([]api.ChatMessage{messages[0], messages[1], messages[2]}, messages[len(messages)-s.cfg.UI.MaxRecentRounds*2:]...)
-	}
+	// Add the current question at the end (not part of truncated context)
+	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 	unlock() // Release lock before SSE stream
 
 	sw, err := newSSEWriter(w)
@@ -847,7 +860,8 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"export_folder": s.cfg.Obsidian.ExportFolder,
 		},
 		"ui": map[string]int{
-			"max_recent_rounds": s.cfg.UI.MaxRecentRounds,
+			"min_recent_rounds": s.cfg.UI.MinRecentRounds,
+			"max_input_tokens":  s.cfg.UI.MaxInputTokens,
 		},
 		"feishu": map[string]interface{}{
 			"enabled":    s.cfg.Feishu.Enabled,
@@ -885,8 +899,11 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := updates["default_model"].(string); ok && v != "" {
 		s.cfg.API.DefaultModel = v
 	}
-	if v, ok := updates["max_recent_rounds"].(float64); ok {
-		s.cfg.UI.MaxRecentRounds = int(v)
+	if v, ok := updates["min_recent_rounds"].(float64); ok {
+		s.cfg.UI.MinRecentRounds = int(v)
+	}
+	if v, ok := updates["max_input_tokens"].(float64); ok {
+		s.cfg.UI.MaxInputTokens = int(v)
 	}
 	if v, ok := updates["obsidian_vault_path"].(string); ok {
 		s.cfg.Obsidian.VaultPath = v

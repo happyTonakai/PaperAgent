@@ -53,6 +53,9 @@ type Paper struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Messages       []Message `json:"messages"`
+	// TruncationAnchor is the round number from which token counting restarts
+	// after a budget-exceeded truncation. 0 means "count from the first context round".
+	TruncationAnchor int `json:"truncation_anchor,omitempty"`
 }
 
 func (p *Paper) Ref() string {
@@ -134,30 +137,134 @@ func (p *Paper) RecentMessages(n int) []Message {
 	return msgs[len(msgs)-n*2:]
 }
 
-// RecentContextMessages returns the last n rounds of messages where SkipContext is false.
-// Each round consists of a user+assistant pair. Messages with SkipContext=true are skipped.
-func (p *Paper) RecentContextMessages(n int) []Message {
-	if p == nil || n <= 0 {
+// collectAllContextMessages returns all context-bearing messages (SkipContext=false) in order,
+// walking backwards to collect complete user+assistant rounds.
+func (p *Paper) collectAllContextMessages() []Message {
+	if p == nil {
 		return nil
 	}
-	// Walk backwards, collecting complete rounds (user+assistant) that are not skipped.
 	var result []Message
-	roundsFound := 0
-	for i := len(p.Messages) - 1; i >= 0 && roundsFound < n; {
+	for i := len(p.Messages) - 1; i >= 0; {
 		if p.Messages[i].Role == "assistant" && !p.Messages[i].SkipContext {
-			// Found an assistant message that is context-bearing. Look for its user counterpart.
 			end := i + 1
 			for i >= 0 && p.Messages[i].RoundNumber == p.Messages[end-1].RoundNumber {
 				i--
 			}
 			start := i + 1
 			result = append(p.Messages[start:end], result...)
-			roundsFound++
 		} else {
 			i--
 		}
 	}
 	return result
+}
+
+// RecentContextMessages returns context-bearing messages using anchor-based token budgeting.
+// It only counts rounds from p.TruncationAnchor onward. If they fit within maxInputTokens
+// (given baseTokens), all are returned and the anchor stays. Otherwise, a hard truncation
+// drops to minRounds and sets a new anchor — breaking KV cache once, then guaranteeing
+// prefix stability for the next growth cycle.
+func (p *Paper) RecentContextMessages(minRounds int, maxInputTokens int, baseTokens int) []Message {
+	if p == nil || minRounds <= 0 {
+		return nil
+	}
+	all := p.collectAllContextMessages()
+
+	// Filter to rounds from the anchor onwards.
+	var active []Message
+	if p.TruncationAnchor > 0 {
+		for _, m := range all {
+			if m.RoundNumber >= p.TruncationAnchor {
+				active = append(active, m)
+			}
+		}
+	} else {
+		active = all
+	}
+
+	result, newAnchor := truncateByTokens(active, minRounds, maxInputTokens, baseTokens)
+	if newAnchor > 0 {
+		p.TruncationAnchor = newAnchor
+	}
+	return result
+}
+
+// TruncateContextMessages applies anchor-based token budgeting to an ordered message slice.
+// Returns the selected messages. The anchor is not persisted (caller handles that via Paper).
+// Used by callers that build a custom message list (e.g. retry chat).
+func TruncateContextMessages(messages []Message, minRounds int, maxTokens int, baseTokens int) []Message {
+	result, _ := truncateByTokens(messages, minRounds, maxTokens, baseTokens)
+	return result
+}
+
+func truncateByTokens(messages []Message, minRounds int, maxTokens int, baseTokens int) ([]Message, int) {
+	// Count rounds from the end backwards. If total tokens from the tail exceed
+	// maxTokens, hard-truncate to the last minRounds and return the new anchor.
+	// Otherwise return all messages with anchor=0 (no truncation needed).
+
+	// Walk backwards: sum tokens until either we run out of rounds or exceed budget.
+	currentTokens := baseTokens
+	roundsSeen := 0
+	exceeded := false
+
+	for i := len(messages) - 1; i >= 0; {
+		if messages[i].Role == "assistant" {
+			end := i + 1
+			roundStart := i
+			for roundStart >= 0 && messages[roundStart].RoundNumber == messages[end-1].RoundNumber {
+				roundStart--
+			}
+			roundStart++
+
+			roundTokens := 0
+			for _, m := range messages[roundStart:end] {
+				roundTokens += m.TokenCount
+			}
+
+			i = roundStart - 1
+			currentTokens += roundTokens
+			roundsSeen++
+
+			if currentTokens > maxTokens {
+				exceeded = true
+				break
+			}
+		} else {
+			i--
+		}
+	}
+
+	if !exceeded {
+		// Everything fits — no truncation, no anchor change.
+		return messages, 0
+	}
+
+	// Budget exceeded. Hard-truncate to exactly minRounds from the end.
+	// This breaks KV cache once but guarantees cache stability for the next
+	// minRounds-budget growth cycle.
+	var result []Message
+	roundsFound := 0
+	for i := len(messages) - 1; i >= 0 && roundsFound < minRounds; {
+		if messages[i].Role == "assistant" {
+			end := i + 1
+			roundStart := i
+			for roundStart >= 0 && messages[roundStart].RoundNumber == messages[end-1].RoundNumber {
+				roundStart--
+			}
+			roundStart++
+			result = append(messages[roundStart:end], result...)
+			i = roundStart - 1
+			roundsFound++
+		} else {
+			i--
+		}
+	}
+
+	newAnchor := 0
+	if len(result) > 0 {
+		newAnchor = result[0].RoundNumber
+	}
+	return result, newAnchor
 }
 
 func (p *Paper) Save() error {

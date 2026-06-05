@@ -23,8 +23,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.API.DefaultModel != "gpt-4o" {
 		t.Errorf("expected default model gpt-4o, got %s", cfg.API.DefaultModel)
 	}
-	if cfg.UI.MaxRecentRounds != 5 {
-		t.Errorf("expected 5 max recent rounds, got %d", cfg.UI.MaxRecentRounds)
+	if cfg.UI.MinRecentRounds != 2 {
+		t.Errorf("expected 2 min recent rounds, got %d", cfg.UI.MinRecentRounds)
+	}
+	if cfg.UI.MaxInputTokens != 30000 {
+		t.Errorf("expected 30000 max input tokens, got %d", cfg.UI.MaxInputTokens)
 	}
 }
 
@@ -81,7 +84,8 @@ api:
   api_key: "test-key-123"
   default_model: "test-model"
 ui:
-  max_recent_rounds: 10
+  min_recent_rounds: 2
+  max_input_tokens: 50000
 `
 	os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(configContent), 0644)
 
@@ -103,8 +107,11 @@ ui:
 	if cfg.API.DefaultModel != "test-model" {
 		t.Errorf("expected test model, got %s", cfg.API.DefaultModel)
 	}
-	if cfg.UI.MaxRecentRounds != 10 {
-		t.Errorf("expected 10 rounds, got %d", cfg.UI.MaxRecentRounds)
+	if cfg.UI.MinRecentRounds != 2 {
+		t.Errorf("expected 2 min rounds, got %d", cfg.UI.MinRecentRounds)
+	}
+	if cfg.UI.MaxInputTokens != 50000 {
+		t.Errorf("expected 50000 max input tokens, got %d", cfg.UI.MaxInputTokens)
 	}
 }
 
@@ -151,7 +158,7 @@ func TestSave(t *testing.T) {
 			APIKey:       "real-key",
 			DefaultModel: "test-model",
 		},
-		UI: UIConfig{MaxRecentRounds: 3},
+		UI: UIConfig{MinRecentRounds: 3, MaxInputTokens: 30000},
 	}
 
 	if err := cfg.Save(); err != nil {

@@ -34,12 +34,12 @@ go vet ./...
 
 **Tech stack**: Go 1.25+, React 19 + TypeScript + Tailwind CSS (frontend), YAML config, JSON persistence.
 
-**Core design principle**: The full paper text always stays in the LLM context (L1). Only the last 5 rounds of Q&A are retained (L2). The initial summary does NOT enter subsequent conversation context. This prevents hallucination from conversation history drowning out paper details.
+**Core design principle**: The full paper text always stays in the LLM context (L1). Q&A rounds use anchor-based dynamic truncation: a window grows from the last truncation anchor, and when estimated input tokens exceed `max_input_tokens` (default 30000), a hard truncation drops to `min_recent_rounds` (default 2). This gives KV-cache-friendly stable prefixes between truncations. The initial summary does NOT enter subsequent conversation context. BTW messages (via `/btw`) are excluded.
 
 ### Two-phase state machine
 
 - **INIT phase**: Paper content + `heavy.txt` prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted from URL via HTML parsing.
-- **CHAT phase**: Each question sends paper content + `light.txt` prompt + last 5 rounds (excluding btw rounds).
+- **CHAT phase**: Each question sends paper content + `light.txt` prompt + dynamic context window. Window grows from `TruncationAnchor`; hard-truncates to `min_recent_rounds` when exceeding `max_input_tokens`.
 
 ### Module layout (`internal/`)
 
@@ -47,7 +47,7 @@ go vet ./...
 |---|---|
 | `config/` | `~/.config/paperagent/config.yaml` loading, env var overrides, path helpers |
 | `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` helper for title extraction. |
-| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.config/paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` returns last N rounds excluding btw messages. |
+| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages, `TruncationAnchor` for KV-cache-friendly context budgeting). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.config/paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` applies anchor-based dynamic truncation. |
 | `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.config/paperagent/prompts/{name}.txt` first. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
 | `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.config/paperagent/prompts/export.md`. |
@@ -58,7 +58,7 @@ go vet ./...
 1. User provides paper → `urlparse` fetches content
 2. `session.NewPaper()` creates paper object
 3. INIT: full paper + HEAVY_PROMPT → streamed summary
-4. CHAT: each question → paper + LIGHT_PROMPT + last 5 non-btw rounds → streamed answer
+4. CHAT: each question → paper + LIGHT_PROMPT + dynamic context (anchor-based, hard-truncate on budget exceeded) → streamed answer
 5. BTW questions (sent via `/btw <question>`) are persisted with `SkipContext: true` and excluded from step 4's context
 6. Title extracted from URL via HTML parsing (urlparse)
 7. All persisted as JSON in `~/.config/paperagent/papers/`
@@ -69,7 +69,11 @@ go vet ./...
 
 ## Token estimation
 
-Uses `len(text) / 4` — lightweight, no external dependency.
+Uses `len(text) / 4` — lightweight, no external dependency. The dynamic truncation algorithm sums `Message.TokenCount` from the `TruncationAnchor` onward; when cumulative tokens exceed `max_input_tokens`, a hard truncation drops to `min_recent_rounds` and sets a new anchor.
+
+Key config fields (in `UI` section):
+- `min_recent_rounds` (default 2): floor — at least this many rounds kept after truncation
+- `max_input_tokens` (default 30000): budget — truncation triggers when exceeded
 
 ## Configuration
 
