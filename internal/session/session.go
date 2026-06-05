@@ -110,6 +110,9 @@ func (p *Paper) DeleteRound(round int) {
 		}
 	}
 	p.Messages = filtered
+	if p.TruncationAnchor == round {
+		p.TruncationAnchor = 0
+	}
 	p.UpdatedAt = time.Now()
 }
 
@@ -386,6 +389,9 @@ func (m *Manager) DeleteRound(round int) {
 		}
 	}
 	m.paper.Messages = filtered
+	if m.paper.TruncationAnchor == round {
+		m.paper.TruncationAnchor = 0
+	}
 	m.paper.UpdatedAt = time.Now()
 }
 
