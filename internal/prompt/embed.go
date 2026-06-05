@@ -8,12 +8,14 @@ import (
 	"github.com/happyTonakai/paperagent/internal/config"
 )
 
+//go:embed prompts/system.txt
+var SystemPrompt string
+
 //go:embed prompts/heavy.txt
 var HeavyPrompt string
 
 //go:embed prompts/light.txt
 var LightPrompt string
-
 
 //go:embed prompts/summarize.txt
 var SummarizePrompt string
@@ -28,13 +30,17 @@ func Get(name string, fallback string) string {
 	return fallback
 }
 
+func GetSystem() string    { return Get("system", SystemPrompt) }
 func GetHeavy() string     { return Get("heavy", HeavyPrompt) }
 func GetLight() string     { return Get("light", LightPrompt) }
 func GetSummarize() string { return Get("summarize", SummarizePrompt) }
+
 // GetContent returns the effective prompt content for a given name.
 // Uses user override if it exists, otherwise returns the built-in default.
 func GetContent(name string) string {
 	switch name {
+	case "system":
+		return GetSystem()
 	case "heavy":
 		return GetHeavy()
 	case "light":
@@ -47,7 +53,7 @@ func GetContent(name string) string {
 
 // BuiltinNames returns the list of built-in prompt names.
 func BuiltinNames() []string {
-	return []string{"heavy", "light", "summarize"}
+	return []string{"system", "heavy", "light", "summarize"}
 }
 
 // Save writes a user override prompt to disk.

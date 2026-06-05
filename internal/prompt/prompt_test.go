@@ -10,6 +10,9 @@ import (
 )
 
 func TestEmbeddedPrompts(t *testing.T) {
+	if SystemPrompt == "" {
+		t.Error("SystemPrompt should not be empty")
+	}
 	if HeavyPrompt == "" {
 		t.Error("HeavyPrompt should not be empty")
 	}
@@ -18,6 +21,17 @@ func TestEmbeddedPrompts(t *testing.T) {
 	}
 	if SummarizePrompt == "" {
 		t.Error("SummarizePrompt should not be empty")
+	}
+}
+
+func TestGetSystem(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	result := GetSystem()
+	if result == "" {
+		t.Error("GetSystem should not return empty")
+	}
+	if !strings.Contains(result, "论文") {
+		t.Error("SystemPrompt should contain '论文'")
 	}
 }
 
