@@ -123,9 +123,10 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 
 自定义 Prompt 也属于文件配置的一部分，在 `~/.config/paperagent/prompts/` 下放置同名文件即可覆盖内置模板：
 
-- `heavy.txt` — 初始深度摘要的 system prompt
-- `light.txt` — 问答阶段的 system prompt
-- `summarize.txt` — 对话元总结的 system prompt
+- `system.txt` — 基础系统提示词（角色设定，简短）
+- `heavy.txt` — 初始深度摘要的任务 prompt
+- `light.txt` — 问答阶段的任务 prompt
+- `summarize.txt` — 对话元总结的任务 prompt
 
 ### 2. Web UI 设置页面
 
@@ -175,8 +176,11 @@ PAPER_ADDR=":9000" paperagent
 | 快捷新建 | 直接粘贴 arXiv 链接到底部输入框，按 Enter 自动创建 |
 | 搜索论文 | 点击🔍按钮或按 `Cmd+Shift+F`，实时过滤论文列表 |
 | 选择论文 | 点击左侧论文列表 |
+| 置顶/取消置顶 | 右键论文 → 置顶/取消置顶，置顶论文排在列表最前 |
 | 提问 | 底部输入框输入问题，Enter 发送 |
 | 换行 | Shift+Enter |
+| 重新生成回答 | 鼠标悬浮 AI 回复 → 🔄 按钮 → 确认 |
+| 删除轮次 | 鼠标悬浮 AI 回复 → 🗑️ 按钮 → 确认 |
 | 命令 | 输入 `/` 触发命令补全 |
 | `/export` | 导出当前论文到 Obsidian |
 | `/config` | 打开设置（主题切换） |
@@ -224,9 +228,9 @@ PAPER_ADDR=":9000" paperagent
 
 ### 核心设计：两阶段状态机
 
-**INIT 阶段**：论文全文 + `heavy.txt` prompt → 流式生成深度 Markdown 摘要。同时异步用轻量模型提取论文标题。
+**INIT 阶段**：`system.txt` + 论文全文 + `heavy.txt` 任务指令 → 流式生成深度 Markdown 摘要。同时异步用轻量模型提取论文标题。
 
-**CHAT 阶段**：每次提问 = 论文全文 + `light.txt` prompt + 动态上下文窗口。窗口从锚点开始自然增长，超过 `max_input_tokens` 上限时硬截断到 `min_recent_rounds` 轮，前缀稳定后 KV 缓存持续命中。回复流式渲染。
+**CHAT 阶段**：每次提问 = `system.txt` + 论文全文 + `light.txt` 任务指令 + 动态上下文窗口。窗口从锚点开始自然增长，超过 `max_input_tokens` 上限时硬截断到 `min_recent_rounds` 轮，前缀稳定后 KV 缓存持续命中。回复流式渲染。
 
 **BTW 模式**：使用 `/btw <问题>` 提问时，该轮问答虽然正常显示，但 `skip_context` 标记为 `true`，不会进入后续对话的上下文。适合问一些辅助性的问题（如术语解释、公式推导），不会干扰主线的上下文连贯性。
 
@@ -241,12 +245,19 @@ PAPER_ADDR=":9000" paperagent
 | `/api/papers/{id}` | GET | 获取论文详情 + 对话历史 |
 | `/api/papers/{id}` | DELETE | 删除论文 |
 | `/api/papers/{id}/chat` | POST | 提问（SSE 流式回复） |
+| `/api/papers/{id}/pin` | PATCH | 置顶/取消置顶论文 |
+| `/api/papers/{id}/title` | PATCH | 更新论文标题 |
+| `/api/papers/{id}/rating` | PATCH | 更新论文评分 |
 | `/api/papers/{id}/retry-summary` | POST | 重新生成/续写摘要（SSE） |
 | `/api/papers/{id}/chat/{n}/retry` | POST | 重新生成第 n 轮回答（SSE） |
 | `/api/papers/{id}/export` | POST | 导出到 Obsidian |
-| `/api/papers/{id}/rounds/{n}` | DELETE | 删除指定轮次 |
+| `/api/papers/{id}/rounds/{n}` | DELETE | 删除指定轮次及该轮所有消息 |
 | `/api/config` | GET | 查看配置 |
 | `/api/config` | POST | 更新配置 |
+| `/api/prompts` | GET | 查看内置/自定义提示词模板列表 |
+| `/api/prompts` | POST | 保存自定义提示词覆盖 |
+| `/api/active-paper` | GET | 获取当前活跃论文 ID |
+| `/api/active-paper` | PUT | 设置当前活跃论文 ID |
 
 所有流式端点使用 Server-Sent Events (SSE)，事件类型：`created` / `chunk` / `done` / `error` / `title`。
 

@@ -38,8 +38,8 @@ go vet ./...
 
 ### Two-phase state machine
 
-- **INIT phase**: Paper content + `heavy.txt` prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted from URL via HTML parsing.
-- **CHAT phase**: Each question sends paper content + `light.txt` prompt + dynamic context window. Window grows from `TruncationAnchor`; hard-truncates to `min_recent_rounds` when exceeding `max_input_tokens`.
+- **INIT phase**: `system.txt` + paper content + `heavy.txt` task prompt sent to API. Streams a detailed Markdown summary via SSE. Title extracted from URL via HTML parsing.
+- **CHAT phase**: Each question sends `system.txt` + paper content + `light.txt` task prompt + dynamic context window. Window grows from `TruncationAnchor`; hard-truncates to `min_recent_rounds` when exceeding `max_input_tokens`.
 
 ### Module layout (`internal/`)
 
@@ -47,8 +47,8 @@ go vet ./...
 |---|---|
 | `config/` | `~/.config/paperagent/config.yaml` loading, env var overrides, path helpers |
 | `api/` | OpenAI-compatible HTTP client. `ChatStream()` returns `<-chan StreamChunk` via SSE goroutine. `ExtractTitle()` helper for title extraction. |
-| `session/` | `Paper` and `Message` data models (includes `SkipContext` flag for btw messages, `TruncationAnchor` for KV-cache-friendly context budgeting). Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.config/paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages()` applies anchor-based dynamic truncation. |
-| `prompt/` | `//go:embed` templates (`heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.config/paperagent/prompts/{name}.txt` first. |
+| `session/` | `Paper` data model (includes `Pinned`, `Rating`, `SkipContext`, `TruncationAnchor` fields) and `Message` data model. Thread-safe `Manager` (mutex-protected) for CRUD + persistence to `~/.config/paperagent/papers/{id}.json`. Uses UUID-based session IDs. `RecentContextMessages(minRounds, maxInputTokens, baseTokens)` applies anchor-based dynamic truncation. `TruncateContextMessages()` is the standalone variant used by retry-chat. `EstimateTokens(text)` returns `len(text)/4`. |
+| `prompt/` | `//go:embed` templates (`system.txt`, `heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.config/paperagent/prompts/{name}.txt` first. Messages are structured as `[system: system.txt, user: paper content, user: task prompt]` for prompt caching optimization. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
 | `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.config/paperagent/prompts/export.md`. |
 | `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/btw`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
@@ -57,8 +57,8 @@ go vet ./...
 
 1. User provides paper → `urlparse` fetches content
 2. `session.NewPaper()` creates paper object
-3. INIT: full paper + HEAVY_PROMPT → streamed summary
-4. CHAT: each question → paper + LIGHT_PROMPT + dynamic context (anchor-based, hard-truncate on budget exceeded) → streamed answer
+3. INIT: SYSTEM_PROMPT + full paper + HEAVY_PROMPT → streamed summary
+4. CHAT: each question → SYSTEM_PROMPT + paper + LIGHT_PROMPT + dynamic context (anchor-based, hard-truncate on budget exceeded) → streamed answer
 5. BTW questions (sent via `/btw <question>`) are persisted with `SkipContext: true` and excluded from step 4's context
 6. Title extracted from URL via HTML parsing (urlparse)
 7. All persisted as JSON in `~/.config/paperagent/papers/`
@@ -69,7 +69,7 @@ go vet ./...
 
 ## Token estimation
 
-Uses `len(text) / 4` — lightweight, no external dependency. The dynamic truncation algorithm sums `Message.TokenCount` from the `TruncationAnchor` onward; when cumulative tokens exceed `max_input_tokens`, a hard truncation drops to `min_recent_rounds` and sets a new anchor.
+Uses `len(text) / 4` — lightweight, no external dependency. `EstimateTokens(text)` is the public helper. The dynamic truncation algorithm sums `Message.TokenCount` from the `TruncationAnchor` onward; when cumulative tokens exceed `max_input_tokens`, a hard truncation drops to `min_recent_rounds` and sets a new anchor. `TruncateContextMessages(messages, minRounds, maxTokens, baseTokens)` is the standalone variant used by retry-chat for context budgeting without mutating paper state.
 
 Key config fields (in `UI` section):
 - `min_recent_rounds` (default 2): floor — at least this many rounds kept after truncation
@@ -77,7 +77,7 @@ Key config fields (in `UI` section):
 
 ## Configuration
 
-Three layers (in priority order): environment variables (`PAPER_API_KEY`, `PAPER_BASE_URL`, etc.) > `~/.config/paperagent/config.yaml` > built-in defaults. Custom prompts override embedded defaults from `~/.config/paperagent/prompts/`.
+Three layers (in priority order): environment variables (`PAPER_API_KEY`, `PAPER_BASE_URL`, etc.) > `~/.config/paperagent/config.yaml` > built-in defaults. Custom prompts override embedded defaults from `~/.config/paperagent/prompts/` (`system.txt`, `heavy.txt`, `light.txt`, `summarize.txt`).
 
 ### Feishu bot
 

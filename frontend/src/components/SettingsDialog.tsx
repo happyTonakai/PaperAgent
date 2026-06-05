@@ -21,6 +21,7 @@ interface ConfigForm {
 interface PromptInfo { name: string; content: string; source: string }
 
 const promptLabels: Record<string, string> = {
+  system: '系统提示词 (system)',
   heavy: '初始总结 (heavy)',
   light: '对话问答 (light)',
   summarize: '对话总结 (summarize)',
@@ -233,7 +234,7 @@ export function SettingsDialog() {
                     value={promptEdits[p.name] || ''}
                     onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
                     className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-xs outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
-                    rows={12}
+                    rows={p.name === 'system' ? 6 : 12}
                   />
                 </div>
               ))}
