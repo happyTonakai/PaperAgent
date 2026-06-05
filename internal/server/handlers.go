@@ -44,6 +44,7 @@ type paperResponse struct {
 	TotalCompletionTokens int              `json:"total_completion_tokens,omitempty"`
 	TotalCachedTokens    int               `json:"total_cached_tokens,omitempty"`
 	Rating               int               `json:"rating"`
+	Pinned               bool              `json:"pinned"`
 	CreatedAt            string            `json:"created_at"`
 	UpdatedAt            string            `json:"updated_at"`
 	Messages             []messageResponse `json:"messages"`
@@ -64,6 +65,7 @@ type paperSummaryResponse struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Rating    int    `json:"rating"`
+	Pinned    bool   `json:"pinned"`
 	UpdatedAt string `json:"updated_at"`
 }
 
@@ -245,6 +247,7 @@ func (s *Server) handleListPapers(w http.ResponseWriter, r *http.Request) {
 			ID:        p.Ref(),
 			Title:     p.Title,
 			Rating:    p.Rating,
+			Pinned:    p.Pinned,
 			UpdatedAt: p.UpdatedAt.Format("2006-01-02 15:04"),
 		})
 	}
@@ -306,6 +309,26 @@ func (s *Server) handleUpdateRating(w http.ResponseWriter, r *http.Request) {
 	paper.Rating = req.Rating
 	paper.Save()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "rating": fmt.Sprintf("%d", req.Rating)})
+}
+
+func (s *Server) handleTogglePin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	unlock := s.lockPaper(id)
+	defer unlock()
+	paper, err := session.LoadPaperByRef(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "paper not found"})
+		return
+	}
+
+	paper.Pinned = !paper.Pinned
+	paper.Save()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "updated",
+		"pinned": paper.Pinned,
+	})
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -1181,20 +1204,21 @@ func paperToResponse(p *session.Paper) paperResponse {
 	}
 
 	return paperResponse{
-		ID:                    p.Ref(),
-		Title:                 p.Title,
-		SourceURL:             p.SourceURL,
-		ArxivID:               p.ArxivID,
-		InitialSummary:        p.InitialSummary,
-		ModelUsed:             p.ModelUsed,
-		TotalTokens:           p.TotalTokens,
-		TotalPromptTokens:     p.TotalPromptTokens,
-		TotalCompletionTokens: p.TotalCompletionTokens,
-		TotalCachedTokens:     p.TotalCachedTokens,
-		Rating:                p.Rating,
-		CreatedAt:             p.CreatedAt.Format("2006-01-02 15:04"),
-		UpdatedAt:             p.UpdatedAt.Format("2006-01-02 15:04"),
-		Messages:              msgs,
+		ID:                     p.Ref(),
+		Title:                  p.Title,
+		SourceURL:              p.SourceURL,
+		ArxivID:                p.ArxivID,
+		InitialSummary:         p.InitialSummary,
+		ModelUsed:              p.ModelUsed,
+		TotalTokens:            p.TotalTokens,
+		TotalPromptTokens:      p.TotalPromptTokens,
+		TotalCompletionTokens:  p.TotalCompletionTokens,
+		TotalCachedTokens:      p.TotalCachedTokens,
+		Rating:                 p.Rating,
+		Pinned:                 p.Pinned,
+		CreatedAt:              p.CreatedAt.Format("2006-01-02 15:04"),
+		UpdatedAt:              p.UpdatedAt.Format("2006-01-02 15:04"),
+		Messages:               msgs,
 	}
 }
 

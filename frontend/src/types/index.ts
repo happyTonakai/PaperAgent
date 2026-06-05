@@ -32,6 +32,7 @@ export interface PaperSummary {
   id: string
   title: string
   rating?: number
+  pinned?: boolean
   updated_at: string
 }
 

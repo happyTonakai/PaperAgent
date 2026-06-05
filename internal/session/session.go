@@ -49,6 +49,7 @@ type Paper struct {
 	TotalCompletionTokens    int       `json:"total_completion_tokens,omitempty"`
 	TotalCachedTokens        int       `json:"total_cached_tokens,omitempty"`
 	Rating         int       `json:"rating"`
+	Pinned         bool      `json:"pinned"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	Messages       []Message `json:"messages"`
@@ -383,6 +384,7 @@ type PaperSummary struct {
 	SessionID string
 	Title     string
 	Rating    int
+	Pinned    bool
 	UpdatedAt time.Time
 }
 
@@ -437,10 +439,14 @@ func ListPapers() ([]PaperSummary, error) {
 				title = fmt.Sprintf("Paper #%d", p.ID)
 			}
 		}
-		papers = append(papers, PaperSummary{ID: p.ID, SessionID: p.SessionID, Title: title, Rating: p.Rating, UpdatedAt: p.UpdatedAt})
+		papers = append(papers, PaperSummary{ID: p.ID, SessionID: p.SessionID, Title: title, Rating: p.Rating, Pinned: p.Pinned, UpdatedAt: p.UpdatedAt})
 	}
 
 	sort.Slice(papers, func(i, j int) bool {
+		// Pinned papers come first
+		if papers[i].Pinned != papers[j].Pinned {
+			return papers[i].Pinned
+		}
 		if !papers[i].UpdatedAt.Equal(papers[j].UpdatedAt) {
 			return papers[i].UpdatedAt.After(papers[j].UpdatedAt)
 		}

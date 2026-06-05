@@ -64,6 +64,19 @@ export function useExportPaper() {
   })
 }
 
+export function useTogglePin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      fetchJSON<{ status: string; pinned: boolean }>(`${BASE}/papers/${id}/pin`, {
+        method: 'PATCH',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['papers'] })
+    },
+  })
+}
+
 export function useUpdateTitle() {
   const qc = useQueryClient()
   return useMutation({

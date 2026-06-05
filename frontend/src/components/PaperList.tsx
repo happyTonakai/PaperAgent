@@ -1,6 +1,6 @@
-import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle, Search, X } from 'lucide-react'
+import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle, Search, X, Pin, PinOff } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport } from '../hooks/usePapers'
+import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport, useTogglePin } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
 import { setActivePaperOnServer } from '../App'
 import { toast } from 'sonner'
@@ -68,6 +68,7 @@ export function PaperList() {
   const updateTitle = useUpdateTitle()
   const updateRating = useUpdateRating()
   const summarizeExport = useSummarizeExport()
+  const togglePin = useTogglePin()
   const { currentPaperId, setCurrentPaperId, setNewPaperOpen, setSettingsOpen, setLogOpen, sidebarWidth, setSidebarWidth } = useAppStore()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -257,6 +258,18 @@ export function PaperList() {
     }
   }
 
+  const handleTogglePin = async (id: string) => {
+    try {
+      await togglePin.mutateAsync(id)
+      const p = papers?.find(pp => pp.id === id)
+      toast.success(p?.pinned ? '已取消置顶' : '已置顶')
+    } catch {
+      toast.error('操作失败')
+    }
+    setMenuOpen(null)
+    setContextMenu(null)
+  }
+
   const formatDate = (dateStr: string) => {
     try {
       const d = new Date(dateStr)
@@ -271,11 +284,14 @@ export function PaperList() {
     }
   }
 
-  // Sort papers
+  // Sort papers: pinned first, then by selected sort
   const sortedPapers = useMemo(() => {
     if (!papers) return []
     const sorted = [...papers]
     sorted.sort((a, b) => {
+      const aPinned = a.pinned ?? false
+      const bPinned = b.pinned ?? false
+      if (aPinned !== bPinned) return aPinned ? -1 : 1
       let cmp: number
       if (sortBy === 'rating') {
         cmp = ((a as PaperSummary).rating ?? 0) - ((b as PaperSummary).rating ?? 0)
@@ -500,16 +516,26 @@ export function PaperList() {
                 </div>
               ) : (
                 <>
-                  <div
-                    className="text-sm truncate pr-6"
-                    style={{
-                      fontFamily: 'var(--font-display)',
-                      fontWeight: 550,
-                      color: currentPaperId === p.id ? 'var(--color-accent)' : 'var(--color-text)',
-                      transition: 'color var(--transition-fast)',
-                    }}
-                  >
-                    {p.title || '未命名论文'}
+                  <div className="flex items-center gap-1.5">
+                    {p.pinned && (
+                      <Pin
+                        size={11}
+                        className="flex-shrink-0"
+                        style={{ color: 'var(--color-accent)' }}
+                        aria-label="已置顶"
+                      />
+                    )}
+                    <div
+                      className="text-sm truncate"
+                      style={{
+                        fontFamily: 'var(--font-display)',
+                        fontWeight: 550,
+                        color: currentPaperId === p.id ? 'var(--color-accent)' : 'var(--color-text)',
+                        transition: 'color var(--transition-fast)',
+                      }}
+                    >
+                      {p.title || '未命名论文'}
+                    </div>
                   </div>
                   <RatingDots rating={p.rating ?? 0} onRate={(n) => handleRate(p.id, n)} />
                   <div
@@ -559,6 +585,17 @@ export function PaperList() {
                     role="menuitem"
                   >
                     <Pencil size={12} style={{ color: 'var(--color-text-muted)' }} /> 编辑标题
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleTogglePin(p.id) }}
+                    className="w-full px-3 py-1.5 text-xs text-left hover:bg-[var(--color-bg-elevated)] flex items-center gap-1.5 transition-colors duration-100"
+                    style={{ color: 'var(--color-text)' }}
+                    role="menuitem"
+                  >
+                    {p.pinned
+                      ? <><PinOff size={12} style={{ color: 'var(--color-text-muted)' }} /> 取消置顶</>
+                      : <><Pin size={12} style={{ color: 'var(--color-text-muted)' }} /> 置顶</>
+                    }
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleExport(p.id) }}
@@ -639,6 +676,17 @@ export function PaperList() {
               role="menuitem"
             >
               <Pencil size={12} style={{ color: 'var(--color-text-muted)' }} /> 编辑标题
+            </button>
+            <button
+              onClick={() => { handleTogglePin(p.id) }}
+              className="w-full px-3 py-1.5 text-xs text-left hover:bg-[var(--color-bg-elevated)] flex items-center gap-1.5 transition-colors duration-100"
+              style={{ color: 'var(--color-text)' }}
+              role="menuitem"
+            >
+              {p.pinned
+                ? <><PinOff size={12} style={{ color: 'var(--color-text-muted)' }} /> 取消置顶</>
+                : <><Pin size={12} style={{ color: 'var(--color-text-muted)' }} /> 置顶</>
+              }
             </button>
             <button
               onClick={() => { handleExport(p.id) }}
