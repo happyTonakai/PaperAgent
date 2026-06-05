@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -40,111 +41,178 @@ func downloadTeXSource(arxivID string) (string, error) {
 		return "", err
 	}
 
-	// Try gzip + tar extraction first
-	if tex, err := extractFromTarGz(data); err == nil && tex != "" {
+	// Try as tar.gz archive first
+	tmpDir, err := os.MkdirTemp("", "arxiv2md-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if tex, err := extractAndFlatten(data, tmpDir); err == nil && tex != "" {
 		return tex, nil
 	}
+
 	// Plain .tex file
 	if looksLikeTeX(string(data)) {
 		return string(data), nil
-	}
-	// Try extracting as a single tar entry (no gzip)
-	if tex, err := extractFromTar(data); err == nil && tex != "" {
-		return tex, nil
 	}
 
 	return "", fmt.Errorf("unable to extract TeX source")
 }
 
-func extractFromTarGz(data []byte) (string, error) {
-	gr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return "", err
+func extractAndFlatten(data []byte, tmpDir string) (string, error) {
+	// Try gzip + tar
+	reader := bytes.NewReader(data)
+	gr, err := gzip.NewReader(reader)
+	isGzip := err == nil
+	if isGzip {
+		defer gr.Close()
+		if err := untarToDir(gr, tmpDir); err == nil {
+			return flattenFromDir(tmpDir)
+		}
 	}
-	defer gr.Close()
-	plain, err := io.ReadAll(gr)
-	if err != nil {
-		return "", err
+
+	// Try plain tar (no gzip)
+	reader.Seek(0, io.SeekStart)
+	if err := untarToDir(reader, tmpDir); err == nil {
+		return flattenFromDir(tmpDir)
 	}
-	return extractFromTar(plain)
+
+	return "", fmt.Errorf("not a valid tar or tar.gz archive")
 }
 
-func extractFromTar(data []byte) (string, error) {
-	tr := tar.NewReader(bytes.NewReader(data))
-	var files []struct {
-		name    string
-		content string
-	}
+func untarToDir(r io.Reader, dir string) error {
+	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return "", err
-		}
-		if hdr.FileInfo().IsDir() {
-			continue
+			return err
 		}
 		// Prevent path traversal
 		if strings.Contains(hdr.Name, "..") || strings.HasPrefix(hdr.Name, "/") {
 			continue
 		}
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, tr); err != nil {
+		target := filepath.Join(dir, hdr.Name)
+		// Ensure target is still within dir (defense in depth)
+		if !strings.HasPrefix(target, filepath.Clean(dir)+string(filepath.Separator)) && target != filepath.Clean(dir) {
 			continue
 		}
-		files = append(files, struct {
-			name    string
-			content string
-		}{hdr.Name, buf.String()})
-	}
-
-	if len(files) == 0 {
-		return "", fmt.Errorf("empty archive")
-	}
-
-	// Build map for \input expansion
-	fileMap := make(map[string]string)
-	for _, f := range files {
-		name := f.name
-		if idx := strings.Index(name, "/"); idx >= 0 {
-			name = name[idx+1:] // strip directory prefix
+		if hdr.FileInfo().IsDir() {
+			os.MkdirAll(target, 0755)
+			continue
 		}
-		fileMap[name] = f.content
-		// also store without .tex
-		if strings.HasSuffix(name, ".tex") {
-			fileMap[strings.TrimSuffix(name, ".tex")] = f.content
+		os.MkdirAll(filepath.Dir(target), 0755)
+		f, err := os.Create(target)
+		if err != nil {
+			continue
 		}
+		io.Copy(f, tr)
+		f.Close()
 	}
+	return nil
+}
 
-	// Find main .tex file (containing \documentclass)
-	var mainContent string
-	for _, f := range files {
-		if looksLikeMainTeX(f.content) {
-			mainContent = f.content
-			break
-		}
+func flattenFromDir(dir string) (string, error) {
+	mainFile := findMainTeX(dir)
+	if mainFile == "" {
+		return "", fmt.Errorf("no main .tex file in %s", dir)
 	}
-	if mainContent == "" && len(files) > 0 {
-		// Use the largest .tex file
-		var best string
-		var bestLen int
-		for _, f := range files {
-			if strings.HasSuffix(f.name, ".tex") && len(f.content) > bestLen {
-				best = f.content
-				bestLen = len(f.content)
+	return flattenWithBase(dir, mainFile), nil
+}
+
+func findMainTeX(dir string) string {
+	// First pass: look for common names with \documentclass
+	common := []string{"main.tex", "paper.tex", "index.tex"}
+	for _, name := range common {
+		path := filepath.Join(dir, name)
+		if content, err := os.ReadFile(path); err == nil {
+			if looksLikeMainTeX(string(content)) {
+				return path
 			}
 		}
-		mainContent = best
-	}
-	if mainContent == "" {
-		return "", fmt.Errorf("no .tex file found in archive")
 	}
 
-	// Flatten \input{...} and \include{...}
-	mainContent = flattenInputs(mainContent, fileMap)
-	return mainContent, nil
+	// Second pass: find the longest .tex with \documentclass
+	var bestPath string
+	var bestLen int
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".tex") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if looksLikeMainTeX(string(content)) && len(content) > bestLen {
+			bestPath = path
+			bestLen = len(content)
+		}
+		return nil
+	})
+	return bestPath
+}
+
+func flattenWithBase(dir, mainFile string) string {
+	visited := make(map[string]bool)
+	var flatten func(string) string
+	flatten = func(path string) string {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		tex := string(content)
+		return inputRe.ReplaceAllStringFunc(tex, func(m string) string {
+			parts := inputRe.FindStringSubmatch(m)
+			if len(parts) < 2 {
+				return m
+			}
+			name := strings.TrimSpace(parts[1])
+			// Resolve relative to the current file's directory
+			baseDir := filepath.Dir(path)
+			resolved := resolveInputPath(baseDir, name)
+			if resolved == "" {
+				return "" // file not found, skip
+			}
+			canonical, _ := filepath.Abs(resolved)
+			if visited[canonical] {
+				return "" // circular
+			}
+			visited[canonical] = true
+			return flatten(resolved)
+		})
+	}
+	return flatten(mainFile)
+}
+
+func resolveInputPath(baseDir, name string) string {
+	candidates := []string{name}
+	if !strings.HasSuffix(name, ".tex") {
+		candidates = append(candidates, name+".tex")
+	}
+	for _, c := range candidates {
+		p := filepath.Join(baseDir, c)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Also try base name only (for \input{intro} where file is at root)
+	base := filepath.Base(name)
+	if base != name {
+		p := filepath.Join(baseDir, base)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		if !strings.HasSuffix(base, ".tex") {
+			p := filepath.Join(baseDir, base+".tex")
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 func looksLikeTeX(s string) bool {
@@ -158,33 +226,6 @@ func looksLikeMainTeX(s string) bool {
 }
 
 var inputRe = regexp.MustCompile(`\\(?:input|include)\{([^}]+)\}`)
-
-func flattenInputs(content string, fileMap map[string]string) string {
-	visited := make(map[string]bool)
-	var flatten func(string) string
-	flatten = func(s string) string {
-		return inputRe.ReplaceAllStringFunc(s, func(m string) string {
-			parts := inputRe.FindStringSubmatch(m)
-			if len(parts) < 2 {
-				return m
-			}
-			name := strings.TrimSpace(parts[1])
-			if visited[name] {
-				return ""
-			}
-			visited[name] = true
-
-			// Try name, name.tex, and path-stripped name
-			for _, candidate := range []string{name, name + ".tex", filepath.Base(name), filepath.Base(name) + ".tex"} {
-				if content, ok := fileMap[candidate]; ok {
-					return flatten(content)
-				}
-			}
-			return "" // file not found, skip
-		})
-	}
-	return flatten(content)
-}
 
 // ---------------------------------------------------------------------------
 // TeX to Markdown conversion
