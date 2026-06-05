@@ -67,6 +67,25 @@ sudo mv paperagent /usr/local/bin/
 
 > 如服务端口非默认（通过 `PAPER_ADDR` 指定），可在扩展选项页中配置自定义端口。
 
+### 自动恢复
+
+如果论文内容因异常崩溃而丢失，打开论文或重新生成摘要时会自动从原始 arXiv URL 重新抓取内容并恢复，无需额外操作。
+
+### 📐 arxiv2md 独立工具
+
+PaperAgent 内置的 arXiv→Markdown 转换引擎也可以独立使用。两种路径：
+
+- **HTML 优先**：从 arXiv HTML 提取内容，MathML 转 `$...$` 行内公式，表格保持 Markdown 对齐格式
+- **TeX 备选**：下载 e-print tar.gz，自动展开 `\input`，`\begin{tabular}` 转 Markdown 表格
+
+```bash
+# 编译
+just arxiv2md
+
+# 使用：arXiv URL → 干净 Markdown
+./arxiv2md https://arxiv.org/abs/2503.12345 > paper.md
+```
+
 ## 配置
 
 支持两种配置方式，按需选用即可：
@@ -151,6 +170,7 @@ PAPER_ADDR=":9000" paperagent
 | 操作 | 方式 |
 |---|---|
 | 新建论文 | 点击左侧"+"按钮，输入 arXiv URL |
+| 快捷新建 | 直接粘贴 arXiv 链接到底部输入框，按 Enter 自动创建 |
 | 搜索论文 | 点击🔍按钮或按 `Cmd+F`，实时过滤论文列表 |
 | 选择论文 | 点击左侧论文列表 |
 | 提问 | 底部输入框输入问题，Enter 发送 |
@@ -244,6 +264,9 @@ just dev
 # 仅构建 Go
 just build-go
 
+# arxiv2md 独立工具
+just arxiv2md
+
 # 代码检查
 just vet
 just typecheck   # 前端 TypeScript 检查
@@ -256,6 +279,8 @@ just clean
 ```
 
 开发模式下，前端通过 Vite 代理请求到 Go 后端，实现前后端独立热更新。
+
+> **提示**：开发模式自动设置 `PAPER_NO_BROWSER=1`（禁止自动打开浏览器）和 `PAPER_FOREGROUND=1`（禁止后台运行）。手动启动时也可通过这两个环境变量控制行为。
 
 ## 技术栈
 
