@@ -4,7 +4,11 @@
 
 PaperAgent 是一个 AI 论文阅读助手。给它一篇论文（arXiv 链接），AI 生成详实、可复现级别的深度解析，随后进入多轮问答模式。所有对话持久化到本地，随时可以恢复。
 
-**默认启动为 Web UI 模式**（浏览器自动打开）。
+<p align="center">
+  <img src="screenshots/main.png" alt="PaperAgent 主界面" width="800">
+  <br>
+  <em>PaperAgent Web UI —— 左侧论文列表，右侧对话区域，流式渲染 AI 深度解析</em>
+</p>
 
 ## Why
 
@@ -55,6 +59,12 @@ sudo mv paperagent /usr/local/bin/
 ### 🌐 Chrome 扩展（可选）
 
 [![Chrome Web Store](https://img.shields.io/chrome-web-store/v/ojkppdajbpnhppadnnfpaabakmolcbkf?label=Chrome%20%E6%89%A9%E5%B1%95)](https://chromewebstore.google.com/detail/paperagent/ojkppdajbpnhppadnnfpaabakmolcbkf)
+
+<p align="center">
+  <img src="screenshots/extension.png" alt="PaperAgent Chrome 扩展" width="300">
+  <br>
+  <em>在 arXiv 论文页面右侧栏点击「在 PaperAgent 中打开」</em>
+</p>
 
 > 📦 配套扩展，非独立客户端。实际仍需在本地运行 PaperAgent 服务端。
 
@@ -146,6 +156,12 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 | `/help` | 帮助信息 |
 
 直接发消息即可对当前论文多轮 Q&A。配置保存后自动热加载，无需重启。
+
+<p align="center">
+  <img src="screenshots/lark.png" alt="PaperAgent 飞书 Bot" width="500">
+  <br>
+  <em>飞书群聊中使用斜杠命令与 PaperAgent 交互</em>
+</p>
 
 **飞书开放平台配置要求**：
 
