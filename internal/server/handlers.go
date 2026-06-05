@@ -731,16 +731,6 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove existing assistant message for this round
-	var filtered []session.Message
-	for _, m := range paper.Messages {
-		if !(m.RoundNumber == round && m.Role == "assistant") {
-			filtered = append(filtered, m)
-		}
-	}
-	paper.Messages = filtered
-
-	// Build messages: paper + recent rounds up to (but not including) this round
 	// Collect context messages from rounds BEFORE target round (skip btw messages)
 	var prevMsgs []session.Message
 	for _, m := range paper.Messages {
@@ -817,6 +807,15 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[retry-chat] reload failed: %v", err)
 		return
 	}
+
+	// Filter out old assistant message for this round (reloaded from disk)
+	var filtered []session.Message
+	for _, m := range paper.Messages {
+		if !(m.RoundNumber == round && m.Role == "assistant") {
+			filtered = append(filtered, m)
+		}
+	}
+	paper.Messages = filtered
 
 	paper.AddMessage(session.Message{
 		RoundNumber:      round,
