@@ -655,15 +655,17 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	final := existingSummary + newContent.String()
 	paper.SetInitialSummary(final)
 
-	// Remove any existing round-0 assistant messages and add the updated one
+	// Remove any existing round-0 assistant messages
 	var filtered []session.Message
 	for _, m := range paper.Messages {
 		if !(m.RoundNumber == 0 && m.Role == "assistant") {
 			filtered = append(filtered, m)
 		}
 	}
-	paper.Messages = filtered
-	paper.AddMessage(session.Message{
+
+	// Insert the new round-0 assistant at position 1 (after round-0 user, before Q&A rounds)
+	// instead of appending to the end, which would corrupt CurrentRound() and display order.
+	newMsg := session.Message{
 		RoundNumber:      0,
 		Role:             "assistant",
 		Content:          final,
@@ -671,7 +673,18 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		CachedTokens:     cachedTokens,
-	})
+		SkipContext:      true,
+	}
+
+	// Find index of first non-round-0 message to insert after round-0 user
+	insertAt := len(filtered) // default: append
+	for i, m := range filtered {
+		if m.RoundNumber > 0 || (m.RoundNumber == 0 && m.Role != "user") {
+			insertAt = i
+			break
+		}
+	}
+	paper.Messages = append(filtered[:insertAt], append([]session.Message{newMsg}, filtered[insertAt:]...)...)
 	paper.Save()
 
 	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)

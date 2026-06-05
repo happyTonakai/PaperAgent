@@ -113,7 +113,13 @@ func (p *Paper) CurrentRound() int {
 	if p == nil || len(p.Messages) == 0 {
 		return 0
 	}
-	return p.Messages[len(p.Messages)-1].RoundNumber
+	maxRound := 0
+	for _, m := range p.Messages {
+		if m.RoundNumber > maxRound {
+			maxRound = m.RoundNumber
+		}
+	}
+	return maxRound
 }
 
 func (p *Paper) RecentMessages(n int) []Message {
@@ -249,7 +255,13 @@ func (m *Manager) CurrentRound() int {
 	if m.paper == nil || len(m.paper.Messages) == 0 {
 		return 0
 	}
-	return m.paper.Messages[len(m.paper.Messages)-1].RoundNumber
+	maxRound := 0
+	for _, msg := range m.paper.Messages {
+		if msg.RoundNumber > maxRound {
+			maxRound = msg.RoundNumber
+		}
+	}
+	return maxRound
 }
 
 func (m *Manager) DeleteRound(round int) {

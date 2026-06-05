@@ -257,7 +257,7 @@ export function ChatView() {
       onChunk: (content) => setStreamingContent((prev) => prev + content),
       onDone: () => {
         setRetryingRound(null)
-        retryCompletedRoundRef.current = retryingRound
+        retryCompletedRoundRef.current = round
         refetch()
         qc.invalidateQueries({ queryKey: ['papers'] })
       },
@@ -267,6 +267,21 @@ export function ChatView() {
       },
     })
   }, [currentPaperId, streamRequest, refetch])
+
+  const handleDeleteRound = useCallback(async (round: number) => {
+    if (!currentPaperId) return
+    try {
+      const res = await fetch(`/api/papers/${currentPaperId}/rounds/${round}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Delete failed' }))
+        throw new Error((err as { error?: string }).error || `HTTP ${res.status}`)
+      }
+      refetch()
+      qc.invalidateQueries({ queryKey: ['papers'] })
+    } catch (err) {
+      setStreamError(err instanceof Error ? err.message : 'Delete failed')
+    }
+  }, [currentPaperId, refetch])
 
   const setSendQuestion = useAppStore((s) => s.setSendQuestion)
   useEffect(() => {
@@ -367,7 +382,11 @@ export function ChatView() {
     })
   }
   if (paper) {
-    for (const msg of paper.messages.filter(m => m.round_number !== 0)) {
+    for (const msg of paper.messages) {
+      if (msg.round_number === 0) continue
+      // During retry streaming, hide the old assistant answer for that round
+      // so the streaming bubble at the bottom acts as the visual replacement
+      if (retryingRound !== null && msg.round_number === retryingRound && msg.role === 'assistant') continue
       allMessages.push(msg)
     }
   }
@@ -554,6 +573,8 @@ export function ChatView() {
                 cumulativeCompletionTokens={cumC}
                 cumulativeCachedTokens={cumCache}
                 skipContext={msg.skip_context}
+                onDeleteRound={handleDeleteRound}
+                onRetryRound={handleRetryChat}
               />
             )
           })
@@ -571,7 +592,12 @@ export function ChatView() {
 
         {/* CHAT STREAM — shown during streaming and until refetch catches up */}
         {streamingContent && (
-          <MessageBubble role="assistant" content={streamingContent} isStreaming />
+          <MessageBubble
+            role="assistant"
+            content={streamingContent}
+            isStreaming
+            roundNumber={retryingRound ?? undefined}
+          />
         )}
         {(!streamingContent && pendingUserQuestion && isStreamingLocal) && (
           <div

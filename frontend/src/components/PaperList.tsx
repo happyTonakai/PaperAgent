@@ -158,10 +158,10 @@ export function PaperList() {
     }
   }, [menuOpen, contextMenu])
 
-  // Keyboard shortcut for search (Cmd+F / Ctrl+F)
+  // Keyboard shortcut for search (Cmd+Shift+F / Ctrl+Shift+F)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
         e.preventDefault()
         setSearchOpen(true)
         requestAnimationFrame(() => searchInputRef.current?.focus())
