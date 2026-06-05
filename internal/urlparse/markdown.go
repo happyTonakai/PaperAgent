@@ -26,7 +26,10 @@ func HTMLToMarkdown(html string) string {
 	// 3. Extract body content (inside ltx_page_content div, before </article>)
 	html = extractArticleBody(html)
 
-	// 4. Strip all HTML tags (keeping placeholder text intact)
+	// 4. Convert headings (h2-h6) to Markdown ## notation BEFORE tag stripping
+	html = convertHTMLHeadings(html)
+
+	// 5. Strip all HTML tags (keeping placeholder text intact)
 	html = stripAllHTMLTags(html)
 
 	// 5. Decode HTML entities
@@ -44,6 +47,73 @@ func HTMLToMarkdown(html string) string {
 	}
 
 	return strings.TrimSpace(html)
+}
+
+// ---------------------------------------------------------------------------
+// Heading conversion
+// ---------------------------------------------------------------------------
+
+var headingRe = regexp.MustCompile(`(?is)<h(\d)\s+class="ltx_title[^"]*"[^>]*>\s*<a[^>]*>.*?</a>\s*(.*?)</h\d>`)
+var headingPlainRe = regexp.MustCompile(`(?is)<h(\d)[^>]*>(.*?)</h\d>`)
+
+// convertHTMLHeadings converts LaTeXML headings (h2 class="ltx_title ltx_title_section") to
+// Markdown ## notation. h1 is skipped (reserved for document title).
+func convertHTMLHeadings(html string) string {
+	// First try the structured form with <a> anchor inside
+	html = headingRe.ReplaceAllStringFunc(html, func(m string) string {
+		parts := headingRe.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		level := parts[1]
+		text := stripHTMLTags(parts[2])
+		text = decodeEntities(text)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return ""
+		}
+		prefix := strings.Repeat("#", parseHeadingLevel(level))
+		return "\n" + prefix + " " + text + "\n"
+	})
+	// Fallback: plain heading without anchor
+	html = headingPlainRe.ReplaceAllStringFunc(html, func(m string) string {
+		// Skip if already matched by the structured regex (looks like ## already there)
+		if strings.HasPrefix(strings.TrimSpace(m), "#") {
+			return m
+		}
+		parts := headingPlainRe.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		level := parts[1]
+		if level == "1" {
+			return m // h1 is handled separately
+		}
+		text := stripHTMLTags(parts[2])
+		text = decodeEntities(text)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return ""
+		}
+		prefix := strings.Repeat("#", parseHeadingLevel(level))
+		return "\n" + prefix + " " + text + "\n"
+	})
+	return html
+}
+
+func parseHeadingLevel(level string) int {
+	switch level {
+	case "2":
+		return 2
+	case "3":
+		return 3
+	case "4":
+		return 4
+	case "5":
+		return 5
+	default:
+		return 6
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +360,8 @@ func stripAllHTMLTags(html string) string {
 	html = reBr.ReplaceAllString(html, "\n")
 
 	// Replace block-level tags with newlines for readability
-	reBlock := regexp.MustCompile(`(?is)</?(?:p|div|h[1-6]|li|tr|td|th|blockquote|section|pre|article|header|footer|nav|figure|figcaption|table|thead|tbody|tfoot|caption|col|colgroup|dl|dt|dd|address)[^>]*>`)
+	// h[1-6] is excluded because headings are already converted to ## notation
+	reBlock := regexp.MustCompile(`(?is)</?(?:p|div|li|tr|td|th|blockquote|section|pre|article|header|footer|nav|figure|figcaption|table|thead|tbody|tfoot|caption|col|colgroup|dl|dt|dd|address)[^>]*>`)
 	html = reBlock.ReplaceAllString(html, "\n")
 
 	// Strip all remaining tags

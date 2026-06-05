@@ -3,6 +3,13 @@
 // Priority:
 //  1. HTML version → HTMLToMarkdown (with tables, math)
 //  2. TeX source  → TeXToMarkdown (with tables, math)
+//
+// Examples:
+//
+//	arxiv2md 2509.06926
+//	arxiv2md https://arxiv.org/abs/2509.06926
+//	arxiv2md https://arxiv.org/pdf/2509.06926
+//	arxiv2md arxiv:2509.06926
 package main
 
 import (
@@ -16,6 +23,14 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: arxiv2md <arxiv-id-or-url>\n")
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(os.Stderr, "Accepts arXiv ID, abs/PDF/HTML URL, or arxiv: prefix.\n")
+		fmt.Fprintf(os.Stderr, "\n")
+		fmt.Fprintf(os.Stderr, "Examples:\n")
+		fmt.Fprintf(os.Stderr, "  arxiv2md 2509.06926\n")
+		fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/abs/2509.06926\n")
+		fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/pdf/2509.06926\n")
+		fmt.Fprintf(os.Stderr, "  arxiv2md arxiv:2509.06926\n")
 		os.Exit(1)
 	}
 
