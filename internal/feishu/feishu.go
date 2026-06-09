@@ -292,8 +292,13 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		} else {
 			b.sendText(chatID, "请先使用 `/new <链接>` 创建一篇论文，然后再进行问答。")
 		}
+	case strings.HasPrefix(text, "/rate "):
+		ratingStr := strings.TrimSpace(strings.TrimPrefix(text, "/rate "))
+		b.cmdRate(chatID, ratingStr)
+	case text == "/pin":
+		b.cmdPinToggle(chatID)
 	case strings.HasPrefix(text, "/"):
-		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/help` — 查看帮助")
+		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/rate <1-10>` — 给当前论文打分\n• `/pin` — 置顶/取消置顶当前论文\n• `/help` — 查看帮助")
 	default:
 		// Check if the input is just an arXiv URL/ID — auto-create new paper.
 		if arxivURL, _, ok := urlparse.NormalizeArxivInput(text); ok {
@@ -677,6 +682,63 @@ func (b *Bot) cmdSearch(chatID, keyword string) {
 	if err2 != nil {
 		log.Printf("[feishu] failed to send search card: %v", err2)
 		b.sendText(chatID, "❌ 发送搜索结果卡片失败")
+	}
+}
+
+// cmdRate rates the active paper with a score (1-10).
+func (b *Bot) cmdRate(chatID, ratingStr string) {
+	paperID := session.GetActivePaper()
+	if paperID == "" {
+		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
+		return
+	}
+	rating, err := strconv.Atoi(ratingStr)
+	if err != nil || rating < 1 || rating > 10 {
+		b.sendText(chatID, "评分必须在 1 到 10 之间，例如：`/rate 8`")
+		return
+	}
+	paper, err := session.LoadPaperByRef(paperID)
+	if err != nil {
+		b.sendText(chatID, "找不到该文章。")
+		return
+	}
+	paper.Rating = rating
+	if err := paper.Save(); err != nil {
+		b.sendText(chatID, "❌ 保存评分失败")
+		return
+	}
+	title := paper.Title
+	if title == "" {
+		title = paperRef(paper)
+	}
+	b.sendText(chatID, fmt.Sprintf("⭐ **%s** 评分已设为 **%d/10**", title, rating))
+}
+
+// cmdPinToggle toggles the pinned status of the active paper.
+func (b *Bot) cmdPinToggle(chatID string) {
+	paperID := session.GetActivePaper()
+	if paperID == "" {
+		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
+		return
+	}
+	paper, err := session.LoadPaperByRef(paperID)
+	if err != nil {
+		b.sendText(chatID, "找不到该文章。")
+		return
+	}
+	paper.Pinned = !paper.Pinned
+	if err := paper.Save(); err != nil {
+		b.sendText(chatID, "❌ 保存置顶状态失败")
+		return
+	}
+	title := paper.Title
+	if title == "" {
+		title = paperRef(paper)
+	}
+	if paper.Pinned {
+		b.sendText(chatID, fmt.Sprintf("📌 **%s** 已置顶", title))
+	} else {
+		b.sendText(chatID, fmt.Sprintf("📌 **%s** 已取消置顶", title))
 	}
 }
 
@@ -1170,6 +1232,8 @@ const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"• **/summary** — 查看当前论文的初始总结\n" +
 	"• **/fetch [n]** — 拉取最近 n 轮问答（默认 2）\n" +
 	"• **/btw <问题>** — 提问但不记入上下文\n" +
+	"• **/rate <1-10>** — 给当前论文打分\n" +
+	"• **/pin** — 置顶/取消置顶当前论文\n" +
 	"• **/help** — 显示本帮助\n" +
 	"\n" +
 	"直接发送文字即可对当前论文进行多轮 Q&A。"

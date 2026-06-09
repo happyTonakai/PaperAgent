@@ -51,7 +51,7 @@ go vet ./...
 | `prompt/` | `//go:embed` templates (`system.txt`, `heavy.txt`, `light.txt`, `summarize.txt`). `Get(name, fallback)` checks user override at `~/.config/paperagent/prompts/{name}.txt` first. Messages are structured as `[system: system.txt, user: paper content, user: task prompt]` for prompt caching optimization. |
 | `urlparse/` | `FetchURL()` tries external `arxiv2text` binary first, falls back to HTTP GET. Supports arxiv URL normalization and PDF download. `LoadFile()` reads with `~` expansion. |
 | `export/` | `ExportToObsidian()` writes Markdown with YAML frontmatter to Obsidian vault. Customizable template at `~/.config/paperagent/prompts/export.md`. |
-| `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/btw`, `/help`), streaming card updates via Patch API, token refresh + transient retry. Per-chat session tracking for active paper. |
+| `feishu/` | Feishu bot via `larksuite/oapi-sdk-go/v3`. WebSocket event handling, slash commands (`/new`, `/list`, `/summary`, `/fetch`, `/btw`, `/rate`, `/pin`, `/help`), streaming card updates via Patch API, token refresh + transient retry. |
 
 ### Data flow
 
