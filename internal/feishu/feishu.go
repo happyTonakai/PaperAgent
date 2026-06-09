@@ -29,10 +29,9 @@ import (
 
 // chatSession tracks the active paper for each chat.
 type chatSession struct {
-	mu         sync.Mutex
-	paperID    string // session_id of active paper
-	chatID     string
-	streaming  bool   // true if currently streaming summary
+	mu        sync.Mutex
+	chatID    string
+	streaming bool // true if currently streaming summary
 }
 
 // Bot is the Feishu bot for PaperAgent.
@@ -287,17 +286,7 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 			b.sendText(chatID, "请提供问题，例如：\n`/btw 什么是注意力机制？`")
 			return
 		}
-		s.mu.Lock()
-		paperID := s.paperID
-		s.mu.Unlock()
-		if paperID == "" {
-			paperID = session.GetActivePaper()
-			if paperID != "" {
-				s.mu.Lock()
-				s.paperID = paperID
-				s.mu.Unlock()
-			}
-		}
+		paperID := session.GetActivePaper()
 		if paperID != "" {
 			b.cmdChat(chatID, messageID, paperID, btwQuestion, true)
 		} else {
@@ -313,26 +302,14 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		}
 
 		// Treat as Q&A if there's an active paper
+		paperID := session.GetActivePaper()
 		s.mu.Lock()
-		paperID := s.paperID
 		streaming := s.streaming
 		s.mu.Unlock()
 
 		if streaming {
 			b.sendText(chatID, "⏳ 正在生成总结中，请稍后再提问...")
 			return
-		}
-
-		if paperID == "" {
-			// Fall back to global active paper (survives restarts)
-			paperID = session.GetActivePaper()
-			if paperID != "" {
-				// Restore per-chat session from global state
-				s.mu.Lock()
-				s.paperID = paperID
-				s.mu.Unlock()
-				log.Printf("[feishu] restored active paper %s for chat %s", paperID, chatID)
-			}
 		}
 
 		if paperID != "" {
@@ -377,9 +354,6 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		if existing, err := session.FindPaperByArxivID(arxivID); err == nil && existing != nil {
 			log.Printf("[feishu] paper with arxiv ID %s already exists: %s", arxivID, existing.Ref())
 			// Set as active paper
-			s.mu.Lock()
-			s.paperID = existing.Ref()
-			s.mu.Unlock()
 			if err := session.SetActivePaper(existing.Ref()); err != nil {
 				log.Printf("[feishu] set active paper error: %v", err)
 			}
@@ -421,10 +395,7 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		return
 	}
 
-	// Set as active paper for this chat AND globally
-	s.mu.Lock()
-	s.paperID = paper.Ref()
-	s.mu.Unlock()
+	// Set as global active paper
 	if err := session.SetActivePaper(paper.Ref()); err != nil {
 		log.Printf("[feishu] set active paper error: %v", err)
 	}
@@ -611,17 +582,8 @@ func (b *Bot) cmdList(chatID string) {
 	}
 	pagePapers := papers[:end]
 
-	// Determine selected paper — check session first, then global fallback
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	selectedID := s.paperID
-	if selectedID == "" {
-		selectedID = session.GetActivePaper()
-		if selectedID != "" {
-			s.paperID = selectedID
-		}
-	}
-	s.mu.Unlock()
+	// Determine selected paper — use global active paper
+	selectedID := session.GetActivePaper()
 	log.Printf("[feishu] cmdList: selectedID=%q pagePapers=%d total=%d", selectedID, len(pagePapers), totalCount)
 
 	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID, "", ""))
@@ -687,10 +649,7 @@ func (b *Bot) cmdSearch(chatID, keyword string) {
 	pagePapers := matched[:end]
 
 	// Check if there's a currently selected paper to highlight
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	selectedID := s.paperID
-	s.mu.Unlock()
+	selectedID := session.GetActivePaper()
 
 	cardJSON := marshalCard(buildPaperListCardPaginated(pagePapers, totalCount, page, pageSize, selectedID,
 		fmt.Sprintf("🔍 搜索结果：%s", keyword), keyword))
@@ -723,19 +682,7 @@ func (b *Bot) cmdSearch(chatID, keyword string) {
 
 // cmdSummary sends the initial summary of the active paper as text.
 func (b *Bot) cmdSummary(chatID string) {
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	paperID := s.paperID
-	s.mu.Unlock()
-
-	if paperID == "" {
-		paperID = session.GetActivePaper()
-		if paperID != "" {
-			s.mu.Lock()
-			s.paperID = paperID
-			s.mu.Unlock()
-		}
-	}
+	paperID := session.GetActivePaper()
 
 	if paperID == "" {
 		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
@@ -755,19 +702,7 @@ func (b *Bot) cmdSummary(chatID string) {
 
 // cmdFetch fetches recent n rounds of Q&A (default 2) as text.
 func (b *Bot) cmdFetch(chatID, text string) {
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	paperID := s.paperID
-	s.mu.Unlock()
-
-	if paperID == "" {
-		paperID = session.GetActivePaper()
-		if paperID != "" {
-			s.mu.Lock()
-			s.paperID = paperID
-			s.mu.Unlock()
-		}
-	}
+	paperID := session.GetActivePaper()
 
 	if paperID == "" {
 		b.sendText(chatID, "请先使用 `/new` 创建论文或用 `/list` 选择一篇。")
@@ -790,12 +725,12 @@ func (b *Bot) cmdFetch(chatID, text string) {
 		b.sendText(chatID, "还没有任何问答记录。")
 		return
 	}
-	// Collect last n Q&A pairs
+	// Collect last n Q&A pairs (skip RoundNumber 0 = initial summary, use /summary instead)
 	var rounds []fetchRound
 	seen := map[int]bool{}
 	for i := len(msgs) - 1; i >= 0 && len(rounds) < n; i-- {
 		m := msgs[i]
-		if m.Role != "assistant" || seen[m.RoundNumber] {
+		if m.Role != "assistant" || seen[m.RoundNumber] || m.RoundNumber == 0 {
 			continue
 		}
 		var q string
@@ -977,11 +912,6 @@ func (b *Bot) handleCardOpenPaper(paperID, chatID string, currentPage int, searc
 		}, nil
 	}
 
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	s.paperID = paperID
-	s.mu.Unlock()
-
 	// Set as global active paper
 	if err := session.SetActivePaper(paperID); err != nil {
 		log.Printf("[feishu] set active paper error: %v", err)
@@ -1091,17 +1021,8 @@ func (b *Bot) handlePageNav(targetPage int, chatID string, searchKeyword string)
 		headerTitle = fmt.Sprintf("🔍 搜索结果：%s", searchKeyword)
 	}
 
-	// Get currently selected paper — check session first, then global fallback
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	selectedID := s.paperID
-	if selectedID == "" {
-		selectedID = session.GetActivePaper()
-		if selectedID != "" {
-			s.paperID = selectedID
-		}
-	}
-	s.mu.Unlock()
+	// Get currently selected paper — use global active paper
+	selectedID := session.GetActivePaper()
 	log.Printf("[feishu] handlePageNav: page=%d selectedID=%q pagePapers=%d total=%d search=%q", page, selectedID, len(pagePapers), totalCount, searchKeyword)
 
 	// Log each paper's ref for debugging
@@ -1127,11 +1048,6 @@ func (b *Bot) handleCardResumeQA(paperID, chatID string) (*callback.CardActionTr
 			Toast: &callback.Toast{Type: "error", Content: "文章不存在"},
 		}, nil
 	}
-
-	s := b.getSession(chatID)
-	s.mu.Lock()
-	s.paperID = paperID
-	s.mu.Unlock()
 
 	// Set as global active paper
 	if err := session.SetActivePaper(paperID); err != nil {
