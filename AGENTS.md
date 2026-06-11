@@ -30,6 +30,37 @@ go test ./internal/config/ ./internal/session/ ./internal/prompt/ ./internal/url
 go vet ./...
 ```
 
+## Release
+
+Published via GitHub Actions (`release.yml`, workflow_dispatch). Do NOT create tags or releases manually.
+
+### Steps
+
+1. **Check commits since last release**
+
+   ```bash
+   git log v{last_tag}..HEAD --format="%h %s" --reverse
+   ```
+
+2. **Check actual diff** (beware of rebased commits — look at dates, not just hashes)
+
+   ```bash
+   git diff --stat v{last_tag}..HEAD
+   ```
+
+3. **Trigger the release workflow**
+
+   ```bash
+   # Ensure no conflicting tag exists first
+   gh workflow run release.yml -f bump=patch -f release_notes='你的release notes markdown'
+   ```
+
+   `bump` 可选 `patch` / `minor` / `major`。如果 `release_notes` 传空字符串，action 会自动从 commits 生成。
+
+4. **Wait** for action to finish at https://github.com/happyTonakai/PaperAgent/actions
+
+   Action 会：自动计算版本号 → 构建 frontend → 构建三平台二进制（macOS arm64 / Windows amd64 / Linux amd64）→ 打 tag → 创建 Release 并上传附件。
+
 ## Architecture
 
 **Tech stack**: Go 1.25+, React 19 + TypeScript + Tailwind CSS (frontend), YAML config, JSON persistence.
