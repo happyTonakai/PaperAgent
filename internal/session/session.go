@@ -17,7 +17,12 @@ import (
 	"github.com/happyTonakai/paperagent/internal/urlparse"
 )
 
-var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var (
+	uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// Patterns for detecting reference sections in paper content.
+	mdRefRe  = regexp.MustCompile(`(?m)^(#{1,4}\s*(?:References|Bibliography|REFERENCES|BIBLIOGRAPHY)\s*)$`)
+	texRefRe = regexp.MustCompile(`(?s)\\begin\{thebibliography\}.*?\\end\{thebibliography\}`)
+)
 
 type Message struct {
 	RoundNumber      int       `json:"round_number"`
@@ -43,6 +48,9 @@ type Paper struct {
 	// SavePaper clears them before marshaling; unmarshal from old files still works.
 	Content        string    `json:"content,omitempty"`
 	InitialSummary string    `json:"initial_summary,omitempty"`
+	// References holds the extracted reference section of the paper.
+	// It is NOT sent to the LLM by default; available via get_references tool.
+	References string `json:"references,omitempty"`
 	ModelUsed      string    `json:"model_used"`
 	TotalTokens    int       `json:"total_tokens_used"`
 	TotalPromptTokens        int       `json:"total_prompt_tokens,omitempty"`
@@ -613,6 +621,52 @@ func FindPaperByArxivID(arxivID string) (*Paper, error) {
 		}
 	}
 	return nil, os.ErrNotExist
+}
+
+// ExtractReferences separates the reference section from the main body of a paper.
+// It handles both markdown-formatted ("## References") and TeX-formatted
+// ("\\begin{thebibliography}") reference sections.
+// Returns (body, references). If no reference section is found, returns (content, "").
+func ExtractReferences(content string) (body, references string) {
+	if content == "" {
+		return "", ""
+	}
+
+	// Try TeX format first (before markdown heading check, since thebibliography
+	// is unambiguous even in markdown-converted output).
+	if loc := texRefRe.FindStringIndex(content); loc != nil {
+		body = strings.TrimSpace(content[:loc[0]])
+		references = strings.TrimSpace(content[loc[0]:])
+		return
+	}
+
+	// Try markdown reference heading.
+	lines := strings.Split(content, "\n")
+	refStart := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if mdRefRe.MatchString(trimmed) {
+			refStart = i
+			break
+		}
+	}
+
+	if refStart >= 0 {
+		bodyLines := lines[:refStart]
+		refLines := lines[refStart:]
+		body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+		references = strings.TrimSpace(strings.Join(refLines, "\n"))
+		return
+	}
+
+	// No recognizable reference section found.
+	return content, ""
+}
+
+// StripReferences returns the paper content with the reference section removed.
+func StripReferences(content string) string {
+	body, _ := ExtractReferences(content)
+	return body
 }
 
 func EstimateTokens(text string) int {

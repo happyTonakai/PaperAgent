@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/happyTonakai/paperagent/internal/session"
 	"github.com/happyTonakai/paperagent/internal/urlparse"
 )
 
@@ -44,7 +45,11 @@ func main() {
 	// Priority 1: HTML version → markdown (with tables preserved)
 	content, err := urlparse.FetchArxivAsMarkdown(id)
 	if err == nil && content != "" {
-		fmt.Println(content)
+		body, refs := session.ExtractReferences(content)
+		fmt.Println(body)
+		if refs != "" {
+			fmt.Fprintf(os.Stderr, "[arxiv2md] removed %d chars of references\n", len(refs))
+		}
 		return
 	}
 	fmt.Fprintf(os.Stderr, "HTML unavailable (%v), trying TeX source...\n", err)
@@ -52,7 +57,11 @@ func main() {
 	// Priority 2: TeX source → markdown (with tables preserved)
 	content, err = urlparse.FetchArxivAsMarkdownFromTeX(id)
 	if err == nil && content != "" {
-		fmt.Println(content)
+		body, refs := session.ExtractReferences(content)
+		fmt.Println(body)
+		if refs != "" {
+			fmt.Fprintf(os.Stderr, "[arxiv2md] removed %d chars of references\n", len(refs))
+		}
 		return
 	}
 

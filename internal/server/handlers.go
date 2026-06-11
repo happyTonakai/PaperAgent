@@ -92,6 +92,10 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] fetched %d chars, creating paper", len(content))
 
+	// Extract references from the paper content before sending to LLM.
+	body, references := session.ExtractReferences(content)
+	log.Printf("[new-paper] extracted %d chars of references", len(references))
+
 	// Check for existing paper with the same arXiv ID.
 	if arxivID != "" {
 		if existing, err := session.FindPaperByArxivID(arxivID); err == nil && existing != nil {
@@ -117,8 +121,12 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	paper := session.NewPaper(content, sourceURL, arxivID)
+	paper := session.NewPaper(body, sourceURL, arxivID)
 	paper.ModelUsed = s.cfg.API.DefaultModel
+
+	// Store references separately (not sent to LLM by default).
+	paper.References = references
+	log.Printf("[new-paper] storing body=%d chars, references=%d chars", len(body), len(references))
 
 	// Try HTML title extraction for arXiv papers (instant, no LLM call)
 	if arxivID != "" {
@@ -131,11 +139,12 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add initial user message FIRST so the paper has content before any save.
+	// Content is stored WITHOUT references; they are saved separately in paper.References.
 	paper.AddMessage(session.Message{
 		RoundNumber: 0,
 		Role:        "user",
-		Content:     content,
-		TokenCount:  session.EstimateTokens(content),
+		Content:     body,
+		TokenCount:  session.EstimateTokens(body),
 	})
 
 	if err := paper.Save(); err != nil {
@@ -171,16 +180,24 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] starting summary stream for %s", paper.Ref())
 
+	// Use paper.Content (already stripped of references) for the LLM,
+	// and add the get_references tool so LLM can request references on demand.
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: content},
+		{Role: "user", Content: paper.Content},
 		{Role: "user", Content: prompt.GetHeavy()},
 	}
+	var tools []api.Tool
+	if references != "" {
+		tools = []api.Tool{api.GetReferencesTool()}
+	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
+	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, tools)
 	var summaryBuilder strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
+	var toolCalls []api.ToolCallCompleted
 
+	// First pass: read chunks, detecting tool calls.
 	for chunk := range ch {
 		select {
 		case <-r.Context().Done():
@@ -194,6 +211,10 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 			sw.WriteError(chunk.Err.Error())
 			return
 		}
+		if chunk.ToolCalls != nil {
+			toolCalls = chunk.ToolCalls
+			break
+		}
 		if chunk.Done {
 			promptTokens = chunk.PromptTokens
 			completionTokens = chunk.CompletionTokens
@@ -204,6 +225,48 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		if err := sw.WriteChunk(chunk.Content); err != nil {
 			log.Printf("[new-paper] write chunk error: %v", err)
 			return
+		}
+	}
+
+	// If LLM called get_references, inject references and do a follow-up stream.
+	// (Unlikely during summary generation, but handle it for completeness.)
+	if toolCalls != nil && len(toolCalls) > 0 && references != "" {
+		log.Printf("[new-paper] tool call detected: %s, injecting references", toolCalls[0].Function.Name)
+		followUpMessages := make([]api.ChatMessage, len(messages))
+		copy(followUpMessages, messages)
+		followUpMessages = append(followUpMessages,
+			api.ChatMessage{
+				Role:      "assistant",
+				ToolCalls: toolCalls,
+			},
+			api.ChatMessage{
+				Role:       "tool",
+				ToolCallID: toolCalls[0].ID,
+				Content:    references,
+			},
+		)
+
+		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMessages, nil)
+		for chunk := range ch2 {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			if chunk.Err != nil {
+				sw.WriteError(chunk.Err.Error())
+				return
+			}
+			if chunk.Done {
+				promptTokens = chunk.PromptTokens
+				completionTokens = chunk.CompletionTokens
+				cachedTokens = chunk.CachedTokens
+				break
+			}
+			summaryBuilder.WriteString(chunk.Content)
+			if err := sw.WriteChunk(chunk.Content); err != nil {
+				return
+			}
 		}
 	}
 
@@ -333,6 +396,10 @@ func (s *Server) handleTogglePin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleChat handles a chat request for a paper.
+// References are stripped from the paper content sent to the LLM and stored
+// separately. A get_references tool is defined so the LLM can request references
+// on demand (e.g., when the user asks about cited papers).
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	log.Printf("[chat] loading paper %s", id)
@@ -366,16 +433,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Store recovered content without references.
+		bodyContent, refs := session.ExtractReferences(content)
 		for i, m := range paper.Messages {
 			if m.RoundNumber == 0 && m.Role == "user" {
-				paper.Messages[i].Content = content
-				paper.Messages[i].TokenCount = session.EstimateTokens(content)
+				paper.Messages[i].Content = bodyContent
+				paper.Messages[i].TokenCount = session.EstimateTokens(bodyContent)
 				break
 			}
 		}
-		paper.Content = content
+		paper.Content = bodyContent
+		paper.References = refs
 		paper.Save()
-		log.Printf("[chat] recovered %d chars from source URL", len(content))
+		log.Printf("[chat] recovered %d chars from source URL, extracted %d ref chars", len(bodyContent), len(refs))
 	} else if paper.Content == "" {
 		unlock()
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "paper content is empty and no source URL to recover from"})
@@ -412,15 +482,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	paper.AddMessage(userMsg)
 
-	// Build messages for CHAT phase — dynamic token-aware truncation
+	// Build messages for CHAT phase — dynamic token-aware truncation.
+	// New papers have paper.Content stripped of references at creation time.
+	// Old papers (References为空) have full content with references intact.
+	bodyForLLM := paper.Content
 	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
-		session.EstimateTokens(paper.Content) +
+		session.EstimateTokens(bodyForLLM) +
 		session.EstimateTokens(prompt.GetLight()) +
 		session.EstimateTokens(req.Question)
 	recent := paper.RecentContextMessages(s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: bodyForLLM},
 		{Role: "user", Content: prompt.GetLight()},
 	}
 	for _, msg := range recent {
@@ -428,6 +501,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// Add current question
 	messages = append(messages, api.ChatMessage{Role: "user", Content: req.Question})
+
+	// Add the get_references tool if the paper has references extracted.
+	var tools []api.Tool
+	if paper.References != "" {
+		tools = []api.Tool{api.GetReferencesTool()}
+	}
+
 	unlock() // Release lock before SSE stream
 
 	// Stream answer via SSE
@@ -438,10 +518,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
+	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, tools)
 	var answerBuilder strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
+	var toolCalls []api.ToolCallCompleted
 
+	// First stream pass: detect tool calls.
 	for chunk := range ch {
 		select {
 		case <-r.Context().Done():
@@ -455,6 +537,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sw.WriteError(chunk.Err.Error())
 			return
 		}
+		if chunk.ToolCalls != nil {
+			toolCalls = chunk.ToolCalls
+			log.Printf("[chat] tool call detected: %s", toolCalls[0].Function.Name)
+			break
+		}
 		if chunk.Done {
 			promptTokens = chunk.PromptTokens
 			completionTokens = chunk.CompletionTokens
@@ -464,6 +551,48 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		answerBuilder.WriteString(chunk.Content)
 		if err := sw.WriteChunk(chunk.Content); err != nil {
 			return
+		}
+	}
+
+	// If LLM called get_references, inject references and do a follow-up stream.
+	if toolCalls != nil && len(toolCalls) > 0 && paper.References != "" {
+		log.Printf("[chat] injecting %d chars of references via follow-up stream", len(paper.References))
+		followUpMessages := make([]api.ChatMessage, len(messages))
+		copy(followUpMessages, messages)
+		followUpMessages = append(followUpMessages,
+			api.ChatMessage{
+				Role:      "assistant",
+				ToolCalls: toolCalls,
+			},
+			api.ChatMessage{
+				Role:       "tool",
+				ToolCallID: toolCalls[0].ID,
+				Content:    paper.References,
+			},
+		)
+
+		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMessages, nil)
+		for chunk := range ch2 {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+
+			if chunk.Err != nil {
+				sw.WriteError(chunk.Err.Error())
+				return
+			}
+			if chunk.Done {
+				promptTokens = chunk.PromptTokens
+				completionTokens = chunk.CompletionTokens
+				cachedTokens = chunk.CachedTokens
+				break
+			}
+			answerBuilder.WriteString(chunk.Content)
+			if err := sw.WriteChunk(chunk.Content); err != nil {
+				return
+			}
 		}
 	}
 
@@ -538,6 +667,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 // handleRetrySummary regenerates or continues the initial summary via SSE.
 // If initial_summary is empty, starts fresh.
 // If initial_summary has content, sends "continue from here" prompt.
+// References are stripped from the paper content sent to the LLM; available via get_references tool.
 func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -578,26 +708,37 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Update the round-0 user message with recovered content
+		// Re-extract references from recovered content.
+		bodyContent, references := session.ExtractReferences(content)
+
+		// Update the round-0 user message with recovered content (stripped of refs).
 		for i, m := range paper.Messages {
 			if m.RoundNumber == 0 && m.Role == "user" {
-				paper.Messages[i].Content = content
-				paper.Messages[i].TokenCount = session.EstimateTokens(content)
+				paper.Messages[i].Content = bodyContent
+				paper.Messages[i].TokenCount = session.EstimateTokens(bodyContent)
 				break
 			}
 		}
-		paper.Content = content
+		paper.Content = bodyContent
+		paper.References = references
 		paper.Save()
-		log.Printf("[retry-summary] recovered %d chars from source URL", len(content))
+		log.Printf("[retry-summary] recovered %d chars from source URL, refs %d chars", len(bodyContent), len(references))
 	}
 
 	existingSummary := paper.InitialSummary
+
+	// Use paper.Content directly.
+	// New papers have references stripped at creation; old papers (References为空)
+	// have full content with references intact.
+	body := paper.Content
+	references := paper.References
+
 	unlock()
 
 	// Build messages
 	msgs := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: body},
 		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
@@ -611,6 +752,11 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[retry-summary] fresh summary generation")
 	}
 
+	var tools []api.Tool
+	if references != "" {
+		tools = []api.Tool{api.GetReferencesTool()}
+	}
+
 	sw, err := newSSEWriter(w)
 	if err != nil {
 		log.Printf("[retry-summary] SSE not supported: %v", err)
@@ -618,9 +764,10 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, msgs)
+	ch := s.api.ChatStream(s.cfg.API.DefaultModel, msgs, tools)
 	var newContent strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
+	var toolCalls []api.ToolCallCompleted
 
 	for chunk := range ch {
 		select {
@@ -635,6 +782,10 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 			sw.WriteError(chunk.Err.Error())
 			return
 		}
+		if chunk.ToolCalls != nil {
+			toolCalls = chunk.ToolCalls
+			break
+		}
 		if chunk.Done {
 			promptTokens = chunk.PromptTokens
 			completionTokens = chunk.CompletionTokens
@@ -644,6 +795,40 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		newContent.WriteString(chunk.Content)
 		if err := sw.WriteChunk(chunk.Content); err != nil {
 			return
+		}
+	}
+
+	// Handle tool call if the LLM requests references during summary generation.
+	if toolCalls != nil && len(toolCalls) > 0 && references != "" {
+		log.Printf("[retry-summary] tool call detected, injecting references")
+		followUpMsgs := make([]api.ChatMessage, len(msgs))
+		copy(followUpMsgs, msgs)
+		followUpMsgs = append(followUpMsgs,
+			api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
+			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: references},
+		)
+
+		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMsgs, nil)
+		for chunk := range ch2 {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			if chunk.Err != nil {
+				sw.WriteError(chunk.Err.Error())
+				return
+			}
+			if chunk.Done {
+				promptTokens = chunk.PromptTokens
+				completionTokens = chunk.CompletionTokens
+				cachedTokens = chunk.CachedTokens
+				break
+			}
+			newContent.WriteString(chunk.Content)
+			if err := sw.WriteChunk(chunk.Content); err != nil {
+				return
+			}
 		}
 	}
 
@@ -669,7 +854,6 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Insert the new round-0 assistant at position 1 (after round-0 user, before Q&A rounds)
-	// instead of appending to the end, which would corrupt CurrentRound() and display order.
 	newMsg := session.Message{
 		RoundNumber:      0,
 		Role:             "assistant",
@@ -698,6 +882,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRetryChat regenerates the assistant answer for a specific round.
+// References are stripped from paper content; available via get_references tool.
 func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	nStr := r.PathValue("round")
@@ -731,6 +916,11 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use paper.Content directly.
+	// New papers have references stripped at creation; old papers (References为空)
+	// have full content with references intact.
+	bodyForLLM := paper.Content
+
 	// Collect context messages from rounds BEFORE target round (skip btw messages)
 	var prevMsgs []session.Message
 	for _, m := range paper.Messages {
@@ -743,14 +933,14 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// Apply dynamic token-aware truncation (include question in base token count)
 	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
-		session.EstimateTokens(paper.Content) +
+		session.EstimateTokens(bodyForLLM) +
 		session.EstimateTokens(prompt.GetLight()) +
 		session.EstimateTokens(question)
 	prevMsgs = session.TruncateContextMessages(prevMsgs, s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
 
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: paper.Content},
+		{Role: "user", Content: bodyForLLM},
 		{Role: "user", Content: prompt.GetLight()},
 	}
 	for _, m := range prevMsgs {
@@ -758,6 +948,12 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	}
 	// Add the current question at the end (not part of truncated context)
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
+
+	var tools []api.Tool
+	if paper.References != "" {
+		tools = []api.Tool{api.GetReferencesTool()}
+	}
+
 	unlock() // Release lock before SSE stream
 
 	sw, err := newSSEWriter(w)
@@ -767,9 +963,10 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
+	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, tools)
 	var answer strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
+	var toolCalls []api.ToolCallCompleted
 
 	for chunk := range ch {
 		select {
@@ -784,6 +981,10 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 			sw.WriteError(chunk.Err.Error())
 			return
 		}
+		if chunk.ToolCalls != nil {
+			toolCalls = chunk.ToolCalls
+			break
+		}
 		if chunk.Done {
 			promptTokens = chunk.PromptTokens
 			completionTokens = chunk.CompletionTokens
@@ -793,6 +994,40 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		answer.WriteString(chunk.Content)
 		if err := sw.WriteChunk(chunk.Content); err != nil {
 			return
+		}
+	}
+
+	// Handle tool call for references.
+	if toolCalls != nil && len(toolCalls) > 0 && paper.References != "" {
+		log.Printf("[retry-chat] tool call detected, injecting references")
+		followUpMsgs := make([]api.ChatMessage, len(messages))
+		copy(followUpMsgs, messages)
+		followUpMsgs = append(followUpMsgs,
+			api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
+			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: paper.References},
+		)
+
+		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMsgs, nil)
+		for chunk := range ch2 {
+			select {
+			case <-r.Context().Done():
+				return
+			default:
+			}
+			if chunk.Err != nil {
+				sw.WriteError(chunk.Err.Error())
+				return
+			}
+			if chunk.Done {
+				promptTokens = chunk.PromptTokens
+				completionTokens = chunk.CompletionTokens
+				cachedTokens = chunk.CachedTokens
+				break
+			}
+			answer.WriteString(chunk.Content)
+			if err := sw.WriteChunk(chunk.Content); err != nil {
+				return
+			}
 		}
 	}
 
@@ -1027,7 +1262,7 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: context.String()},
 	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages)
+	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, nil)
 	var promptTokens, completionTokens, cachedTokens int
 	for chunk := range ch {
 		select {
@@ -1085,7 +1320,7 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: context.String()},
 	}
 
-	result, _, _, _, _, err := s.api.Chat(s.cfg.API.DefaultModel, messages)
+	result, _, _, _, _, _, err := s.api.Chat(s.cfg.API.DefaultModel, messages, nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "summarize failed: " + err.Error()})
 		return

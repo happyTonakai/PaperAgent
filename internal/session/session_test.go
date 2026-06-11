@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -626,5 +627,143 @@ func TestManagerConcurrency(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		<-done
+	}
+}
+
+// --- ExtractReferences / StripReferences tests ---
+
+func TestExtractReferences_MarkdownLevel2(t *testing.T) {
+	body, refs := ExtractReferences(`这是一篇论文的正文。
+
+有很多内容。
+
+## References
+[1] Author, "Title", Journal, 2023.
+[2] Author2, "Another Paper", Conference, 2024.`)
+	if body != "这是一篇论文的正文。\n\n有很多内容。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "## References") || !strings.Contains(refs, "[1] Author") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_MarkdownLevel1(t *testing.T) {
+	body, refs := ExtractReferences("正文内容。\n\n# References\n[1] A. Smith, ...")
+	if body != "正文内容。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "# References") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_MarkdownLevel3(t *testing.T) {
+	body, refs := ExtractReferences("正文。\n\n### References\n[1] B. Lee, ...")
+	if body != "正文。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "### References") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_MarkdownLevel4(t *testing.T) {
+	body, refs := ExtractReferences("正文头部。\n\n#### References\n[1] C. Wang, ...")
+	if body != "正文头部。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "#### References") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_MarkdownBibliography(t *testing.T) {
+	body, refs := ExtractReferences("正文。\n\n## Bibliography\n[1] D. Zhang, ...")
+	if body != "正文。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "## Bibliography") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_MarkdownUpperCase(t *testing.T) {
+	body, refs := ExtractReferences("正文。\n\n## REFERENCES\n[1] E. Liu, ...")
+	if body != "正文。" {
+		t.Errorf("unexpected body: %q", body)
+	}
+	if !strings.Contains(refs, "REFERENCES") {
+		t.Errorf("unexpected refs: %q", refs)
+	}
+}
+
+func TestExtractReferences_TeXFormat(t *testing.T) {
+	content := `一些论文内容。
+
+\section{Method}
+Our method is ...
+
+\begin{thebibliography}{99}
+\\bibitem{ref1} F. Gao, \\textit{A Great Paper}. 2023.
+\\bibitem{ref2} G. Li, \\textit{Another Work}. 2024.
+\\end{thebibliography}`
+	body, refs := ExtractReferences(content)
+	if !strings.Contains(body, "Our method is") {
+		t.Errorf("body should contain paper content, got: %q", body)
+	}
+	if strings.Contains(body, "thebibliography") {
+		t.Errorf("body should NOT contain references, got: %q", body)
+	}
+	if !strings.Contains(refs, "\\begin{thebibliography}") {
+		t.Errorf("refs should contain thebibliography, got: %q", refs)
+	}
+}
+
+func TestExtractReferences_NoReferencesFound(t *testing.T) {
+	content := "这是一篇没有参考文献的短文。\n\n只有正文。"
+	body, refs := ExtractReferences(content)
+	if body != content {
+		t.Errorf("body should equal original content when no refs found, got: %q", body)
+	}
+	if refs != "" {
+		t.Errorf("refs should be empty when no refs found, got: %q", refs)
+	}
+}
+
+func TestExtractReferences_EmptyContent(t *testing.T) {
+	body, refs := ExtractReferences("")
+	if body != "" || refs != "" {
+		t.Errorf("both body and refs should be empty for empty input")
+	}
+}
+
+func TestExtractReferences_ReferencesHeadingNotAtStart(t *testing.T) {
+	// Ensure "References" in the middle of a sentence doesn't trigger.
+	body, refs := ExtractReferences("讨论相关工作（References）部分。\n\n## References\n[1] H. Xu, ...")
+	if !strings.Contains(body, "讨论相关工作（References）部分。") {
+		t.Errorf("body should include pre-reference content, got: %q", body)
+	}
+	if !strings.Contains(refs, "## References") {
+		t.Errorf("refs should contain the heading, got: %q", refs)
+	}
+}
+
+func TestStripReferences_DelegatesToExtract(t *testing.T) {
+	content := "正文。\n\n## References\n[1] ..."
+	stripped := StripReferences(content)
+	if strings.Contains(stripped, "References") {
+		t.Errorf("StripReferences should remove references, got: %q", stripped)
+	}
+	if stripped != "正文。" {
+		t.Errorf("unexpected stripped output: %q", stripped)
+	}
+}
+
+func TestStripReferences_NoRefs(t *testing.T) {
+	content := "只是一篇短文。"
+	stripped := StripReferences(content)
+	if stripped != content {
+		t.Errorf("StripReferences should return original when no refs, got: %q", stripped)
 	}
 }

@@ -11,33 +11,87 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/config"
-	"github.com/happyTonakai/paperagent/internal/session"
 )
 
+// Tool definition for OpenAI function calling.
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Parameters  interface{} `json:"parameters"`
+}
+
+// ToolCall represents a (possibly partial) tool call from a streaming delta.
+type ToolCall struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function,omitempty"`
+}
+
+// ToolCallCompleted represents a fully assembled tool call (accumulated from deltas).
+type ToolCallCompleted struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// GetReferencesTool returns the tool definition for the get_references function.
+func GetReferencesTool() Tool {
+	return Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "get_references",
+			Description: "Get the reference list / bibliography of this paper. Use this when the user asks about specific references, cited papers, or the bibliography section.",
+			Parameters: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+				"required":   []string{},
+			},
+		},
+	}
+}
+
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string              `json:"role"`
+	Content    string              `json:"content"`
+	ToolCallID string              `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCallCompleted `json:"tool_calls,omitempty"`
 }
 
 type ChatRequest struct {
 	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
+	Tools    []Tool        `json:"tools,omitempty"`
 }
 
-type ChatResponse struct {
+type chatResponse struct {
 	Choices []struct {
+		Index int `json:"index"`
 		Delta struct {
-			Content string `json:"content"`
-		} `json:"delta"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+		} `json:"delta,omitempty"`
 		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
+			Content   string     `json:"content"`
+			ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+		} `json:"message,omitempty"`
 	} `json:"choices"`
 	Usage *struct {
-		CompletionTokens     int `json:"completion_tokens"`
-		PromptTokens         int `json:"prompt_tokens"`
-		TotalTokens          int `json:"total_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens     int `json:"prompt_tokens"`
+		TotalTokens      int `json:"total_tokens"`
 		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details,omitempty"`
@@ -47,7 +101,7 @@ type ChatResponse struct {
 type StreamChunk struct {
 	Content          string
 	Done             bool
-	TokenCount       int // deprecated, kept for backward compat
+	ToolCalls        []ToolCallCompleted // non-nil when the LLM calls a tool
 	PromptTokens     int
 	CompletionTokens int
 	CachedTokens     int
@@ -75,24 +129,12 @@ func NewClient(cfg *config.Config) *Client {
 	}
 }
 
-func (c *Client) buildMessages(systemPrompt string, paperContent string, recentMessages []session.Message, userQuestion string) []ChatMessage {
-	msgs := []ChatMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: fmt.Sprintf("以下是论文全文：\n\n%s", paperContent)},
-	}
-
-	for _, m := range recentMessages {
-		msgs = append(msgs, ChatMessage{Role: m.Role, Content: m.Content})
-	}
-
-	if userQuestion != "" {
-		msgs = append(msgs, ChatMessage{Role: "user", Content: userQuestion})
-	}
-
-	return msgs
-}
-
-func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamChunk {
+// ChatStream streams a chat completion. If tools is non-nil, the tool definitions
+// are included in the request. If the LLM responds with a tool call, the stream
+// returns a single chunk with ToolCalls populated, then closes.
+// The caller should check chunk.ToolCalls first; if non-nil, handle the tool call
+// and issue a follow-up stream.
+func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 64)
 
 	go func() {
@@ -102,6 +144,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 			Model:    model,
 			Messages: messages,
 			Stream:   true,
+			Tools:    tools,
 		}
 
 		body, err := json.Marshal(req)
@@ -132,6 +175,16 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 			return
 		}
 
+		// Accumulate tool calls from streaming deltas.
+		type accToolCall struct {
+			id       string
+			typ      string
+			name     string
+			argument string
+		}
+		accToolCalls := make(map[int]*accToolCall)
+		var hasToolCall bool
+
 		var promptTokens, completionTokens, cachedTokens int
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
@@ -141,25 +194,87 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
-				ch <- StreamChunk{Done: true, PromptTokens: promptTokens, CompletionTokens: completionTokens, CachedTokens: cachedTokens}
+				if hasToolCall {
+					// Assemble completed tool calls and return them.
+					var completed []ToolCallCompleted
+					for i := 0; i < len(accToolCalls); i++ {
+						tc := accToolCalls[i]
+						if tc != nil {
+							completed = append(completed, ToolCallCompleted{
+								ID:   tc.id,
+								Type: tc.typ,
+								Function: struct {
+									Name      string `json:"name"`
+									Arguments string `json:"arguments"`
+								}{
+									Name:      tc.name,
+									Arguments: tc.argument,
+								},
+							})
+						}
+					}
+					ch <- StreamChunk{
+						ToolCalls:        completed,
+						Done:             true,
+						PromptTokens:     promptTokens,
+						CompletionTokens: completionTokens,
+						CachedTokens:     cachedTokens,
+					}
+				} else {
+					ch <- StreamChunk{
+						Done:             true,
+						PromptTokens:     promptTokens,
+						CompletionTokens: completionTokens,
+						CachedTokens:     cachedTokens,
+					}
+				}
 				return
 			}
 
-			var chunk ChatResponse
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			var cr chatResponse
+			if err := json.Unmarshal([]byte(data), &cr); err != nil {
 				continue
 			}
 
-			if chunk.Usage != nil {
-				promptTokens = chunk.Usage.PromptTokens
-				completionTokens = chunk.Usage.CompletionTokens
-				if chunk.Usage.PromptTokensDetails != nil {
-					cachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+			if cr.Usage != nil {
+				promptTokens = cr.Usage.PromptTokens
+				completionTokens = cr.Usage.CompletionTokens
+				if cr.Usage.PromptTokensDetails != nil {
+					cachedTokens = cr.Usage.PromptTokensDetails.CachedTokens
 				}
 			}
 
-			if len(chunk.Choices) > 0 {
-				content := chunk.Choices[0].Delta.Content
+			if len(cr.Choices) > 0 {
+				delta := cr.Choices[0].Delta
+
+				// Check for tool calls in delta.
+				if len(delta.ToolCalls) > 0 {
+					hasToolCall = true
+					for _, tc := range delta.ToolCalls {
+						acc, ok := accToolCalls[tc.Index]
+						if !ok {
+							acc = &accToolCall{}
+							accToolCalls[tc.Index] = acc
+						}
+						if tc.ID != "" {
+							acc.id = tc.ID
+						}
+						if tc.Type != "" {
+							acc.typ = tc.Type
+						}
+						if tc.Function.Name != "" {
+							acc.name = tc.Function.Name
+						}
+						if tc.Function.Arguments != "" {
+							acc.argument += tc.Function.Arguments
+						}
+					}
+					// Don't forward tool call chunks — we'll assemble and send one combined chunk at the end.
+					continue
+				}
+
+				// Regular content delta.
+				content := delta.Content
 				if content != "" {
 					ch <- StreamChunk{Content: content}
 				}
@@ -174,60 +289,84 @@ func (c *Client) ChatStream(model string, messages []ChatMessage) <-chan StreamC
 	return ch
 }
 
-func (c *Client) Chat(model string, messages []ChatMessage) (string, int, int, int, int, error) {
+// Chat sends a non-streaming chat completion. If tools is non-nil, the tool
+// definitions are included.
+// Returns (content, toolCalls, promptTokens, completionTokens, totalTokens, cachedTokens, error).
+// If the LLM responds with a tool call, content will be empty and toolCalls populated.
+func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (string, []ToolCallCompleted, int, int, int, int, error) {
 	req := ChatRequest{
 		Model:    model,
 		Messages: messages,
 		Stream:   false,
+		Tools:    tools,
 	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return "", 0, 0, 0, 0, err
+		return "", nil, 0, 0, 0, 0, err
 	}
 
 	url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return "", 0, 0, 0, 0, err
+		return "", nil, 0, 0, 0, 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return "", 0, 0, 0, 0, err
+		return "", nil, 0, 0, 0, 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", 0, 0, 0, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", nil, 0, 0, 0, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
-	var chatResp ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", 0, 0, 0, 0, err
+	var cr chatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
+		return "", nil, 0, 0, 0, 0, err
 	}
 
-	if len(chatResp.Choices) == 0 {
-		return "", 0, 0, 0, 0, fmt.Errorf("no response from API")
+	if len(cr.Choices) == 0 {
+		return "", nil, 0, 0, 0, 0, fmt.Errorf("no response from API")
 	}
 
 	promptTokens := 0
 	completionTokens := 0
 	totalTokens := 0
 	cachedTokens := 0
-	if chatResp.Usage != nil {
-		promptTokens = chatResp.Usage.PromptTokens
-		completionTokens = chatResp.Usage.CompletionTokens
-		totalTokens = chatResp.Usage.TotalTokens
-		if chatResp.Usage.PromptTokensDetails != nil {
-			cachedTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+	if cr.Usage != nil {
+		promptTokens = cr.Usage.PromptTokens
+		completionTokens = cr.Usage.CompletionTokens
+		totalTokens = cr.Usage.TotalTokens
+		if cr.Usage.PromptTokensDetails != nil {
+			cachedTokens = cr.Usage.PromptTokensDetails.CachedTokens
 		}
 	}
 
-	return chatResp.Choices[0].Message.Content, promptTokens, completionTokens, totalTokens, cachedTokens, nil
+	msg := cr.Choices[0].Message
+	if len(msg.ToolCalls) > 0 {
+		var completed []ToolCallCompleted
+		for _, tc := range msg.ToolCalls {
+			completed = append(completed, ToolCallCompleted{
+				ID:   tc.ID,
+				Type: tc.Type,
+				Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{
+					Name:      tc.Function.Name,
+					Arguments: tc.Function.Arguments,
+				},
+			})
+		}
+		return "", completed, promptTokens, completionTokens, totalTokens, cachedTokens, nil
+	}
+
+	return msg.Content, nil, promptTokens, completionTokens, totalTokens, cachedTokens, nil
 }
 
 func (c *Client) ExtractTitle(model string, content string) (string, error) {
@@ -240,6 +379,6 @@ func (c *Client) ExtractTitle(model string, content string) (string, error) {
 		{Role: "system", Content: "从以下论文开头提取论文标题，直接输出标题，不要加任何前缀或引号。"},
 		{Role: "user", Content: excerpt},
 	}
-	result, _, _, _, _, err := c.Chat(model, messages)
+	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
 	return result, err
 }

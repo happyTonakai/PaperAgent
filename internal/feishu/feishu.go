@@ -464,7 +464,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
-	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
+	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages, nil)
 	var totalContent strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
 	lastPatch := 0
@@ -853,7 +853,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	if cardMsgID == "" {
 		log.Printf("[feishu] failed to send thinking card")
 		// Fall back to text
-		result, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages)
+		result, _, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, nil)
 		if chatErr != nil {
 			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
 			return
@@ -870,7 +870,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	slots := []chatCardSlot{{id: cardMsgID, startAt: 0}}
 
 	// Stream the answer
-	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages)
+	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages, nil)
 	var totalContent strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
 	lastPatch := 0
