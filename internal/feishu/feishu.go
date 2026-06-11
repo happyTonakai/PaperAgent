@@ -1258,22 +1258,6 @@ func hasMarkdown(s string) bool {
 	return false
 }
 
-func countMdTables(s string) int {
-	count := 0
-	inTable := false
-	for _, line := range strings.Split(s, "\n") {
-		trimmed := strings.TrimSpace(line)
-		isTable := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
-		if isTable && !inTable {
-			count++
-			inTable = true
-		} else if !isTable {
-			inTable = false
-		}
-	}
-	return count
-}
-
 func buildPostMdJSON(content string) string {
 	post := map[string]any{
 		"zh_cn": map[string]any{
@@ -1295,7 +1279,7 @@ func (b *Bot) buildMessageContent(text string) (msgType, body string) {
 		b, _ := json.Marshal(map[string]string{"text": text})
 		return larkim.MsgTypeText, string(b)
 	}
-	if countMdTables(text) > 5 {
+	if countMdTables(text) > maxCardMdTables {
 		return larkim.MsgTypePost, buildPostMdJSON(text)
 	}
 	return larkim.MsgTypeInteractive, buildCardMarkdown(text)

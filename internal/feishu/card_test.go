@@ -388,3 +388,105 @@ func TestMultiCardSplit_Chat(t *testing.T) {
 	}
 	t.Logf("✅ chat: all %d cards within limits", len(slots))
 }
+
+func TestFitMarkdownContent_NoMidTableSplit(t *testing.T) {
+	// Content with exactly 5 tables that triggers table limit split.
+	// Verify that no table is split mid-table across cards.
+	var sb strings.Builder
+	sb.WriteString("## Introduction\n\nSome text before tables.\n\n")
+
+	for i := 1; i <= 5; i++ {
+		sb.WriteString(fmt.Sprintf("**表%d：测试表格\n\n", i))
+		sb.WriteString("| Col A | Col B | Col C |\n")
+		sb.WriteString("|-------|-------|-------|\n")
+		for j := 0; j < 7; j++ {
+			sb.WriteString(fmt.Sprintf("| row-%d | value-%d | data-%d |\n", j, j, j))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("## Conclusion\n\nSome final text.\n")
+
+	content := sb.String()
+	t.Logf("content: %d chars with 5 tables", len(content))
+
+	// Run the same streaming simulation
+	type slot struct {
+		startAt int
+	}
+	var slots []slot
+	slots = append(slots, slot{startAt: 0})
+
+	var total strings.Builder
+	lastPatch := 0
+
+	rng := rand.New(rand.NewPCG(42, 7))
+	remaining := content
+	for len(remaining) > 0 {
+		chunkSize := 50 + rng.IntN(450)
+		if chunkSize > len(remaining) {
+			chunkSize = len(remaining)
+		}
+		total.WriteString(remaining[:chunkSize])
+		remaining = remaining[chunkSize:]
+		totalStr := total.String()
+
+		if len(totalStr)-lastPatch < 200 {
+			continue
+		}
+		lastPatch = len(totalStr)
+
+		active := &slots[len(slots)-1]
+		cardContent := totalStr[active.startAt:]
+
+		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
+			if len(slots) == 1 {
+				return buildStreamingCard("test", "Table Split Test", c)
+			}
+			return buildStreamingContinuationCard(c)
+		})
+
+		if overflow != "" {
+			overflowStart := active.startAt + len(fits)
+			slots = append(slots, slot{startAt: overflowStart})
+		}
+	}
+
+	totalStr := total.String()
+	t.Logf("total: %d chars across %d cards", len(totalStr), len(slots))
+
+	// Verify: no card contains a partial table
+	for i, s := range slots {
+		end := len(totalStr)
+		if i+1 < len(slots) {
+			end = slots[i+1].startAt
+		}
+		cardContent := totalStr[s.startAt:end]
+
+		// A partial table would start with |...| but not end with |...| (or vice versa on next card)
+		lines := strings.Split(cardContent, "\n")
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] != '|' {
+				t.Errorf("card #%d has truncated table row: %q", i, trimmed)
+			}
+		}
+
+		// Check card fits its limits
+		var cardJSON string
+		if i == 0 {
+			cardJSON = buildDoneCard("test", "Table Split Test", cardContent, 0, 0, 0)
+		} else {
+			cardJSON = buildContinuationCard(cardContent)
+		}
+		t.Logf("  card #%d: content=%dB json=%dB tables=%d", i, len(cardContent), len(cardJSON), countMdTables(cardContent))
+		if len(cardJSON) > maxCardJSONBytes {
+			t.Errorf("card #%d JSON exceeds limit: %dB > %dB", i, len(cardJSON), maxCardJSONBytes)
+		}
+		if countMdTables(cardContent) > maxCardMdTables {
+			t.Errorf("card #%d has %d tables, limit is %d", i, countMdTables(cardContent), maxCardMdTables)
+		}
+	}
+
+	t.Logf("✅ no tables split across cards")
+}

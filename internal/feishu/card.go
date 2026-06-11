@@ -18,6 +18,10 @@ const maxCardJSONBytes = 28000
 // We leave 20 margin for hr + note + fixed card overhead.
 const maxCardElements = 180
 
+// maxCardMdTables is the maximum number of markdown tables Feishu allows
+// per interactive card. Exceeding this causes error 11310 (card table number over limit).
+const maxCardMdTables = 5
+
 // ─── Card Schema 2.0 helpers ───
 
 func cardBase() map[string]any {
@@ -141,10 +145,13 @@ func estimateContentElements(content string) int {
 			continue
 		}
 
-		// Table row: conservatively count as row + cells
+		// Table row: count as row + moderate cell overhead.
+		// Feishu renders the entire markdown table as a single <table> element,
+		// so individual rows don't each generate cells/2 card elements.
+		// Use cells/4 to avoid overcounting wide tables and causing premature splits.
 		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
 			cells := strings.Count(trimmed, "|") - 1
-			count += 1 + cells/2 // row + rough cell overhead
+			count += 1 + cells/4 // row + moderate cell overhead
 			continue
 		}
 
@@ -155,14 +162,35 @@ func estimateContentElements(content string) int {
 	return count
 }
 
+// countMdTables counts the number of markdown tables in a string.
+// A table starts at a line matching |...| when not already inside a table.
+func countMdTables(s string) int {
+	count := 0
+	inTable := false
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		isTable := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+		if isTable && !inTable {
+			count++
+			inTable = true
+		} else if !isTable {
+			inTable = false
+		}
+	}
+	return count
+}
+
 // cardFits checks whether markdown content fits in a Feishu card, considering
-// both the JSON byte size limit and the 200-element limit.
+// the JSON byte size limit, the 200-element limit, and the table count limit (5).
 func cardFits(content string, builder func(content string) string) bool {
 	cardJSON := builder(content)
 	if len(cardJSON) > maxCardJSONBytes {
 		return false
 	}
 	if estimateContentElements(content) > maxCardElements {
+		return false
+	}
+	if countMdTables(content) > maxCardMdTables {
 		return false
 	}
 	return true
@@ -172,7 +200,8 @@ func cardFits(content string, builder func(content string) string) bool {
 // fitMarkdownContent tries to fit as much markdown content as possible into a card
 // builder function. Returns (fittedContent, overflow). If everything fits, overflow is "".
 // The builder receives the content and returns a card JSON string.
-// Checks both JSON byte size AND estimated element count.
+// Checks JSON byte size, element count, and table count.
+// Ensures the split never falls inside a markdown table or code block.
 func fitMarkdownContent(content string, builder func(content string) string) (fits string, overflow string) {
 	if cardFits(content, builder) {
 		return content, ""
@@ -197,9 +226,77 @@ func fitMarkdownContent(content string, builder func(content string) string) (fi
 		return "（内容过长，无法在卡片中展示）", content
 	}
 
-	fits = string(runes[:lo])
-	overflow = string(runes[lo:])
+	// The binary search may land inside a table or code block.
+	// Adjust backward to the nearest safe line boundary.
+	safePos := findSafeBoundary(content, len([]byte(string(runes[:lo]))))
+	if safePos > 0 {
+		fits = content[:safePos]
+		overflow = content[safePos:]
+	} else {
+		fits = string(runes[:lo])
+		overflow = string(runes[lo:])
+	}
 	return fits, overflow
+}
+
+// findSafeBoundary scans lines from the start of content and finds the last
+// line boundary at or before maxBytes that is NOT inside a table or code block.
+// Returns the byte position of that boundary (right after the newline), or 0.
+// Blank line boundaries are preferred (quality=2), then any safe boundary (quality=1).
+func findSafeBoundary(content string, maxBytes int) int {
+	if maxBytes <= 0 {
+		return 0
+	}
+
+	lines := strings.Split(content, "\n")
+	inTable := false
+	inCodeBlock := false
+	bytePos := 0
+	bestPos := 0
+	lastSafePos := 0
+
+	for i, line := range lines {
+		// End position after this line (including newline)
+		lineEnd := bytePos + len(line)
+		if i+1 < len(lines) {
+			lineEnd++ // +1 for the \n that was removed by Split
+		}
+
+		// If this line end exceeds maxBytes, stop looking
+		if lineEnd > maxBytes {
+			break
+		}
+
+		trimmed := strings.TrimSpace(line)
+
+		// Track code block state
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+		}
+
+		// Track table state (line is a table continuation)
+		isTableLine := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+		if isTableLine && !inTable {
+			inTable = true
+		} else if !isTableLine && inTable {
+			inTable = false
+		}
+
+		// Record position AFTER this line
+		if !inCodeBlock && !inTable {
+			lastSafePos = lineEnd
+			if trimmed == "" {
+				bestPos = lineEnd // blank line is ideal
+			}
+		}
+
+		bytePos = lineEnd
+	}
+
+	if bestPos > 0 {
+		return bestPos
+	}
+	return lastSafePos
 }
 
 // ─── Loading card (initial state when summary starts) ───
