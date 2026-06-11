@@ -1247,7 +1247,7 @@ func maskAppID(appID string) string {
 
 // ─── Message content auto-detection (markdown → card/post/text) ───
 
-var mdIndicators = []string{"```", "**", "~~", "`", "\n- ", "\n* ", "\n1. ", "\n# ", "---"}
+var mdIndicators = []string{"```", "**", "~~", "`", "\n- ", "\n* ", "\n1. ", "\n# ", "---", "> "}
 
 func hasMarkdown(s string) bool {
 	for _, ind := range mdIndicators {

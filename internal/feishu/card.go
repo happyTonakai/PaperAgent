@@ -40,10 +40,34 @@ func cardHeader(title, template string) map[string]any {
 	}
 }
 
+// normalizeBlockquotes strips leading whitespace from blockquote markers (>)
+// to ensure compatibility with Feishu's card markdown parser, which expects
+// `>` at column 0 (no indentation). Lines inside code blocks are left untouched.
+func normalizeBlockquotes(content string) string {
+	lines := strings.Split(content, "\n")
+	inCodeBlock := false
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			result = append(result, line)
+			continue
+		}
+		if !inCodeBlock && strings.HasPrefix(trimmed, ">") {
+			// Strip leading whitespace to put `>` at column 0
+			result = append(result, strings.TrimLeft(line, " \t"))
+		} else {
+			result = append(result, line)
+		}
+	}
+	return strings.Join(result, "\n")
+}
+
 func mdElement(content string) map[string]any {
 	return map[string]any{
 		"tag":     "markdown",
-		"content": content,
+		"content": normalizeBlockquotes(content),
 	}
 }
 
