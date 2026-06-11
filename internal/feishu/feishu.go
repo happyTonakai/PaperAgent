@@ -548,19 +548,19 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	lastContent := summary[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(c), paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens)
+		return buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(c), promptTokens, completionTokens, cachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card's content still doesn't fit — freeze as continuation, send one more done card
 		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
-		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(overflow), paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
+		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(overflow), promptTokens, completionTokens, cachedTokens))
 	} else if len(slots) == 1 {
 		// Single card: patch from streaming to done in-place
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
 	} else {
 		// Last of multiple cards: patch to done
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
+		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
 	}
 }
 
@@ -956,15 +956,15 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	lastContent := answer[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildChatDoneCard(paperID, paper.Title, latexToUnicode(c), round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens)
+		return buildChatDoneCard(paperID, paper.Title, latexToUnicode(c), round, promptTokens, completionTokens, cachedTokens)
 	})
 
 	if overflow != "" {
 		// Last card still doesn't fit — freeze, send one more done card
 		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
-		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, latexToUnicode(overflow), round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
+		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, latexToUnicode(overflow), round, promptTokens, completionTokens, cachedTokens))
 	} else {
-		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, latexToUnicode(fits), round, paper.TotalPromptTokens, paper.TotalCompletionTokens, paper.TotalCachedTokens))
+		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, latexToUnicode(fits), round, promptTokens, completionTokens, cachedTokens))
 	}
 }
 

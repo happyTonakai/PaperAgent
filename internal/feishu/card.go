@@ -348,7 +348,7 @@ func buildStreamingCard(paperID, title, content string) string {
 
 // ─── Done card (after summary completes) ───
 
-func buildDoneCard(paperID, title, content string, totalPromptTokens, totalCompletionTokens, totalCachedTokens int) string {
+func buildDoneCard(paperID, title, content string, promptTokens, completionTokens, cachedTokens int) string {
 	c := cardBase()
 	hdrTitle := "✅ 总结完成"
 	if title != "" {
@@ -357,8 +357,13 @@ func buildDoneCard(paperID, title, content string, totalPromptTokens, totalCompl
 	c["header"] = cardHeader(hdrTitle, "green")
 
 	tokenNote := "直接在聊天中提问即可 🎉"
-	if totalPromptTokens > 0 || totalCompletionTokens > 0 {
-		tokenNote = fmt.Sprintf("累计输入 %s tokens · 累计输出 %s tokens · 缓存命中 %s tokens", formatInt(totalPromptTokens-totalCachedTokens), formatInt(totalCompletionTokens), formatInt(totalCachedTokens))
+	if promptTokens > 0 || completionTokens > 0 {
+		// 输入 = 真实输入（剔除缓存命中部分）
+		input := promptTokens - cachedTokens
+		if input < 0 {
+			input = 0
+		}
+		tokenNote = fmt.Sprintf("输入 %s tokens · 输出 %s tokens · 缓存命中 %s tokens", formatInt(input), formatInt(completionTokens), formatInt(cachedTokens))
 	}
 
 	elements := []map[string]any{
@@ -441,7 +446,7 @@ func buildChatStreamingCard(paperID, title, content string) string {
 
 // ─── Chat done card ───
 
-func buildChatDoneCard(paperID, title, answer string, round int, totalPromptTokens, totalCompletionTokens, totalCachedTokens int) string {
+func buildChatDoneCard(paperID, title, answer string, round int, promptTokens, completionTokens, cachedTokens int) string {
 	c := cardBase()
 	hdrTitle := "✅ 回答完成"
 	if title != "" {
@@ -450,8 +455,13 @@ func buildChatDoneCard(paperID, title, answer string, round int, totalPromptToke
 	c["header"] = cardHeader(hdrTitle, "green")
 
 	tokenNote := "继续提问即可进行多轮对话 ✨"
-	if totalPromptTokens > 0 || totalCompletionTokens > 0 {
-		tokenNote = fmt.Sprintf("第 %s 轮 · 累计输入 %s tokens · 累计输出 %s tokens · 累计缓存命中 %s tokens", formatInt(round), formatInt(totalPromptTokens-totalCachedTokens), formatInt(totalCompletionTokens), formatInt(totalCachedTokens))
+	if promptTokens > 0 || completionTokens > 0 {
+		// 输入 = 真实输入（剔除缓存命中部分）
+		input := promptTokens - cachedTokens
+		if input < 0 {
+			input = 0
+		}
+		tokenNote = fmt.Sprintf("第 %s 轮 · 输入 %s tokens · 输出 %s tokens · 缓存命中 %s tokens", formatInt(round), formatInt(input), formatInt(completionTokens), formatInt(cachedTokens))
 	}
 
 	elements := []map[string]any{
