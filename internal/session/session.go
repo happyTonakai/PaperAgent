@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,6 +101,20 @@ func (p *Paper) SetInitialSummary(summary string) {
 	p.UpdatedAt = time.Now()
 }
 
+// SetAnchorFromTokens checks if this round's API token usage exceeds the budget.
+// If so, sets TruncationAnchor to keep only the most recent minRounds rounds.
+func (p *Paper) SetAnchorFromTokens(round int, promptTokens, completionTokens, maxInput, minRounds int) {
+	if promptTokens+completionTokens > maxInput {
+		anchor := round - minRounds + 1
+		if anchor < 1 {
+			anchor = 1
+		}
+		p.TruncationAnchor = anchor
+		log.Printf("[truncation] round %d: prompt=%d + completion=%d = %d > max_input=%d → anchor=%d (keep %d recent rounds)",
+			round, promptTokens, completionTokens, promptTokens+completionTokens, maxInput, anchor, minRounds)
+	}
+}
+
 func (p *Paper) SetTitle(title string) {
 	if p == nil {
 		return
@@ -171,112 +186,49 @@ func (p *Paper) collectAllContextMessages() []Message {
 }
 
 // RecentContextMessages returns context-bearing messages using anchor-based token budgeting.
-// It only counts rounds from p.TruncationAnchor onward. If they fit within maxInputTokens
-// (given baseTokens), all are returned and the anchor stays. Otherwise, a hard truncation
-// drops to minRounds and sets a new anchor — breaking KV cache once, then guaranteeing
-// prefix stability for the next growth cycle.
-func (p *Paper) RecentContextMessages(minRounds int, maxInputTokens int, baseTokens int) []Message {
-	if p == nil || minRounds <= 0 {
+// The anchor is set by callers (handleChat/cmdChat) based on real API token values via SetAnchorFromTokens.
+// When anchor > 0, only rounds from the anchor onward are returned.
+func (p *Paper) RecentContextMessages() []Message {
+	if p == nil {
 		return nil
 	}
 	all := p.collectAllContextMessages()
-
-	// Filter to rounds from the anchor onwards.
 	var active []Message
-	if p.TruncationAnchor > 0 {
+	if p.TruncationAnchor <= 0 {
+		active = all
+	} else {
 		for _, m := range all {
 			if m.RoundNumber >= p.TruncationAnchor {
 				active = append(active, m)
 			}
 		}
+	}
+	if minR, maxR := ContextRoundRange(active); maxR > 0 {
+		log.Printf("[chat] context rounds %d-%d (%d msgs, anchor=%d)", minR, maxR, len(active), p.TruncationAnchor)
 	} else {
-		active = all
+		log.Printf("[chat] context empty (anchor=%d)", p.TruncationAnchor)
 	}
-
-	result, newAnchor := truncateByTokens(active, minRounds, maxInputTokens, baseTokens)
-	if newAnchor > 0 {
-		p.TruncationAnchor = newAnchor
-	}
-	return result
+	return active
 }
 
-// TruncateContextMessages applies anchor-based token budgeting to an ordered message slice.
-// Returns the selected messages. The anchor is not persisted (caller handles that via Paper).
-// Used by callers that build a custom message list (e.g. retry chat).
-func TruncateContextMessages(messages []Message, minRounds int, maxTokens int, baseTokens int) []Message {
-	result, _ := truncateByTokens(messages, minRounds, maxTokens, baseTokens)
-	return result
-}
-
-func truncateByTokens(messages []Message, minRounds int, maxTokens int, baseTokens int) ([]Message, int) {
-	// Count rounds from the end backwards. If total tokens from the tail exceed
-	// maxTokens, hard-truncate to the last minRounds and return the new anchor.
-	// Otherwise return all messages with anchor=0 (no truncation needed).
-
-	// Walk backwards: sum tokens until either we run out of rounds or exceed budget.
-	currentTokens := baseTokens
-	roundsSeen := 0
-	exceeded := false
-
-	for i := len(messages) - 1; i >= 0; {
-		if messages[i].Role == "assistant" {
-			end := i + 1
-			roundStart := i
-			for roundStart >= 0 && messages[roundStart].RoundNumber == messages[end-1].RoundNumber {
-				roundStart--
-			}
-			roundStart++
-
-			roundTokens := 0
-			for _, m := range messages[roundStart:end] {
-				roundTokens += m.TokenCount
-			}
-
-			i = roundStart - 1
-			currentTokens += roundTokens
-			roundsSeen++
-
-			if currentTokens > maxTokens {
-				exceeded = true
-				break
-			}
-		} else {
-			i--
+// ContextRoundRange returns the min and max round numbers among context messages, or (0,0) if empty.
+func ContextRoundRange(msgs []Message) (int, int) {
+	if len(msgs) == 0 {
+		return 0, 0
+	}
+	minR, maxR := msgs[0].RoundNumber, msgs[0].RoundNumber
+	for _, m := range msgs {
+		if m.RoundNumber < minR {
+			minR = m.RoundNumber
+		}
+		if m.RoundNumber > maxR {
+			maxR = m.RoundNumber
 		}
 	}
-
-	if !exceeded {
-		// Everything fits — no truncation, no anchor change.
-		return messages, 0
-	}
-
-	// Budget exceeded. Hard-truncate to exactly minRounds from the end.
-	// This breaks KV cache once but guarantees cache stability for the next
-	// minRounds-budget growth cycle.
-	var result []Message
-	roundsFound := 0
-	for i := len(messages) - 1; i >= 0 && roundsFound < minRounds; {
-		if messages[i].Role == "assistant" {
-			end := i + 1
-			roundStart := i
-			for roundStart >= 0 && messages[roundStart].RoundNumber == messages[end-1].RoundNumber {
-				roundStart--
-			}
-			roundStart++
-			result = append(messages[roundStart:end], result...)
-			i = roundStart - 1
-			roundsFound++
-		} else {
-			i--
-		}
-	}
-
-	newAnchor := 0
-	if len(result) > 0 {
-		newAnchor = result[0].RoundNumber
-	}
-	return result, newAnchor
+	return minR, maxR
 }
+
+
 
 func (p *Paper) Save() error {
 	if p == nil {

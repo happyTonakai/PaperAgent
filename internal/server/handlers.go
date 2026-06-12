@@ -486,11 +486,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// New papers have paper.Content stripped of references at creation time.
 	// Old papers (References为空) have full content with references intact.
 	bodyForLLM := paper.Content
-	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
-		session.EstimateTokens(bodyForLLM) +
-		session.EstimateTokens(prompt.GetLight()) +
-		session.EstimateTokens(req.Question)
-	recent := paper.RecentContextMessages(s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
+	recent := paper.RecentContextMessages()
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
 		{Role: "user", Content: bodyForLLM},
@@ -612,6 +608,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		SkipContext:      req.SkipContext,
 	}
 	paper.AddMessage(assistantMsg)
+
+	paper.SetAnchorFromTokens(round, promptTokens, completionTokens, s.cfg.UI.MaxInputTokens, s.cfg.UI.MinRecentRounds)
 	paper.Save()
 	unlock()
 
@@ -921,22 +919,25 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	// have full content with references intact.
 	bodyForLLM := paper.Content
 
-	// Collect context messages from rounds BEFORE target round (skip btw messages)
+	// Collect context messages from rounds BEFORE target round (skip btw messages).
+	// Use TruncationAnchor set by the original chat to filter context.
 	var prevMsgs []session.Message
 	for _, m := range paper.Messages {
 		if m.SkipContext {
 			continue
 		}
 		if m.RoundNumber < round {
+			if paper.TruncationAnchor > 0 && m.RoundNumber < paper.TruncationAnchor {
+				continue
+			}
 			prevMsgs = append(prevMsgs, m)
 		}
 	}
-	// Apply dynamic token-aware truncation (include question in base token count)
-	baseTokens := session.EstimateTokens(prompt.GetSystem()) +
-		session.EstimateTokens(bodyForLLM) +
-		session.EstimateTokens(prompt.GetLight()) +
-		session.EstimateTokens(question)
-	prevMsgs = session.TruncateContextMessages(prevMsgs, s.cfg.UI.MinRecentRounds, s.cfg.UI.MaxInputTokens, baseTokens)
+	if minR, maxR := session.ContextRoundRange(prevMsgs); maxR > 0 {
+		log.Printf("[retry-chat] context includes rounds %d-%d (total %d msgs, anchor=%d, target_round=%d)", minR, maxR, len(prevMsgs), paper.TruncationAnchor, round)
+	} else {
+		log.Printf("[retry-chat] context is empty (anchor=%d, target_round=%d)", paper.TruncationAnchor, round)
+	}
 
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},

@@ -435,7 +435,7 @@ func TestRecentContextMessages_SkipsInitRound(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5, 999999, 0)
+	recent := p.RecentContextMessages()
 
 	// Should only have rounds 1 and 2 (4 messages), round 0 should be skipped
 	if len(recent) != 4 {
@@ -477,7 +477,7 @@ func TestRecentContextMessages_SkipsBtwMessages(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5, 999999, 0)
+	recent := p.RecentContextMessages()
 
 	// Should have rounds 1 and 3 only (4 messages)
 	if len(recent) != 4 {
@@ -501,7 +501,7 @@ func TestRecentContextMessages_OnlyInitRoundWithSkipContext(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5, 999999, 0)
+	recent := p.RecentContextMessages()
 
 	if len(recent) != 0 {
 		t.Errorf("expected empty recent messages for Q1, got %d", len(recent))
@@ -519,7 +519,7 @@ func TestRecentContextMessages_WithoutSkipContext(t *testing.T) {
 		},
 	}
 
-	recent := p.RecentContextMessages(5, 999999, 0)
+	recent := p.RecentContextMessages()
 
 	// Without SkipContext, round 0 IS included (the old bug behavior)
 	if len(recent) != 2 {
@@ -536,29 +536,24 @@ func TestRecentContextMessages_LimitsRounds(t *testing.T) {
 		)
 	}
 
-	// With huge budget, all 10 rounds returned
-	recent := p.RecentContextMessages(3, 999999, 0)
+	// No anchor → all 10 rounds returned
+	recent := p.RecentContextMessages()
 	if len(recent) != 20 {
 		t.Errorf("expected 20 messages (10 rounds), got %d", len(recent))
 	}
 
-	// With tight budget (base=0, each round=2 tokens, max=15): cum exceeds at R3, hard-truncate to 3 rounds
-	recent = p.RecentContextMessages(3, 15, 0)
+	// With anchor=8 → only rounds 8-10 returned (6 messages)
+	p.TruncationAnchor = 8
+	recent = p.RecentContextMessages()
 	if len(recent) != 6 {
-		t.Errorf("expected 6 messages (3 rounds after hard truncation), got %d", len(recent))
+		t.Errorf("expected 6 messages (rounds 8-10), got %d", len(recent))
 	}
-	if recent[0].RoundNumber != 8 {
+	if len(recent) > 0 && recent[0].RoundNumber != 8 {
 		t.Errorf("expected first round to be 8, got %d", recent[0].RoundNumber)
-	}
-	if p.TruncationAnchor != 8 {
-		t.Errorf("expected anchor=8 after truncation, got %d", p.TruncationAnchor)
 	}
 }
 
 func TestRecentContextMessages_AnchorGrowthCycle(t *testing.T) {
-	// Simulate the KV-cache-friendly growth cycle:
-	// After truncation to [R10,R11,R12], the anchor is 10.
-	// New rounds R13,R14 are counted FROM anchor=10, not from scratch.
 	p := &Paper{Messages: []Message{}}
 	for i := 1; i <= 12; i++ {
 		p.Messages = append(p.Messages,
@@ -567,46 +562,43 @@ func TestRecentContextMessages_AnchorGrowthCycle(t *testing.T) {
 		)
 	}
 
-	// First: trigger truncation. 12 rounds = 24 tokens + base=0. max=15.
-	// Backwards: 7 rounds fit (14 tokens), 8th exceeds → truncate to last 3.
-	recent := p.RecentContextMessages(3, 15, 0)
-	if p.TruncationAnchor != 10 {
-		t.Fatalf("expected anchor=10, got %d", p.TruncationAnchor)
-	}
+	// Set anchor to 10 → only rounds 10-12 returned
+	p.TruncationAnchor = 10
+	recent := p.RecentContextMessages()
 	if len(recent) != 6 {
-		t.Fatalf("expected 6 msgs after truncation, got %d", len(recent))
+		t.Fatalf("expected 6 msgs (rounds 10-12), got %d", len(recent))
+	}
+	if len(recent) > 0 && recent[0].RoundNumber != 10 {
+		t.Fatalf("expected first round=10, got %d", recent[0].RoundNumber)
 	}
 
-	// Simulate round 13: add new Q&A pair.
+	// Add round 13 → now rounds 10-13 returned (8 messages)
 	p.Messages = append(p.Messages,
 		Message{RoundNumber: 13, Role: "user", Content: "q", TokenCount: 1},
 		Message{RoundNumber: 13, Role: "assistant", Content: "a", TokenCount: 1},
 	)
-	// Now count from anchor=10: R10+R11+R12+R13 = 4 rounds = 8 tokens ≤ 15. Should all fit.
-	recent = p.RecentContextMessages(3, 15, 0)
+	recent = p.RecentContextMessages()
 	if len(recent) != 8 {
-		t.Errorf("expected 8 messages (4 rounds from anchor), got %d", len(recent))
+		t.Errorf("expected 8 messages (rounds 10-13), got %d", len(recent))
 	}
 	if p.TruncationAnchor != 10 {
-		t.Errorf("anchor should stay 10 when under budget, got %d", p.TruncationAnchor)
+		t.Errorf("anchor should stay at 10, got %d", p.TruncationAnchor)
 	}
 
-	// Add rounds 14-18 (5 more rounds). R10..R18 = 9 rounds = 18 > 15 → re-truncate.
+	// Move anchor to 16 → only rounds 16-18 returned (6 messages)
 	for i := 14; i <= 18; i++ {
 		p.Messages = append(p.Messages,
 			Message{RoundNumber: i, Role: "user", Content: "q", TokenCount: 1},
 			Message{RoundNumber: i, Role: "assistant", Content: "a", TokenCount: 1},
 		)
 	}
-	recent = p.RecentContextMessages(3, 15, 0)
+	p.TruncationAnchor = 16
+	recent = p.RecentContextMessages()
 	if len(recent) != 6 {
-		t.Errorf("expected 6 messages (re-truncated), got %d", len(recent))
+		t.Errorf("expected 6 messages (rounds 16-18), got %d", len(recent))
 	}
-	if p.TruncationAnchor != 16 {
-		t.Errorf("expected new anchor=16, got %d", p.TruncationAnchor)
-	}
-	if recent[0].RoundNumber != 16 {
-		t.Errorf("expected first round=16 after re-truncation, got %d", recent[0].RoundNumber)
+	if len(recent) > 0 && recent[0].RoundNumber != 16 {
+		t.Errorf("expected first round=16, got %d", recent[0].RoundNumber)
 	}
 }
 
@@ -765,5 +757,107 @@ func TestStripReferences_NoRefs(t *testing.T) {
 	stripped := StripReferences(content)
 	if stripped != content {
 		t.Errorf("StripReferences should return original when no refs, got: %q", stripped)
+	}
+}
+
+// --- SetAnchorFromTokens tests ---
+
+func TestSetAnchorFromTokens_ExceedsBudget(t *testing.T) {
+	p := &Paper{}
+
+	// promptTokens + completionTokens = 50000 > maxInput 30000 → should set anchor
+	p.SetAnchorFromTokens(10, 30000, 20000, 30000, 3)
+	// anchor = round - minRounds + 1 = 10 - 3 + 1 = 8
+	if p.TruncationAnchor != 8 {
+		t.Errorf("expected anchor=8, got %d", p.TruncationAnchor)
+	}
+}
+
+func TestSetAnchorFromTokens_UnderBudget(t *testing.T) {
+	p := &Paper{}
+
+	// promptTokens + completionTokens = 10000 < maxInput 30000 → should NOT change anchor
+	p.SetAnchorFromTokens(10, 5000, 5000, 30000, 3)
+	if p.TruncationAnchor != 0 {
+		t.Errorf("expected anchor=0 (unchanged), got %d", p.TruncationAnchor)
+	}
+}
+
+func TestSetAnchorFromTokens_ExactBoundary(t *testing.T) {
+	p := &Paper{}
+
+	// promptTokens + completionTokens = 30000 = maxInput 30000 → should NOT change anchor (not strictly greater)
+	p.SetAnchorFromTokens(10, 15000, 15000, 30000, 3)
+	if p.TruncationAnchor != 0 {
+		t.Errorf("expected anchor=0 (at boundary, not exceeded), got %d", p.TruncationAnchor)
+	}
+}
+
+func TestSetAnchorFromTokens_SmallRoundNumber(t *testing.T) {
+	p := &Paper{}
+
+	// round=2, minRounds=5 → anchor = 2-5+1 = -2, clamped to 1
+	p.SetAnchorFromTokens(2, 30000, 20000, 30000, 5)
+	if p.TruncationAnchor != 1 {
+		t.Errorf("expected anchor=1 (clamped), got %d", p.TruncationAnchor)
+	}
+}
+
+func TestSetAnchorFromTokens_ExactFit(t *testing.T) {
+	p := &Paper{}
+
+	// round=3, minRounds=3 → anchor = 3-3+1 = 1
+	p.SetAnchorFromTokens(3, 40000, 10000, 30000, 3)
+	if p.TruncationAnchor != 1 {
+		t.Errorf("expected anchor=1, got %d", p.TruncationAnchor)
+	}
+}
+
+func TestSetAnchorFromTokens_PreservesExistingAnchor(t *testing.T) {
+	p := &Paper{TruncationAnchor: 5}
+
+	// Under budget → should NOT overwrite existing anchor
+	p.SetAnchorFromTokens(10, 5000, 5000, 30000, 3)
+	if p.TruncationAnchor != 5 {
+		t.Errorf("expected anchor=5 (preserved), got %d", p.TruncationAnchor)
+	}
+
+	// Over budget → should update anchor
+	p.SetAnchorFromTokens(15, 30000, 20000, 30000, 3)
+	// anchor = 15 - 3 + 1 = 13
+	if p.TruncationAnchor != 13 {
+		t.Errorf("expected anchor=13 (updated), got %d", p.TruncationAnchor)
+	}
+}
+
+func TestRecentContextMessages_WithAnchorIntegration(t *testing.T) {
+	// Integration test: SetAnchorFromTokens → RecentContextMessages
+	p := &Paper{Messages: []Message{}}
+	for i := 1; i <= 10; i++ {
+		p.Messages = append(p.Messages,
+			Message{RoundNumber: i, Role: "user", Content: "q", TokenCount: 1000},
+			Message{RoundNumber: i, Role: "assistant", Content: "a", TokenCount: 1000},
+		)
+	}
+
+	// Initially no anchor → all rounds returned
+	recent := p.RecentContextMessages()
+	if len(recent) != 20 {
+		t.Errorf("expected 20 messages, got %d", len(recent))
+	}
+
+	// Simulate budget exceeded at round 10
+	p.SetAnchorFromTokens(10, 15000, 15000, 20000, 3)
+	// anchor = 10 - 3 + 1 = 8
+	if p.TruncationAnchor != 8 {
+		t.Fatalf("expected anchor=8, got %d", p.TruncationAnchor)
+	}
+
+	recent = p.RecentContextMessages()
+	if len(recent) != 6 {
+		t.Errorf("expected 6 messages (rounds 8-10), got %d", len(recent))
+	}
+	if len(recent) > 0 && recent[0].RoundNumber != 8 {
+		t.Errorf("expected first round=8, got %d", recent[0].RoundNumber)
 	}
 }

@@ -66,10 +66,14 @@ export function LogDialog() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLogOpen])
 
-  // Auto-scroll to bottom when new logs arrive
+  // Auto-scroll to bottom only if user is already near the bottom
   useEffect(() => {
-    if (visible && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const el = scrollRef.current
+    if (!visible || !el) return
+    const threshold = 40
+    const isNearBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - threshold
+    if (isNearBottom) {
+      el.scrollTop = el.scrollHeight
     }
   }, [logs, visible])
 
