@@ -1099,9 +1099,10 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"max_input_tokens":  s.cfg.UI.MaxInputTokens,
 		},
 		"feishu": map[string]interface{}{
-			"enabled":    s.cfg.Feishu.Enabled,
-			"app_id":     maskFeishu(s.cfg.Feishu.AppID),
-			"app_secret": maskFeishu(s.cfg.Feishu.AppSecret),
+			"enabled":                s.cfg.Feishu.Enabled,
+			"app_id":                 maskFeishu(s.cfg.Feishu.AppID),
+			"app_secret":             maskFeishu(s.cfg.Feishu.AppSecret),
+			"daily_recommend_chat_id": s.cfg.Feishu.DailyRecommendChatID,
 		},
 	}
 	if hasCustomKey {
@@ -1156,6 +1157,9 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		if v != "" {
 			s.cfg.Feishu.AppSecret = v
 		}
+	}
+	if v, ok := updates["feishu_daily_recommend_chat_id"].(string); ok {
+		s.cfg.Feishu.DailyRecommendChatID = v
 	}
 	s.cfg.Unlock()
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/prompt"
 	"github.com/happyTonakai/paperagent/internal/session"
 	"github.com/happyTonakai/paperagent/internal/urlparse"
@@ -252,6 +253,15 @@ func (b *Bot) onCardAction(ctx context.Context, event *callback.CardActionTrigge
 		// Resume Q&A for a paper that already has a summary
 		paperID = strings.TrimPrefix(actionVal, "qa:")
 		return b.handleCardResumeQA(paperID, chatID)
+	case strings.HasPrefix(actionVal, "recommend:like:"):
+		articleID := strings.TrimPrefix(actionVal, "recommend:like:")
+		return b.handleRecommendLike(articleID, chatID)
+	case strings.HasPrefix(actionVal, "recommend:dislike:"):
+		articleID := strings.TrimPrefix(actionVal, "recommend:dislike:")
+		return b.handleRecommendDislike(articleID, chatID)
+	case strings.HasPrefix(actionVal, "recommend:activate:"):
+		articleID := strings.TrimPrefix(actionVal, "recommend:activate:")
+		return b.handleRecommendActivate(articleID, chatID)
 	}
 
 	return nil, nil
@@ -383,6 +393,20 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		if title, err := urlparse.FetchArxivTitle(arxivID); err == nil && title != "" {
 			paper.SetTitle(title)
 			log.Printf("[feishu] title from HTML: %s", title)
+		}
+		// Extract abstract from arXiv and upsert into articles table
+		// so it's available for preference updates.
+		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil {
+			title := paper.Title
+			if title == "" {
+				title = arxivID
+			}
+			absPtr := &abstract
+			if err := database.UpsertArticleByArxivID(arxivID, title, sourceURL, absPtr); err != nil {
+				log.Printf("[feishu] upsert article for %s: %v", arxivID, err)
+			}
+		} else {
+			log.Printf("[feishu] abstract extraction for %s: %v", arxivID, err)
 		}
 	}
 
@@ -1243,6 +1267,118 @@ func maskAppID(appID string) string {
 		return "***"
 	}
 	return appID[:4] + "***" + appID[len(appID)-4:]
+}
+
+// ─── Daily Recommendation Push ───
+
+// PushDailyRecommend sends today's recommended articles as an interactive card
+// to the specified Feishu chat. Called by the scheduler after daily pipeline completes.
+// Reads translations from SQLite (populated by translateAndPersistArticles in server.go).
+func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) {
+	if b.client == nil || chatID == "" || len(articles) == 0 {
+		return
+	}
+
+	// Re-read from DB to get persisted translations (translated_title, translated_abstract)
+	today := time.Now().Format("2006-01-02")
+	dbArticles, err := database.GetArticlesByRecommendDate(today)
+	if err != nil || len(dbArticles) == 0 {
+		dbArticles = articles // fallback
+	}
+
+	// Build a lookup by article ID
+	articleByID := make(map[string]database.Article, len(dbArticles))
+	for _, a := range dbArticles {
+		articleByID[a.ID] = a
+	}
+
+	items := make([]RecommendCardItem, 0, len(articles))
+	for _, a := range articles {
+		dbA, ok := articleByID[a.ID]
+		if !ok {
+			dbA = a
+		}
+
+		title := dbA.Title
+		abstract := ""
+		if dbA.Abstract != nil {
+			abstract = *dbA.Abstract
+		}
+
+		// Use translated versions from DB if available
+		if dbA.TranslatedTitle != nil && *dbA.TranslatedTitle != "" {
+			title = *dbA.TranslatedTitle
+		}
+		if dbA.TranslatedAbstract != nil && *dbA.TranslatedAbstract != "" {
+			abstract = *dbA.TranslatedAbstract
+		}
+
+		items = append(items, RecommendCardItem{
+			ID:         a.ID,
+			Title:      title,
+			Abstract:   abstract,
+			Score:      a.Score,
+			AXNetVotes: a.AXNetVotes,
+		})
+	}
+
+	cardJSON := buildDailyRecommendCard(items)
+	b.sendInteractiveCard(chatID, cardJSON)
+	log.Printf("[feishu] sent daily recommend card with %d articles to chat %s", len(articles), chatID)
+}
+
+// handleRecommendLike marks an article as liked (status=2).
+func (b *Bot) handleRecommendLike(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
+	if err := database.UpdateArticleStatus(articleID, 2); err != nil {
+		log.Printf("[feishu] recommend like error: %v", err)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "操作失败"},
+		}, nil
+	}
+	return &callback.CardActionTriggerResponse{
+		Toast: &callback.Toast{Type: "success", Content: "已点赞 👍"},
+	}, nil
+}
+
+// handleRecommendDislike marks an article as disliked (status=-1).
+func (b *Bot) handleRecommendDislike(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
+	if err := database.UpdateArticleStatus(articleID, -1); err != nil {
+		log.Printf("[feishu] recommend dislike error: %v", err)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "操作失败"},
+		}, nil
+	}
+	return &callback.CardActionTriggerResponse{
+		Toast: &callback.Toast{Type: "success", Content: "已点踩 👎"},
+	}, nil
+}
+
+// handleRecommendActivate activates a recommended paper in the Q&A system.
+// It fetches the paper content from the article's URL, creates a session.Paper,
+// and starts streaming the summary asynchronously.
+func (b *Bot) handleRecommendActivate(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
+	article, err := database.GetArticleByID(articleID)
+	if err != nil {
+		log.Printf("[feishu] get article %s: %v", articleID, err)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "获取文章失败"},
+		}, nil
+	}
+	if article == nil || article.Link == "" {
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "文章不存在或无链接"},
+		}, nil
+	}
+
+	// Mark article as clicked (status=1)
+	_ = database.UpdateArticleStatus(articleID, 1)
+
+	// Launch async paper fetch + summary generation (reuses cmdNew logic)
+	go b.cmdNew(chatID, "", article.Link)
+
+	return &callback.CardActionTriggerResponse{
+		Toast: &callback.Toast{Type: "success", Content: "正在获取论文，请稍候..."},
+	}, nil
 }
 
 // ─── Message content auto-detection (markdown → card/post/text) ───

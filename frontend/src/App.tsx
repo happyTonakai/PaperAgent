@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Toaster, toast } from 'sonner'
 import { PaperList } from './components/PaperList'
 import { ChatView } from './components/ChatView'
@@ -7,6 +7,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { NewPaperDialog } from './components/NewPaperDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import { LogDialog } from './components/LogDialog'
+import { RecommendTab } from './components/RecommendTab'
 import { useConnection } from './hooks/useConnection'
 import { useAppStore, applyTheme } from './stores/appStore'
 import { useQueryClient } from '@tanstack/react-query'
@@ -178,21 +179,127 @@ export default function App() {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
+  // Listen for recommend-chat custom event (from RecommendTab)
+  // Creates a paper inline instead of full page navigation
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const detail = (e as CustomEvent).detail as { arxivId: string; title: string }
+      if (!detail?.arxivId) return
+
+      useAppStore.getState().setActiveTab('chat')
+
+      const url = `https://arxiv.org/abs/${detail.arxivId}`
+      try {
+        toast.loading('正在加载论文...')
+        const res = await fetch('/api/papers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        })
+
+        if (!res.ok) {
+          const errData = (await res.json().catch(() => ({}))) as { error?: string }
+          throw new Error(errData.error || `HTTP ${res.status}`)
+        }
+
+        const contentType = res.headers.get('content-type') || ''
+
+        if (contentType.includes('text/event-stream')) {
+          const reader = res.body?.getReader()
+          if (!reader) throw new Error('No response body')
+
+          const decoder = new TextDecoder()
+          let buffer = ''
+          let paperId = ''
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              const trimmedLine = line.trim()
+              if (!trimmedLine.startsWith('data: ')) continue
+
+              try {
+                const evt = JSON.parse(trimmedLine.slice(6))
+                switch (evt.type) {
+                  case 'created':
+                    if (evt.paper_id) {
+                      paperId = evt.paper_id
+                      useAppStore.getState().setPendingPaperId(paperId)
+                      useAppStore.getState().setCurrentPaperId(paperId)
+                      toast.dismiss()
+                      qc.invalidateQueries({ queryKey: ['papers'] })
+                    }
+                    break
+                  case 'chunk':
+                    if (evt.content) useAppStore.getState().appendPendingSummary(evt.content)
+                    break
+                  case 'done':
+                    useAppStore.getState().clearPending()
+                    break
+                  case 'error':
+                    toast.error(evt.error || '摘要生成失败')
+                    break
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } else {
+          toast.dismiss()
+          toast.success('论文已加载')
+        }
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : '加载失败')
+      }
+    }
+    window.addEventListener('recommend-chat', handler)
+    return () => window.removeEventListener('recommend-chat', handler)
+  }, [qc])
+
+  const activeTab = useAppStore((s) => s.activeTab)
+
   return (
     <div
       className="h-screen flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}
     >
-      <div className="flex-1 flex min-h-0">
-        <PaperList />
-
-        <div className="flex-1 flex flex-col min-w-0">
-          <ErrorBoundary>
-            <ChatView />
-            <InputBox />
-          </ErrorBoundary>
-        </div>
+      {/* Tab bar */}
+      <div className="flex items-center gap-0 px-4 pt-2 pb-0 border-b border-[var(--color-border)]" style={{ backgroundColor: 'var(--color-bg-elevated)' }}>
+        <button
+          onClick={() => useAppStore.getState().setActiveTab('chat')}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'chat' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+        >
+          💬 论文对话
+        </button>
+        <button
+          onClick={() => useAppStore.getState().setActiveTab('recommend')}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'recommend' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+        >
+          📅 每日推荐
+        </button>
       </div>
+
+      {activeTab === 'chat' ? (
+        <div className="flex-1 flex min-h-0">
+          <PaperList />
+
+          <div className="flex-1 flex flex-col min-w-0">
+            <ErrorBoundary>
+              <ChatView />
+              <InputBox />
+            </ErrorBoundary>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <RecommendTab />
+        </div>
+      )}
 
       <NewPaperDialog />
       <SettingsDialog />

@@ -57,3 +57,49 @@ export type Theme = 'light' | 'dark' | 'system'
 export type FontSize = 'small' | 'medium' | 'large'
 
 export type FontFamily = 'serif' | 'sans'
+
+// ---- Recommend System Types ----
+
+export type ArticleStatus = 0 | 1 | 2 | -1 | 3
+
+export interface RecommendArticle {
+  id: string
+  title: string
+  link: string
+  abstract: string | null
+  status: number
+  score: number
+  author: string | null
+  category: string | null
+  hf_upvotes: number | null
+  ax_net_votes: number | null
+  votes_updated_at: string | null
+  comment: string | null
+  recommend_date: string | null
+  batch_order: number | null
+  created_at: string
+  // Translated fields (present when translation API is configured)
+  translated_title?: string
+  translated_abstract?: string
+}
+
+export interface RecommendStats {
+  unread: number
+  clicked: number
+  liked: number
+  disliked: number
+  read: number
+  total: number
+}
+
+export interface RecommendConfig {
+  recommend: {
+    daily_papers: number
+    scoring_batch_size: number
+    auto_refresh: boolean
+  }
+  arxiv_categories: string[]
+  api: {
+    scoring: { base_url: string; api_key: string; model: string } | null
+  }
+}

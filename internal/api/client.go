@@ -108,24 +108,45 @@ type StreamChunk struct {
 	Err              error
 }
 
+// Client holds an HTTP client and API endpoint configuration for OpenAI-compatible requests.
 type Client struct {
-	cfg    *config.Config
-	client *http.Client
+	baseURL string
+	apiKey  string
+	model   string
+	http    *http.Client
 }
 
+// NewClient creates a Client from the global config (Q&A chat API).
 func NewClient(cfg *config.Config) *Client {
+	return &Client{
+		baseURL: cfg.API.BaseURL,
+		apiKey:  cfg.API.APIKey,
+		model:   cfg.API.DefaultModel,
+		http:    newHTTPClient(),
+	}
+}
+
+// NewClientFromEndpoint creates a Client with explicit endpoint parameters.
+// Used for scoring, translation, or any API that differs from the main chat API.
+func NewClientFromEndpoint(baseURL, apiKey, model string) *Client {
+	return &Client{
+		baseURL: baseURL,
+		apiKey:  apiKey,
+		model:   model,
+		http:    newHTTPClient(),
+	}
+}
+
+func newHTTPClient() *http.Client {
 	tr := &http.Transport{
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 10 * time.Second,
 		Proxy:                http.ProxyFromEnvironment,
 	}
-	return &Client{
-		cfg: cfg,
-		client: &http.Client{
-			Transport: tr,
-			Timeout:   5 * time.Minute,
-		},
+	return &http.Client{
+		Transport: tr,
+		Timeout:   5 * time.Minute,
 	}
 }
 
@@ -134,6 +155,7 @@ func NewClient(cfg *config.Config) *Client {
 // returns a single chunk with ToolCalls populated, then closes.
 // The caller should check chunk.ToolCalls first; if non-nil, handle the tool call
 // and issue a follow-up stream.
+// model can be empty string to use the client's default model.
 func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 64)
 
@@ -147,22 +169,26 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 			Tools:    tools,
 		}
 
+		if model == "" {
+			req.Model = c.model
+		}
+
 		body, err := json.Marshal(req)
 		if err != nil {
 			ch <- StreamChunk{Err: err}
 			return
 		}
 
-		url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
+		url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
 		httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 		if err != nil {
 			ch <- StreamChunk{Err: err}
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-		resp, err := c.client.Do(httpReq)
+		resp, err := c.http.Do(httpReq)
 		if err != nil {
 			ch <- StreamChunk{Err: err}
 			return
@@ -293,7 +319,11 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 // definitions are included.
 // Returns (content, toolCalls, promptTokens, completionTokens, totalTokens, cachedTokens, error).
 // If the LLM responds with a tool call, content will be empty and toolCalls populated.
+// model can be empty string to use the client's default model.
 func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (string, []ToolCallCompleted, int, int, int, int, error) {
+	if model == "" {
+		model = c.model
+	}
 	req := ChatRequest{
 		Model:    model,
 		Messages: messages,
@@ -306,15 +336,15 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 		return "", nil, 0, 0, 0, 0, err
 	}
 
-	url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
+	url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", nil, 0, 0, 0, 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return "", nil, 0, 0, 0, 0, err
 	}
@@ -367,6 +397,88 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 	}
 
 	return msg.Content, nil, promptTokens, completionTokens, totalTokens, cachedTokens, nil
+}
+
+const translateSystemPrompt = `Translate the following academic paper content from English to Chinese.
+
+Rules:
+1. Keep technical terms, model names (e.g. Transformer, BERT, ResNet), and proper nouns in their original English form
+2. Preserve LaTeX math expressions and code snippets exactly as-is
+3. Output only the translation, no explanations or prefixes
+4. If the text appears to already be in Chinese or is not meaningful text, return it as-is`
+
+// TranslateText translates a single piece of text using the configured translation API.
+// Returns the translated text, or the original if the client is nil or translation fails.
+func (c *Client) TranslateText(model string, text string) (string, error) {
+	if text == "" {
+		return "", nil
+	}
+	messages := []ChatMessage{
+		{Role: "system", Content: translateSystemPrompt},
+		{Role: "user", Content: text},
+	}
+	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
+	return result, err
+}
+
+// TranslateTexts translates a batch of texts in a single API call.
+// Each input text is translated independently using numbered placeholders.
+func (c *Client) TranslateTexts(model string, texts []string) ([]string, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	if len(texts) == 1 {
+		r, err := c.TranslateText(model, texts[0])
+		return []string{r}, err
+	}
+
+	var input strings.Builder
+	for i, t := range texts {
+		if i > 0 {
+			input.WriteString("\n\n---\n\n")
+		}
+		input.WriteString(fmt.Sprintf("[%d]\n%s\n[/%d]", i+1, t, i+1))
+	}
+
+	prompt := "Translate each of the following texts from English to Chinese. " +
+		"Keep technical terms, model names, and proper nouns in their original English form. " +
+		"Preserve LaTeX math and code exactly as-is. " +
+		"Output each translation prefixed with its number marker (e.g. [1], [2], etc.)."
+
+	messages := []ChatMessage{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: input.String()},
+	}
+	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse numbered results
+	results := make([]string, len(texts))
+	// Try to find [N]...[/N] patterns
+	for i := range texts {
+		marker := fmt.Sprintf("[%d]", i+1)
+		endMarker := fmt.Sprintf("[/%d]", i+1)
+		startIdx := strings.Index(result, marker)
+		if startIdx >= 0 {
+			startIdx += len(marker)
+			// Skip past newline after marker
+			for startIdx < len(result) && (result[startIdx] == '\n' || result[startIdx] == ' ') {
+				startIdx++
+			}
+			endIdx := strings.Index(result[startIdx:], endMarker)
+			if endIdx >= 0 {
+				results[i] = strings.TrimSpace(result[startIdx : startIdx+endIdx])
+				continue
+			}
+		}
+		// Fallback: individual translation
+		r, _ := c.TranslateText(model, texts[i])
+		results[i] = r
+	}
+
+	return results, nil
 }
 
 func (c *Client) ExtractTitle(model string, content string) (string, error) {

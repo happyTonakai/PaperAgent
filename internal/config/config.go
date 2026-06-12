@@ -11,17 +11,38 @@ import (
 )
 
 type Config struct {
-	mu       sync.RWMutex
-	API      APIConfig      `yaml:"api"`
-	Obsidian ObsidianConfig `yaml:"obsidian"`
-	UI       UIConfig       `yaml:"ui"`
-	Feishu   FeishuConfig   `yaml:"feishu"`
+	mu              sync.RWMutex
+	API             APIConfig        `yaml:"api"`
+	Recommend       RecommendConfig  `yaml:"recommend"`
+	ArxivCategories []string         `yaml:"arxiv_categories"`
+	Obsidian        ObsidianConfig   `yaml:"obsidian"`
+	UI              UIConfig         `yaml:"ui"`
+	Feishu          FeishuConfig     `yaml:"feishu"`
 }
 
+// APIConfig contains API configuration for Q&A chat.
+// Scoring and translation have their own sub-configs.
 type APIConfig struct {
-	BaseURL      string `yaml:"base_url"`
-	APIKey       string `yaml:"api_key"`
-	DefaultModel string `yaml:"default_model"`
+	BaseURL      string        `yaml:"base_url"`
+	APIKey       string        `yaml:"api_key"`
+	DefaultModel string        `yaml:"default_model"`
+	Scoring      *APIEndpoint  `yaml:"scoring,omitempty"`
+	Translation  *APIEndpoint  `yaml:"translation,omitempty"`
+}
+
+// APIEndpoint represents an OpenAI-compatible API endpoint configuration.
+type APIEndpoint struct {
+	BaseURL string `yaml:"base_url"`
+	APIKey  string `yaml:"api_key"`
+	Model   string `yaml:"model"`
+}
+
+// RecommendConfig controls the daily recommendation pipeline.
+type RecommendConfig struct {
+	DailyPapers      int     `yaml:"daily_papers"`
+	ScoringBatchSize int     `yaml:"scoring_batch_size"`
+	AutoRefresh      bool    `yaml:"auto_refresh"`
+	DiversityRatio    float64 `yaml:"diversity_ratio"` // 0-1: proportion of random exploration articles
 }
 
 type ObsidianConfig struct {
@@ -35,9 +56,10 @@ type UIConfig struct {
 }
 
 type FeishuConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	AppID     string `yaml:"app_id"`
-	AppSecret string `yaml:"app_secret"`
+	Enabled              bool   `yaml:"enabled"`
+	AppID                string `yaml:"app_id"`
+	AppSecret            string `yaml:"app_secret"`
+	DailyRecommendChatID string `yaml:"daily_recommend_chat_id"`
 }
 
 func ConfigDir() string {
@@ -61,7 +83,15 @@ func Load() (*Config, error) {
 	cfg := defaultConfig()
 
 	// Always expand env vars in API key, even if no config file exists
-	cfg.API.APIKey = os.ExpandEnv(cfg.API.APIKey)
+	resolveAPIKey := func(key string) string {
+		expanded := os.ExpandEnv(key)
+		if d, err := decryptKey(expanded); err == nil {
+			return d
+		}
+		return expanded
+	}
+
+	cfg.API.APIKey = resolveAPIKey(cfg.API.APIKey)
 
 	path := ConfigPath()
 	data, err := os.ReadFile(path)
@@ -76,10 +106,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	// Re-expand after loading from file, then decrypt
-	cfg.API.APIKey = os.ExpandEnv(cfg.API.APIKey)
-	if decrypted, err := decryptKey(cfg.API.APIKey); err == nil {
-		cfg.API.APIKey = decrypted
+	// Resolve all API keys: expand env vars + decrypt
+	cfg.API.APIKey = resolveAPIKey(cfg.API.APIKey)
+	if cfg.API.Scoring != nil {
+		cfg.API.Scoring.APIKey = resolveAPIKey(cfg.API.Scoring.APIKey)
+	}
+	if cfg.API.Translation != nil {
+		cfg.API.Translation.APIKey = resolveAPIKey(cfg.API.Translation.APIKey)
 	}
 
 	// Expand ~ in paths
@@ -94,6 +127,12 @@ func defaultConfig() *Config {
 			BaseURL:      "https://api.openai.com/v1",
 			APIKey:       "${OPENAI_API_KEY}",
 			DefaultModel: "gpt-4o",
+		},
+		Recommend: RecommendConfig{
+			DailyPapers:      20,
+			ScoringBatchSize: 10,
+			AutoRefresh:      true,
+			DiversityRatio:   0.3,
 		},
 		Obsidian: ObsidianConfig{
 			VaultPath:    "~/Documents/Obsidian/MyVault",
@@ -125,26 +164,39 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	apiKey := c.API.APIKey
-	if apiKey != "" && !hasEncPrefix(apiKey) && !strings.HasPrefix(apiKey, "${") {
-		enc, err := encryptKey(apiKey)
-		if err != nil {
-			return fmt.Errorf("encrypt api key: %w", err)
+	// Encrypt API keys
+	encryptAPICfg := func(key string) string {
+		if key == "" || hasEncPrefix(key) || strings.HasPrefix(key, "${") {
+			return key
 		}
-		apiKey = enc
+		enc, err := encryptKey(key)
+		if err != nil {
+			return key
+		}
+		return enc
 	}
 
 	saveCfg := Config{
 		Feishu: FeishuConfig{
-			Enabled:   c.Feishu.Enabled,
-			AppID:     c.Feishu.AppID,
-			AppSecret: c.Feishu.AppSecret,
+			Enabled:              c.Feishu.Enabled,
+			AppID:                c.Feishu.AppID,
+			AppSecret:            c.Feishu.AppSecret,
+			DailyRecommendChatID: c.Feishu.DailyRecommendChatID,
 		},
 		API: APIConfig{
 			BaseURL:      c.API.BaseURL,
-			APIKey:       apiKey,
+			APIKey:       encryptAPICfg(c.API.APIKey),
 			DefaultModel: c.API.DefaultModel,
+			Scoring:      encryptAPIEndpoint(c.API.Scoring, encryptAPICfg),
+			Translation:  encryptAPIEndpoint(c.API.Translation, encryptAPICfg),
 		},
+		Recommend: RecommendConfig{
+			DailyPapers:      c.Recommend.DailyPapers,
+			ScoringBatchSize: c.Recommend.ScoringBatchSize,
+			AutoRefresh:      c.Recommend.AutoRefresh,
+			DiversityRatio:   c.Recommend.DiversityRatio,
+		},
+		ArxivCategories: c.ArxivCategories,
 		Obsidian: ObsidianConfig{
 			VaultPath:    c.Obsidian.VaultPath,
 			ExportFolder: c.Obsidian.ExportFolder,
@@ -172,6 +224,15 @@ func (c *Config) Save() error {
 	}
 
 	return nil
+}
+
+func encryptAPIEndpoint(ep *APIEndpoint, encFn func(string) string) *APIEndpoint {
+	if ep == nil {
+		return nil
+	}
+	cpy := *ep
+	cpy.APIKey = encFn(cpy.APIKey)
+	return &cpy
 }
 
 func expandHome(path string) string {

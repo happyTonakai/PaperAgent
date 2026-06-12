@@ -3,7 +3,7 @@ import { X, Loader2, Save } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
 
-type Tab = 'config' | 'prompts'
+type Tab = 'config' | 'prompts' | 'recommend'
 
 interface ConfigData {
   api: { base_url: string; api_key: string; api_key_source: string; default_model: string }
@@ -19,6 +19,12 @@ interface ConfigForm {
 }
 
 interface PromptInfo { name: string; content: string; source: string }
+
+interface RecommendConfigData {
+  recommend: { daily_papers: number; scoring_batch_size: number; auto_refresh: boolean }
+  arxiv_categories: string[]
+  api: { scoring: { base_url: string; api_key: string; model: string } | null }
+}
 
 const promptLabels: Record<string, string> = {
   system: '系统提示词 (system)',
@@ -69,6 +75,11 @@ export function SettingsDialog() {
   // Feishu status
   const [feishuStatus, setFeishuStatus] = useState<{ connected: boolean; enabled: boolean; last_error?: string } | null>(null)
 
+  // Recommend settings
+  const [recommendConfig, setRecommendConfig] = useState<RecommendConfigData | null>(null)
+  const [recLoading, setRecLoading] = useState(false)
+  const [recSaving, setRecSaving] = useState(false)
+
   // Close on Escape key
   useEffect(() => {
     if (!isSettingsOpen) return
@@ -107,6 +118,14 @@ export function SettingsDialog() {
       .then((r) => r.json())
       .then((data) => setFeishuStatus(data))
       .catch(() => {})
+
+    // Fetch recommend config
+    setRecLoading(true)
+    fetch('/api/recommend/config')
+      .then((r) => r.json())
+      .then((data: RecommendConfigData) => setRecommendConfig(data))
+      .catch(() => {})
+      .finally(() => setRecLoading(false))
   }, [isSettingsOpen])
 
   if (!visible) return null
@@ -151,10 +170,37 @@ export function SettingsDialog() {
     finally { setPromptsSaving(false) }
   }
 
+  const handleSaveRecommend = async () => {
+    if (!recommendConfig) return
+    setRecSaving(true)
+    try {
+      const body: Record<string, unknown> = {}
+      const scoring = recommendConfig.api.scoring
+      if (scoring) {
+        const scoringBody: Record<string, string> = {
+          base_url: scoring.base_url,
+          model: scoring.model,
+        }
+        // Only send api_key if user actually changed it (not the masked placeholder)
+        if (scoring.api_key && !scoring.api_key.startsWith('\u2022')) {
+          scoringBody.api_key = scoring.api_key
+        }
+        body.api = { scoring: scoringBody }
+      }
+      body.recommend = recommendConfig.recommend
+      body.arxiv_categories = recommendConfig.arxiv_categories
+      const res = await fetch('/api/recommend/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
+      toast.success('推荐配置已保存')
+      close()
+    } catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+    finally { setRecSaving(false) }
+  }
+
   const updateForm = (key: keyof ConfigForm, value: string) => { setForm((f) => ({ ...f, [key]: value })); if (key === 'api_key') setApiKeyDirty(true) }
 
   const inputClass = 'w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm outline-none focus:ring-2 focus:ring-blue-500'
-  const tabClass = (t: Tab) => `flex-1 text-center py-2 text-sm font-medium rounded-lg transition-colors ${tab === t ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`
+  const tabClass = (t: Tab) => `px-3 py-2 text-sm font-medium rounded-lg transition-colors ${tab === t ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`
 
   return (
     <div
@@ -168,9 +214,10 @@ export function SettingsDialog() {
           <button onClick={() => close()} className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"><X size={16} /></button>
         </div>
 
-        <div className="flex gap-1 px-4 py-2 bg-gray-100 dark:bg-gray-800">
+        <div className="flex gap-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 overflow-x-auto">
           <button onClick={() => setTab('config')} className={tabClass('config')}>API 配置</button>
           <button onClick={() => setTab('prompts')} className={tabClass('prompts')}>提示词模板</button>
+          <button onClick={() => setTab('recommend')} className={tabClass('recommend')}>推荐系统</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -222,7 +269,32 @@ export function SettingsDialog() {
                 <p className="text-xs text-gray-400">保存后自动重连飞书。请在飞书开放平台开启机器人能力并订阅「消息和群组」事件。</p>
               </fieldset>
             </div>
-          ) : (promptsLoading ? <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-gray-400" /></div> : (
+          ) : tab === 'recommend' ? (recLoading ? <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-gray-400" /></div> : (
+            <div className="space-y-4">
+              <fieldset className="space-y-3">
+                <legend className="text-xs font-medium text-gray-500 dark:text-gray-400">推荐 API (评分用)</legend>
+                <p className="text-xs text-gray-400">用于论文评分和用户偏好分析的 LLM API。留空则使用主 API 配置。</p>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">API Key</label><input type="password" value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { scoring: { ...prev.api.scoring!, api_key: e.target.value } } } : prev)} className={inputClass} /></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputClass} placeholder="https://api.siliconflow.cn/v1" /></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputClass} placeholder="Qwen/Qwen2.5-7B-Instruct" /></div>
+              </fieldset>
+              <hr className="border-gray-200 dark:border-gray-800" />
+              <fieldset className="space-y-3">
+                <legend className="text-xs font-medium text-gray-500 dark:text-gray-400">arXiv 订阅分类</legend>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">分类列表（用逗号分隔，如 cs.LG, cs.CV, cs.AI）</label><input type="text" value={recommendConfig?.arxiv_categories?.join(', ') ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, arxiv_categories: e.target.value.split(',').map(s => s.trim()).filter(Boolean) } : prev)} className={inputClass} placeholder="cs.LG, cs.CV, cs.AI" /></div>
+              </fieldset>
+              <hr className="border-gray-200 dark:border-gray-800" />
+              <fieldset className="space-y-3">
+                <legend className="text-xs font-medium text-gray-500 dark:text-gray-400">推荐参数</legend>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">每日推荐数量</label><input type="number" value={recommendConfig?.recommend.daily_papers ?? 20} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, daily_papers: parseInt(e.target.value) || 20 } } : prev)} min={1} max={100} className={inputClass} /></div>
+                <div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">评分批次大小</label><input type="number" value={recommendConfig?.recommend.scoring_batch_size ?? 10} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scoring_batch_size: parseInt(e.target.value) || 10 } } : prev)} min={1} max={50} className={inputClass} /><p className="text-xs text-gray-400 mt-1">每次 LLM 调用评分多少篇论文</p></div>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="auto-refresh" checked={recommendConfig?.recommend.auto_refresh ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, auto_refresh: e.target.checked } } : prev)} className="w-4 h-4 rounded border-gray-300" />
+                  <label htmlFor="auto-refresh" className="text-xs text-gray-500 dark:text-gray-400">启动时自动抓取 RSS 并生成推荐</label>
+                </div>
+              </fieldset>
+            </div>
+          )) : (promptsLoading ? <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-gray-400" /></div> : (
             <div className="space-y-5">
               {prompts.map((p) => (
                 <div key={p.name}>
@@ -244,11 +316,11 @@ export function SettingsDialog() {
 
         {!loading && (
           <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800 flex justify-between gap-2">
-            <p className="text-xs text-gray-400 self-center">{tab === 'prompts' ? '提示词保存后立即生效' : '配置保存在 ~/.config/paperagent/config.yaml'}</p>
+            <p className="text-xs text-gray-400 self-center">{tab === 'prompts' ? '提示词保存后立即生效' : tab === 'recommend' ? '推荐配置保存在 ~/.config/paperagent/config.yaml' : '配置保存在 ~/.config/paperagent/config.yaml'}</p>
             <div className="flex gap-2">
               <button onClick={() => close()} className="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">关闭</button>
-              <button onClick={tab === 'prompts' ? handleSavePrompts : handleSaveConfig} disabled={tab === 'prompts' ? promptsSaving : saving} className="px-4 py-2 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center gap-1.5">
-                {(tab === 'prompts' ? promptsSaving : saving) && <Loader2 size={14} className="animate-spin" />}<Save size={14} />保存
+              <button onClick={tab === 'prompts' ? handleSavePrompts : tab === 'recommend' ? handleSaveRecommend : handleSaveConfig} disabled={tab === 'prompts' ? promptsSaving : tab === 'recommend' ? recSaving : saving} className="px-4 py-2 text-sm rounded-lg bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white flex items-center gap-1.5">
+                {(tab === 'prompts' ? promptsSaving : tab === 'recommend' ? recSaving : saving) && <Loader2 size={14} className="animate-spin" />}<Save size={14} />保存
               </button>
             </div>
           </div>

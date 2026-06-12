@@ -2,6 +2,7 @@ package server
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/feishu"
+	"github.com/happyTonakai/paperagent/internal/scheduler"
 )
 
 //go:embed frontend-dist
@@ -25,6 +28,7 @@ type Server struct {
 	paperLocks sync.Map
 	logBuf     *logBuffer
 	feishuBot  *feishu.Bot
+	sched      *scheduler.Scheduler
 }
 
 // SetFeishuBot sets the feishu bot reference for hot-reload support.
@@ -42,6 +46,7 @@ func New(cfg *config.Config) *Server {
 		logBuf: lb,
 	}
 	s.registerRoutes()
+	s.startScheduler()
 	return s
 }
 
@@ -81,7 +86,81 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("GET /api/active-paper", s.handleGetActivePaper)
 	mux.HandleFunc("PUT /api/active-paper", s.handleSetActivePaper)
 
+	// Recommend system routes
+	mux.HandleFunc("GET /api/recommend/config", s.handleRecommendGetConfig)
+	mux.HandleFunc("PUT /api/recommend/config", s.handleRecommendUpdateConfig)
+	mux.HandleFunc("GET /api/recommend/preferences", s.handleRecommendGetPreferences)
+	mux.HandleFunc("PUT /api/recommend/preferences", s.handleRecommendSavePreferences)
+	mux.HandleFunc("POST /api/recommend/fetch", s.handleRecommendFetch)
+	mux.HandleFunc("POST /api/recommend/generate", s.handleRecommendGenerate)
+	mux.HandleFunc("GET /api/recommend/articles", s.handleRecommendArticles)
+	mux.HandleFunc("GET /api/recommend/today", s.handleRecommendToday)
+	mux.HandleFunc("GET /api/recommend/dates", s.handleRecommendDates)
+	mux.HandleFunc("GET /api/recommend/dates/{date}", s.handleRecommendArticlesByDate)
+	mux.HandleFunc("PUT /api/recommend/articles/{id}/status", s.handleRecommendUpdateStatus)
+	mux.HandleFunc("PUT /api/recommend/articles/{id}/comment", s.handleRecommendUpdateComment)
+	mux.HandleFunc("POST /api/recommend/votes", s.handleRecommendFetchVotes)
+	mux.HandleFunc("GET /api/recommend/stats", s.handleRecommendStats)
+
 	s.registerStatic()
+}
+
+func (s *Server) startScheduler() {
+	s.cfg.RLock()
+	categories := s.cfg.ArxivCategories
+	dailyPapers := s.cfg.Recommend.DailyPapers
+	batchSize := s.cfg.Recommend.ScoringBatchSize
+	autoRefresh := s.cfg.Recommend.AutoRefresh
+	s.cfg.RUnlock()
+
+	if len(categories) == 0 {
+		log.Println("[server] no arXiv categories, scheduler not started")
+		return
+	}
+
+	// One-time migration: import existing JSON papers to chat_papers
+	if err := s.migrateChatPapers(); err != nil {
+		log.Printf("[server] chat_papers migration: %v", err)
+	}
+
+	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, autoRefresh, s.cfg.Recommend.DiversityRatio)
+
+	// Connect scheduler completion to Feishu daily recommendation push
+	if s.feishuBot != nil {
+		s.sched.SetOnComplete(func(articles []database.Article) {
+			// 1. Translate and persist to DB (if translation API configured)
+			s.translateAndPersistArticles(articles)
+
+			// 2. Push to Feishu
+			s.cfg.RLock()
+			chatID := s.cfg.Feishu.DailyRecommendChatID
+			s.cfg.RUnlock()
+			if chatID != "" {
+				s.feishuBot.PushDailyRecommend(chatID, articles)
+			}
+		})
+	}
+
+	s.sched.Start()
+}
+
+func (s *Server) migrateChatPapers() error {
+	count, err := database.ChatPaperCount()
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil // already migrated
+	}
+
+	imported, err := database.MigrateChatPapersFromJSON(config.PapersDir())
+	if err != nil {
+		return fmt.Errorf("migrate json to chat_papers: %w", err)
+	}
+	if imported > 0 {
+		log.Printf("[server] imported %d existing Q&A papers to chat_papers", imported)
+	}
+	return nil
 }
 
 func (s *Server) registerStatic() {

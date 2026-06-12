@@ -671,6 +671,97 @@ func buildCardMarkdown(content string) string {
 	return marshalCard(c)
 }
 
+// RecommendCardItem holds the display data for one article in the daily recommendation card.
+type RecommendCardItem struct {
+	ID         string
+	Title      string  // translated (if available) or original
+	Abstract   string  // translated (if available) or original, truncated ~150 chars
+	Score      float64
+	AXNetVotes *int
+}
+
+// ─── Daily Recommendation Card ───
+
+func buildDailyRecommendCard(items []RecommendCardItem) string {
+	c := cardBase()
+	c["header"] = cardHeader("📅 今日论文推荐", "blue")
+
+	elements := make([]map[string]any, 0, len(items)+4)
+
+	elements = append(elements, mdElement("以下是根据你的偏好精选的论文"))
+
+	for i, item := range items {
+		title := truncateTitle(item.Title, 60)
+		scoreStr := fmt.Sprintf("%.3f", item.Score)
+		voteStr := ""
+		if item.AXNetVotes != nil {
+			voteStr = fmt.Sprintf(" 🔬 %d", *item.AXNetVotes)
+		}
+
+		// Title + score + votes line
+		var textLines []string
+		textLines = append(textLines, fmt.Sprintf("**%d.** %s", i+1, title))
+		textLines = append(textLines, fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr))
+
+		// Truncated abstract line
+		if item.Abstract != "" {
+			abstract := truncateTitle(item.Abstract, 150)
+			textLines = append(textLines, abstract)
+		}
+
+		text := strings.Join(textLines, "\n")
+
+		// Like/Dislike/Activate buttons
+		valLike := map[string]string{"action": "recommend:like:" + item.ID, "paper_id": item.ID}
+		valDislike := map[string]string{"action": "recommend:dislike:" + item.ID, "paper_id": item.ID}
+		valActivate := map[string]string{"action": "recommend:activate:" + item.ID, "paper_id": item.ID}
+
+		btnLike := map[string]any{
+			"tag": "button", "text": plainText("👍"), "type": "default",
+			"value": valLike, "width": "default",
+		}
+		btnDislike := map[string]any{
+			"tag": "button", "text": plainText("👎"), "type": "default",
+			"value": valDislike, "width": "default",
+		}
+		btnActivate := map[string]any{
+			"tag": "button", "text": plainText("🤖 激活"), "type": "primary",
+			"value": valActivate, "width": "default",
+		}
+
+		colSet := map[string]any{
+			"tag":       "column_set",
+			"flex_mode": "none",
+			"columns": []map[string]any{
+				{
+					"tag":            "column",
+					"width":          "weighted",
+					"weight":         4,
+					"vertical_align": "center",
+					"elements":       []map[string]any{{"tag": "markdown", "content": text}},
+				},
+				{
+					"tag":            "column",
+					"width":          "auto",
+					"vertical_align": "center",
+					"elements":       []map[string]any{btnLike, btnDislike, btnActivate},
+				},
+			},
+		}
+		elements = append(elements, colSet)
+		if i < len(items)-1 {
+			elements = append(elements, hrElement())
+		}
+	}
+
+	// Footer
+	elements = append(elements, hrElement())
+	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 激活后在当前会话中直接对话"))
+
+	c["body"] = map[string]any{"elements": elements}
+	return marshalCard(c)
+}
+
 // ─── Helpers ───
 
 func truncateTitle(title string, maxLen int) string {

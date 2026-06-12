@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/urlparse"
 )
 
@@ -439,7 +440,31 @@ func SavePaper(p *Paper) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, p.SessionID+".json"), data, 0644)
+	if err := os.WriteFile(filepath.Join(dir, p.SessionID+".json"), data, 0644); err != nil {
+		return err
+	}
+
+	// Sync metadata to chat_papers for preference updates (best-effort).
+	if p.ArxivID != "" {
+		title := p.Title
+		if title == "" {
+			title = "Paper " + p.SessionID
+		}
+		cp := &database.ChatPaper{
+			ID:        p.SessionID,
+			ArxivID:   p.ArxivID,
+			Title:     title,
+			Rating:    p.Rating,
+			SourceURL: p.SourceURL,
+			CreatedAt: p.CreatedAt.Format("2006-01-02 15:04"),
+			UpdatedAt: p.UpdatedAt.Format("2006-01-02 15:04"),
+		}
+		if err := database.UpsertChatPaper(cp); err != nil {
+			log.Printf("[session] sync to chat_papers: %v", err)
+		}
+	}
+
+	return nil
 }
 
 func LoadPaper(id int) (*Paper, error) {

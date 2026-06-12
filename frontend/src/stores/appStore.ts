@@ -63,6 +63,10 @@ interface AppState {
   // Send question callback — set by ChatView so InputBox can send
   sendQuestion: ((q: string, opts?: { skipContext?: boolean }) => void) | null
   setSendQuestion: (fn: ((q: string, opts?: { skipContext?: boolean }) => void) | null) => void
+
+  // Active tab: 'chat' | 'recommend'
+  activeTab: 'chat' | 'recommend'
+  setActiveTab: (tab: 'chat' | 'recommend') => void
 }
 
 // --- Theme ---
@@ -206,6 +210,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   sendQuestion: null,
   setSendQuestion: (fn) => set({ sendQuestion: fn }),
+
+  activeTab: 'chat',
+  setActiveTab: (tab) => set({ activeTab: tab }),
 
   connected: true,
   setConnected: (v) => set({ connected: v }),
