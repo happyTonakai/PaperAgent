@@ -67,8 +67,12 @@ func TestExportToObsidian(t *testing.T) {
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Messages: []session.Message{
-			{RoundNumber: 0, Role: "user", Content: "What is this?", TokenCount: 10, CreatedAt: time.Now()},
-			{RoundNumber: 0, Role: "assistant", Content: "This is a test.", TokenCount: 20, CreatedAt: time.Now()},
+			// Round 0: paper content + initial summary. Should NOT appear in 问答记录.
+			{RoundNumber: 0, Role: "user", Content: "FULL_PAPER_TEXT", TokenCount: 10, CreatedAt: time.Now()},
+			{RoundNumber: 0, Role: "assistant", Content: "INITIAL_SUMMARY_DUP", TokenCount: 20, CreatedAt: time.Now()},
+			// Round 1: real Q&A. Should appear in 问答记录.
+			{RoundNumber: 1, Role: "user", Content: "What is this?", TokenCount: 10, CreatedAt: time.Now()},
+			{RoundNumber: 1, Role: "assistant", Content: "This is a test.", TokenCount: 20, CreatedAt: time.Now()},
 		},
 	}
 
@@ -110,6 +114,18 @@ func TestExportToObsidian(t *testing.T) {
 	}
 	if !strings.Contains(s, "This is a test.") {
 		t.Error("missing answer content")
+	}
+	if strings.Contains(s, "FULL_PAPER_TEXT") {
+		t.Error("round 0 paper content should not appear in 问答记录")
+	}
+	if strings.Contains(s, "INITIAL_SUMMARY_DUP") {
+		t.Error("round 0 assistant message should not appear in 问答记录")
+	}
+	if strings.Contains(s, "第 0 轮") {
+		t.Error("round 0 should not appear as a Q&A round")
+	}
+	if !strings.Contains(s, "第 1 轮") {
+		t.Error("round 1 heading missing from 问答记录")
 	}
 }
 

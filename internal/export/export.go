@@ -79,10 +79,15 @@ func ExportToObsidian(cfg *config.Config, p *session.Paper) (string, error) {
 
 	filename := sanitizeFilename(title) + "_session.md"
 
-	// Build Q&A string
+	// Build Q&A string.
+	// Skip round 0: Q is the full paper text and A is the initial summary,
+	// both already covered by the title and 论文总结 sections.
 	var qna strings.Builder
 	currentRound := -1
 	for _, msg := range p.Messages {
+		if msg.RoundNumber <= 0 {
+			continue
+		}
 		if msg.RoundNumber != currentRound {
 			currentRound = msg.RoundNumber
 			qna.WriteString(fmt.Sprintf("### 第 %d 轮\n\n", currentRound))

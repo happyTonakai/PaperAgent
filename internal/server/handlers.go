@@ -1240,7 +1240,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build context
+	// Build context.
+	// Skip round 0: Q is the full paper text and A is the initial summary,
+	// the latter is already provided via 初始总结.
 	var context strings.Builder
 	if paper.InitialSummary != "" {
 		context.WriteString("## 初始总结\n\n")
@@ -1249,6 +1251,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 	}
 	context.WriteString("## 对话历史\n\n")
 	for _, msg := range paper.Messages {
+		if msg.RoundNumber <= 0 {
+			continue
+		}
 		if msg.Role == "user" {
 			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
 		} else {
@@ -1304,7 +1309,9 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build context for summarize
+	// Build context for summarize.
+	// Skip round 0: Q is the full paper text and A is the initial summary,
+	// the latter is already provided via 初始总结.
 	var context strings.Builder
 	if paper.InitialSummary != "" {
 		context.WriteString("## 初始总结\n\n")
@@ -1313,6 +1320,9 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 	}
 	context.WriteString("## 对话历史\n\n")
 	for _, msg := range paper.Messages {
+		if msg.RoundNumber <= 0 {
+			continue
+		}
 		if msg.Role == "user" {
 			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
 		} else {
