@@ -88,6 +88,99 @@ func TestParseArxivRSS_MultipleCategories(t *testing.T) {
 	}
 }
 
+func TestParseArxivRSS_FiltersReplace(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "arxiv_cs.SD.rss.xml"))
+	if err != nil {
+		t.Skipf("testdata not available: %v", err)
+	}
+
+	articles, err := parseArxivRSS(data, "cs.SD")
+	if err != nil {
+		t.Fatalf("parseArxivRSS: %v", err)
+	}
+
+	// testdata has 23 items: 8 new + 8 cross + 7 replace. Replace must be
+	// dropped, leaving 16.
+	if len(articles) != 16 {
+		t.Errorf("expected 16 articles (new+cross), got %d", len(articles))
+	}
+
+	// Every kept article's abstract must not start with the arXiv metadata
+	// line or the "Abstract:" prefix.
+	for i, a := range articles {
+		if a.Abstract == nil {
+			t.Errorf("article[%d] (%s) has nil Abstract", i, a.ID)
+			continue
+		}
+		abs := *a.Abstract
+		if strings.HasPrefix(abs, "arXiv:") {
+			t.Errorf("article[%d] (%s) abstract still has metadata prefix: %q", i, a.ID, abs[:min(60, len(abs))])
+		}
+		if strings.HasPrefix(abs, "Abstract:") {
+			t.Errorf("article[%d] (%s) abstract still has 'Abstract:' prefix: %q", i, a.ID, abs[:min(60, len(abs))])
+		}
+	}
+}
+
+func TestParseArxivDescription(t *testing.T) {
+	tests := []struct {
+		name             string
+		input            string
+		wantAbstract     string
+		wantAnnounceType string
+	}{
+		{
+			name:             "new announcement",
+			input:            "arXiv:2606.12495v1 Announce Type: new \nAbstract: Hello world.",
+			wantAbstract:     "Hello world.",
+			wantAnnounceType: "new",
+		},
+		{
+			name:             "cross announcement",
+			input:            "arXiv:2606.12555v1 Announce Type: cross \nAbstract: Some text.",
+			wantAbstract:     "Some text.",
+			wantAnnounceType: "cross",
+		},
+		{
+			name:             "replace announcement",
+			input:            "arXiv:2606.12555v1 Announce Type: replace \nAbstract: Old text.",
+			wantAbstract:     "Old text.",
+			wantAnnounceType: "replace",
+		},
+		{
+			name:             "no body, metadata only",
+			input:            "arXiv:2606.12555v1 Announce Type: new",
+			wantAbstract:     "",
+			wantAnnounceType: "new",
+		},
+		{
+			name:             "empty input",
+			input:            "",
+			wantAbstract:     "",
+			wantAnnounceType: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			abs, at := parseArxivDescription(tt.input)
+			if abs != tt.wantAbstract {
+				t.Errorf("abstract = %q, want %q", abs, tt.wantAbstract)
+			}
+			if at != tt.wantAnnounceType {
+				t.Errorf("announceType = %q, want %q", at, tt.wantAnnounceType)
+			}
+		})
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func TestExtractArxivID(t *testing.T) {
 	tests := []struct {
 		input    string

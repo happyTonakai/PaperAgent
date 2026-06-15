@@ -22,6 +22,10 @@ const maxFetchRetries = 2
 // arxivIDRe extracts arXiv ID from a URL or ID string.
 var arxivIDRe = regexp.MustCompile(`(\d{4}\.\d{4,5})(v\d+)?`)
 
+// rssAnnounceRe matches "Announce Type: <type>" within the metadata line of
+// an arXiv RSS description block.
+var rssAnnounceRe = regexp.MustCompile(`Announce Type:\s*(\S+)`)
+
 // RSS represents the top-level RSS feed response from arXiv.
 type rssFeed struct {
 	XMLName xml.Name  `xml:"rss"`
@@ -159,8 +163,14 @@ func parseArxivRSS(body []byte, category string) ([]database.NewArticle, error) 
 			continue
 		}
 
+		abstract, announceType := parseArxivDescription(item.Description)
+		// Only keep new submissions and cross-listings. "replace" announcements
+		// re-publish existing papers and are not new today, so skip them.
+		if announceType != "new" && announceType != "cross" {
+			continue
+		}
+
 		title := cleanText(item.Title)
-		abstract := cleanText(item.Description)
 		author := cleanText(item.Creator)
 		if author == "" {
 			author = cleanText(extractAuthorFromDesc(item.Description))
@@ -224,4 +234,32 @@ func extractAuthorFromDesc(desc string) string {
 		}
 	}
 	return ""
+}
+
+// parseArxivDescription splits an arXiv RSS description into its abstract
+// body and announce type. The raw description is shaped like:
+//
+//	arXiv:2606.12495v1 Announce Type: new
+//	Abstract: <body>
+//
+// The first line carries metadata and is dropped from the abstract. The
+// "Abstract:" prefix is also stripped. The announce type is one of "new",
+// "cross", or "replace" per arXiv's RSS spec.
+func parseArxivDescription(s string) (abstract, announceType string) {
+	s = cleanText(s)
+	nl := strings.IndexByte(s, '\n')
+	if nl < 0 {
+		// No newline — only metadata (or no body at all).
+		if m := rssAnnounceRe.FindStringSubmatch(s); len(m) >= 2 {
+			announceType = m[1]
+		}
+		return "", announceType
+	}
+	first := s[:nl]
+	rest := strings.TrimSpace(s[nl+1:])
+	if m := rssAnnounceRe.FindStringSubmatch(first); len(m) >= 2 {
+		announceType = m[1]
+	}
+	rest = strings.TrimPrefix(rest, "Abstract:")
+	return strings.TrimSpace(rest), announceType
 }
