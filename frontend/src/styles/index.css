@@ -337,14 +337,14 @@ pre code.hljs {
 }
 
 .recommend-stats .stat-value {
-  font-size: 1.25rem;
+  font-size: 1.3em;
   font-weight: 700;
   color: var(--color-accent);
   line-height: 1.2;
 }
 
 .recommend-stats .stat-label {
-  font-size: 0.7rem;
+  font-size: 0.72em;
   color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -368,7 +368,7 @@ pre code.hljs {
 
 .recommend-toolbar .filter-tabs button {
   padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
+  font-size: 0.82em;
   border-radius: 0.5rem;
   border: 1px solid transparent;
   background: transparent;
@@ -396,7 +396,7 @@ pre code.hljs {
 
 .recommend-toolbar .toolbar-actions button {
   padding: 0.3rem 0.6rem;
-  font-size: 0.75rem;
+  font-size: 0.78em;
   border-radius: 0.5rem;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -435,7 +435,7 @@ pre code.hljs {
   padding: 3rem 1rem;
   text-align: center;
   color: var(--color-text-muted);
-  font-size: 0.9rem;
+  font-size: 0.92em;
 }
 
 /* Article Card */
@@ -465,7 +465,7 @@ pre code.hljs {
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.4rem;
-  font-size: 0.75rem;
+  font-size: 0.75em;
 }
 
 .article-score {
@@ -475,7 +475,7 @@ pre code.hljs {
 
 .article-category {
   color: var(--color-text-muted);
-  font-size: 0.7rem;
+  font-size: 0.72em;
   background: var(--color-bg-elevated);
   padding: 0.1rem 0.4rem;
   border-radius: 0.25rem;
@@ -483,7 +483,7 @@ pre code.hljs {
 
 .article-title {
   font-family: var(--font-display);
-  font-size: 1rem;
+  font-size: 1.1em;
   font-weight: 600;
   line-height: 1.4;
   margin: 0 0 0.3rem;
@@ -496,13 +496,13 @@ pre code.hljs {
 }
 
 .article-author {
-  font-size: 0.78rem;
+  font-size: 0.82em;
   color: var(--color-text-secondary);
   margin: 0 0 0.4rem;
 }
 
 .article-abstract {
-  font-size: 0.82rem;
+  font-size: 0.92em;
   line-height: 1.6;
   color: var(--color-text-secondary);
   margin: 0 0 0.6rem;
@@ -522,7 +522,7 @@ pre code.hljs {
 .article-votes {
   display: flex;
   gap: 0.5rem;
-  font-size: 0.75rem;
+  font-size: 0.75em;
   color: var(--color-text-muted);
 }
 
@@ -533,7 +533,7 @@ pre code.hljs {
 
 .btn-action {
   padding: 0.2rem 0.4rem;
-  font-size: 0.85rem;
+  font-size: 0.88em;
   border: none;
   border-radius: 0.35rem;
   background: transparent;
@@ -572,7 +572,7 @@ pre code.hljs {
 .article-comment-box textarea {
   width: 100%;
   padding: 0.4rem 0.6rem;
-  font-size: 0.78rem;
+  font-size: 0.82em;
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   background: var(--color-bg);
@@ -589,7 +589,7 @@ pre code.hljs {
 
 .article-comment-box .comment-actions button {
   padding: 0.2rem 0.6rem;
-  font-size: 0.72rem;
+  font-size: 0.78em;
   border-radius: 0.35rem;
   border: 1px solid var(--color-border);
   background: var(--color-surface);

@@ -62,7 +62,7 @@ export function RecommendTab() {
   }
 
   return (
-    <div className={`recommend-tab ${contentWidth === 'narrow' ? 'max-w-1/2 mx-auto' : 'max-w-3/4 mx-auto'}`}>
+    <div className="recommend-tab">
       {/* Stats bar */}
       <div className="recommend-stats">
         <div className="stat">
@@ -112,6 +112,7 @@ export function RecommendTab() {
 
       {/* Article list */}
       <div className="recommend-content">
+        <div className={contentWidth === 'narrow' ? 'max-w-[50%] mx-auto' : 'max-w-[75%] mx-auto'}>
         <ArticleList
           articles={articles}
           loading={loading}
@@ -119,6 +120,7 @@ export function RecommendTab() {
           onStatusChange={handleStatusChange}
           onChatClick={handleChatClick}
         />
+        </div>
       </div>
     </div>
   )
