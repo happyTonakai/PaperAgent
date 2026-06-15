@@ -14,6 +14,16 @@ import (
 	"github.com/happyTonakai/paperagent/internal/recommend"
 )
 
+// resolveAPIKeyInput normalizes an API key value coming from the settings UI.
+// A bare env-var name (e.g. OPENAI_API_KEY) is wrapped as ${NAME} so the
+// downstream resolver can expand it via os.ExpandEnv.
+func resolveAPIKeyInput(v string) string {
+	if isEnvVarName(v) {
+		return "${" + v + "}"
+	}
+	return v
+}
+
 // --- Scoring client helper ---
 
 func (s *Server) scoringClient() *api.Client {
@@ -102,7 +112,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 				s.cfg.API.Scoring.BaseURL = v
 			}
 			if v, ok := sc["api_key"].(string); ok && v != "" && !strings.HasPrefix(v, "•") {
-				s.cfg.API.Scoring.APIKey = v
+				s.cfg.API.Scoring.APIKey = resolveAPIKeyInput(v)
 			}
 			if v, ok := sc["model"].(string); ok && v != "" {
 				s.cfg.API.Scoring.Model = v
@@ -120,7 +130,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 					s.cfg.API.Translation.BaseURL = v
 				}
 				if v, ok := tc["api_key"].(string); ok && v != "" && !strings.HasPrefix(v, "•") {
-					s.cfg.API.Translation.APIKey = v
+					s.cfg.API.Translation.APIKey = resolveAPIKeyInput(v)
 				}
 				if v, ok := tc["model"].(string); ok && v != "" {
 					s.cfg.API.Translation.Model = v
@@ -214,6 +224,10 @@ func (s *Server) handleRecommendGenerate(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Trigger translation after manual generation. Internally no-ops when no
+	// translation API is configured or articles already have translations.
+	s.translateAndPersistArticles(articles)
 
 	writeJSON(w, http.StatusOK, map[string]int{"recommended": len(articles)})
 }
@@ -456,63 +470,28 @@ func (s *Server) translateAndPersistArticles(articles []database.Article) {
 		return
 	}
 
-	// Collect texts
-	var texts []string
-	type mapping struct {
-		idx     int
-		isTitle bool
-	}
-	var mappings []mapping
-
-	for i, a := range toTranslate {
-		if a.Title != "" {
-			texts = append(texts, a.Title)
-			mappings = append(mappings, mapping{idx: i, isTitle: true})
+	// One API call per article: each call is small enough to fit under the
+	// transport's ResponseHeaderTimeout, and a single failure won't block
+	// the rest of the batch.
+	translated := 0
+	for _, a := range toTranslate {
+		abstract := ""
+		if a.Abstract != nil {
+			abstract = *a.Abstract
 		}
-		if a.Abstract != nil && *a.Abstract != "" {
-			texts = append(texts, *a.Abstract)
-			mappings = append(mappings, mapping{idx: i, isTitle: false})
-		}
-	}
-
-	if len(texts) == 0 {
-		return
-	}
-
-	results, err := transClient.TranslateTexts(model, texts)
-	if err != nil {
-		log.Printf("[server] translate articles for DB: %v", err)
-		return
-	}
-
-	// Group results by article
-	type artTrans struct {
-		translatedTitle    string
-		translatedAbstract string
-	}
-	transMap := make(map[int]*artTrans, len(toTranslate))
-	for i, m := range mappings {
-		if i >= len(results) || results[i] == "" {
+		tTitle, tAbstract, err := transClient.TranslateArticle(model, a.Title, abstract)
+		if err != nil {
+			log.Printf("[server] translate article %s: %v", a.ID, err)
 			continue
 		}
-		if transMap[m.idx] == nil {
-			transMap[m.idx] = &artTrans{}
+		if err := database.UpdateArticleTranslations(a.ID, tTitle, tAbstract); err != nil {
+			log.Printf("[server] persist translation for %s: %v", a.ID, err)
+			continue
 		}
-		if m.isTitle {
-			transMap[m.idx].translatedTitle = results[i]
-		} else {
-			transMap[m.idx].translatedAbstract = results[i]
-		}
+		translated++
 	}
 
-	// Persist to DB
-	for idx, tr := range transMap {
-		if err := database.UpdateArticleTranslations(toTranslate[idx].ID, tr.translatedTitle, tr.translatedAbstract); err != nil {
-			log.Printf("[server] persist translation for %s: %v", toTranslate[idx].ID, err)
-		}
-	}
-
-	log.Printf("[server] translated and persisted %d articles", len(transMap))
+	log.Printf("[server] translated and persisted %d articles", translated)
 }
 
 // articlesToResponse converts database.Article slice to response maps,

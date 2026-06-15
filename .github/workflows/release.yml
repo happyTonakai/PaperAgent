@@ -73,6 +73,11 @@ jobs:
           echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
 
       - name: Build frontend
+        env:
+          # Vite + Tailwind 4 + KaTeX + highlight.js peaks above the 4GB
+          # default Node heap on the 7GB ubuntu-latest runner, getting
+          # SIGKILLed at module-transform time. 4GB is enough headroom.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: cd frontend && npm ci && npm run build
 
       - name: Upload frontend dist

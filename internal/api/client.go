@@ -116,6 +116,15 @@ type Client struct {
 	http    *http.Client
 }
 
+// keyPrefix returns the first 5 chars of an API key for diagnostic logging,
+// or "***" if the key is too short. Never returns the full key.
+func keyPrefix(s string) string {
+	if len(s) < 5 {
+		return "***"
+	}
+	return s[:5]
+}
+
 // NewClient creates a Client from the global config (Q&A chat API).
 func NewClient(cfg *config.Config) *Client {
 	return &Client{
@@ -197,7 +206,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp.Body)
-			ch <- StreamChunk{Err: fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))}
+			ch <- StreamChunk{Err: fmt.Errorf("API error %d (key=%s...): %s", resp.StatusCode, keyPrefix(c.apiKey), string(bodyBytes))}
 			return
 		}
 
@@ -352,7 +361,7 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", nil, 0, 0, 0, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", nil, 0, 0, 0, 0, fmt.Errorf("API error %d (key=%s...): %s", resp.StatusCode, keyPrefix(c.apiKey), string(bodyBytes))
 	}
 
 	var cr chatResponse
@@ -399,86 +408,76 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 	return msg.Content, nil, promptTokens, completionTokens, totalTokens, cachedTokens, nil
 }
 
-const translateSystemPrompt = `Translate the following academic paper content from English to Chinese.
+// articleTranslation is the JSON shape returned by the translation model.
+type articleTranslation struct {
+	Title    string `json:"title"`
+	Abstract string `json:"abstract"`
+}
 
+// TranslateArticle translates a single article's title and abstract in one API call.
+// The model is asked to return JSON {"title":..., "abstract":...} so callers
+// don't have to disambiguate from a single text blob.
+func (c *Client) TranslateArticle(model, title, abstract string) (string, string, error) {
+	if title == "" && abstract == "" {
+		return "", "", nil
+	}
+	var user strings.Builder
+	user.WriteString("Title:\n")
+	user.WriteString(title)
+	if abstract != "" {
+		user.WriteString("\n\nAbstract:\n")
+		user.WriteString(abstract)
+	}
+
+	prompt := `Translate the title and abstract of an academic paper from English to Chinese.
+Return a JSON object with two fields: "title" and "abstract" containing the Chinese translations.
 Rules:
 1. Keep technical terms, model names (e.g. Transformer, BERT, ResNet), and proper nouns in their original English form
 2. Preserve LaTeX math expressions and code snippets exactly as-is
-3. Output only the translation, no explanations or prefixes
-4. If the text appears to already be in Chinese or is not meaningful text, return it as-is`
-
-// TranslateText translates a single piece of text using the configured translation API.
-// Returns the translated text, or the original if the client is nil or translation fails.
-func (c *Client) TranslateText(model string, text string) (string, error) {
-	if text == "" {
-		return "", nil
-	}
-	messages := []ChatMessage{
-		{Role: "system", Content: translateSystemPrompt},
-		{Role: "user", Content: text},
-	}
-	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
-	return result, err
-}
-
-// TranslateTexts translates a batch of texts in a single API call.
-// Each input text is translated independently using numbered placeholders.
-func (c *Client) TranslateTexts(model string, texts []string) ([]string, error) {
-	if len(texts) == 0 {
-		return nil, nil
-	}
-	if len(texts) == 1 {
-		r, err := c.TranslateText(model, texts[0])
-		return []string{r}, err
-	}
-
-	var input strings.Builder
-	for i, t := range texts {
-		if i > 0 {
-			input.WriteString("\n\n---\n\n")
-		}
-		input.WriteString(fmt.Sprintf("[%d]\n%s\n[/%d]", i+1, t, i+1))
-	}
-
-	prompt := "Translate each of the following texts from English to Chinese. " +
-		"Keep technical terms, model names, and proper nouns in their original English form. " +
-		"Preserve LaTeX math and code exactly as-is. " +
-		"Output each translation prefixed with its number marker (e.g. [1], [2], etc.)."
+3. Output ONLY the JSON object, no explanations, no markdown fences, no code blocks`
 
 	messages := []ChatMessage{
 		{Role: "system", Content: prompt},
-		{Role: "user", Content: input.String()},
+		{Role: "user", Content: user.String()},
 	}
 	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 
-	// Parse numbered results
-	results := make([]string, len(texts))
-	// Try to find [N]...[/N] patterns
-	for i := range texts {
-		marker := fmt.Sprintf("[%d]", i+1)
-		endMarker := fmt.Sprintf("[/%d]", i+1)
-		startIdx := strings.Index(result, marker)
-		if startIdx >= 0 {
-			startIdx += len(marker)
-			// Skip past newline after marker
-			for startIdx < len(result) && (result[startIdx] == '\n' || result[startIdx] == ' ') {
-				startIdx++
+	jsonStr := extractJSONObject(result)
+	var tr articleTranslation
+	if err := json.Unmarshal([]byte(jsonStr), &tr); err != nil {
+		return "", "", fmt.Errorf("parse translation JSON: %w (raw: %q)", err, truncate(result, 200))
+	}
+	return tr.Title, tr.Abstract, nil
+}
+
+// extractJSONObject pulls the first {...} JSON object from s. Handles ```json
+// fences and surrounding prose; returns the original string if no braces found.
+func extractJSONObject(s string) string {
+	if i := strings.Index(s, "```"); i >= 0 {
+		if j := strings.Index(s[i+3:], "```"); j >= 0 {
+			inner := s[i+3 : i+3+j]
+			if nl := strings.Index(inner, "\n"); nl >= 0 {
+				inner = inner[nl+1:]
 			}
-			endIdx := strings.Index(result[startIdx:], endMarker)
-			if endIdx >= 0 {
-				results[i] = strings.TrimSpace(result[startIdx : startIdx+endIdx])
-				continue
-			}
+			s = inner
 		}
-		// Fallback: individual translation
-		r, _ := c.TranslateText(model, texts[i])
-		results[i] = r
 	}
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start < 0 || end < 0 || end < start {
+		return s
+	}
+	return s[start : end+1]
+}
 
-	return results, nil
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func (c *Client) ExtractTitle(model string, content string) (string, error) {
