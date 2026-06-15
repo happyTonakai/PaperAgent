@@ -5,6 +5,7 @@
 package database
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"os"
@@ -17,10 +18,57 @@ import (
 )
 
 var (
-	once  sync.Once
-	db    *sql.DB
-	dbErr error
+	once    sync.Once
+	db      *sql.DB
+	dbErr   error
+	testDB  atomicDB  // overrides GetDB when set (for tests)
 )
+
+// atomicDB wraps a *sql.DB with atomic load/store for thread safety.
+type atomicDB struct {
+	mu  sync.RWMutex
+	ptr *sql.DB
+}
+
+func (a *atomicDB) load() *sql.DB {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.ptr
+}
+
+func (a *atomicDB) store(d *sql.DB) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ptr = d
+}
+
+// SetDB injects a database connection for testing.
+// Pass nil to reset. Safe for concurrent use.
+func SetDB(d *sql.DB) {
+	testDB.store(d)
+}
+
+// OpenTestDB opens an in-memory SQLite database and runs migrations.
+// Each call creates an independent database (randomized URI to avoid sharing).
+// Returns the connection and a cleanup function. Used in tests.
+func OpenTestDB() (*sql.DB, func(), error) {
+	// Generate unique DB name to avoid cross-test sharing with cache=shared
+	var buf [8]byte
+	rand.Read(buf[:])
+	name := fmt.Sprintf("file:test_%x?mode=memory&cache=shared", buf[:])
+
+	conn, err := sql.Open("sqlite", name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open test db: %w", err)
+	}
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
+	if err := migrate(conn); err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("migrate test db: %w", err)
+	}
+	return conn, func() { conn.Close() }, nil
+}
 
 // DBPath returns the path to the recommendation SQLite database.
 func DBPath() string {
@@ -69,7 +117,11 @@ func Close() error {
 }
 
 // GetDB returns the database connection, opening it if necessary.
+// If SetDB was called (for tests), returns that instead.
 func GetDB() (*sql.DB, error) {
+	if d := testDB.load(); d != nil {
+		return d, nil
+	}
 	return Open()
 }
 
