@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/happyTonakai/paperagent/internal/api"
+	"github.com/happyTonakai/paperagent/internal/prompt"
 )
 
 // ArticleInfo contains the minimum necessary fields for LLM scoring.
@@ -15,22 +16,6 @@ type ArticleInfo struct {
 	Title    string
 	Abstract string
 }
-
-const scoringSystemPrompt = `你是一个学术论文推荐系统的评分助手。根据用户的兴趣偏好，为论文打分。
-
-评分规则：
-- 分数范围 0.0 到 1.0
-- 1.0 表示与用户兴趣完全匹配
-- 0.0 表示与用户兴趣完全不相关
-- 考虑论文主题、方法和研究方向与用户偏好的匹配度
-
-请严格按照以下 JSON 数组格式返回，不要返回任何其他内容：
-[{"id": "论文ID", "score": 0.85}, ...]
-
-注意：
-1. 只返回 JSON 数组，不要有解释或注释
-2. 每篇论文必须有一个分数
-3. id 必须与输入的论文 ID 完全一致`
 
 // ScoreArticlesBatch scores articles in batches using LLM.
 // preferences is the user preference file content.
@@ -87,7 +72,7 @@ func scoreChunk(client *api.Client, model string, preferences string, articles [
 	}
 
 	raw, _, _, _, _, _, err := client.Chat(model, []api.ChatMessage{
-		{Role: "system", Content: scoringSystemPrompt},
+		{Role: "system", Content: prompt.GetScoring()},
 		{Role: "user", Content: userContent.String()},
 	}, nil)
 	if err != nil {

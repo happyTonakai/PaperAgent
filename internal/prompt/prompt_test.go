@@ -22,6 +22,12 @@ func TestEmbeddedPrompts(t *testing.T) {
 	if SummarizePrompt == "" {
 		t.Error("SummarizePrompt should not be empty")
 	}
+	if ScoringPrompt == "" {
+		t.Error("ScoringPrompt should not be empty")
+	}
+	if UpdatePrefsPrompt == "" {
+		t.Error("UpdatePrefsPrompt should not be empty")
+	}
 }
 
 func TestGetSystem(t *testing.T) {
@@ -32,6 +38,51 @@ func TestGetSystem(t *testing.T) {
 	}
 	if !strings.Contains(result, "论文") {
 		t.Error("SystemPrompt should contain '论文'")
+	}
+}
+
+// TestGetSystemIgnoresUserOverride verifies that even when a stale override
+// file exists at prompts/system.txt, GetSystem always returns the embedded
+// default.
+func TestGetSystemIgnoresUserOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+
+	promptsDir := config.PromptsDir()
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "system.txt"), []byte("USER OVERRIDE — should be ignored"), 0644); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+
+	if got := GetSystem(); got == "USER OVERRIDE — should be ignored" {
+		t.Error("GetSystem honored user override file; should always return embedded")
+	}
+	if got := GetSystem(); got != SystemPrompt {
+		t.Errorf("GetSystem returned %q, want embedded SystemPrompt", got)
+	}
+}
+
+func TestGetScoring(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	result := GetScoring()
+	if result == "" {
+		t.Error("GetScoring should not return empty")
+	}
+	if !strings.Contains(result, "0.0") || !strings.Contains(result, "1.0") {
+		t.Error("ScoringPrompt should describe the 0.0–1.0 score range")
+	}
+}
+
+func TestGetUpdatePrefs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	result := GetUpdatePrefs()
+	if result == "" {
+		t.Error("GetUpdatePrefs should not return empty")
+	}
+	if !strings.Contains(result, "感兴趣") {
+		t.Error("UpdatePrefsPrompt should mention '感兴趣'")
 	}
 }
 
@@ -84,6 +135,22 @@ func TestGetWithUserOverride(t *testing.T) {
 	result := Get("heavy", "default fallback")
 	if result != customPrompt {
 		t.Errorf("expected custom prompt, got %s", result)
+	}
+}
+
+func TestBuiltinNamesExcludesSystem(t *testing.T) {
+	for _, n := range BuiltinNames() {
+		if n == "system" {
+			t.Error("BuiltinNames should not include 'system' (it is no longer user-overridable)")
+		}
+	}
+	// Sanity: the two new recommend prompts are present.
+	have := map[string]bool{}
+	for _, n := range BuiltinNames() {
+		have[n] = true
+	}
+	if !have["scoring"] || !have["update-prefs"] {
+		t.Errorf("BuiltinNames missing new recommend prompts: %v", BuiltinNames())
 	}
 }
 

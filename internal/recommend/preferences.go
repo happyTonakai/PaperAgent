@@ -9,6 +9,7 @@ import (
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
+	"github.com/happyTonakai/paperagent/internal/prompt"
 )
 
 // PreferencesPath returns the path to the user preference file.
@@ -50,48 +51,6 @@ type FeedbackArticle struct {
 	Rating   *int   // 问答系统评分 (1-10)，仅 chat 来源
 }
 
-const updatePreferencesSystem = `你是一个用户偏好分析助手。根据用户对学术论文的反馈行为，更新和完善用户的兴趣偏好描述。
-
-偏好描述应包含以下方面（使用 Markdown 格式）：
-## 感兴趣的主题
-- 列出用户感兴趣的研究主题和方向
-
-## 不感兴趣的主题
-- 列出用户明确不感兴趣的主题
-
-## 偏好的研究方法/技术
-- 列出用户偏好的技术路线、方法论
-
-## 备注
-- 其他观察到的偏好模式
-
-规则：
-1. 直接输出更新后的完整偏好描述，不要有任何解释
-2. 保持简洁，每个方面最多列出 10 条
-3. 如果用户点赞(liked)了某论文，说明非常感兴趣
-4. 如果用户点击(clicked)了某论文，说明比较感兴趣
-5. 如果用户点踩(disliked)了某论文，说明不感兴趣
-6. 用户的评论是最重要的信号，它直接表达了用户的想法和偏好原因，请重点参考
-7. 如果用户在问答系统中对论文给出了高分(8-10)，说明非常感兴趣；低分(1-3)说明不感兴趣
-8. 综合考虑新的反馈和已有偏好，做出合理更新`
-
-const initialPreferencesSystem = `你是一个用户偏好分析助手。根据用户选择的喜欢的论文，生成初始的用户兴趣偏好描述。
-
-偏好描述应使用 Markdown 格式，包含以下方面：
-## 感兴趣的主题
-- 列出用户感兴趣的研究主题和方向
-
-## 偏好的研究方法/技术
-- 列出用户偏好的技术路线、方法论
-
-## 备注
-- 其他观察到的偏好模式
-
-规则：
-1. 直接输出偏好描述，不要有任何解释
-2. 从论文的主题、方法、领域归纳出用户的兴趣模式
-3. 保持简洁，每个方面最多列出 10 条`
-
 // UpdatePreferences asks the LLM to update the user preference file based on feedback.
 // model is the LLM model to use (e.g. "gpt-4o").
 func UpdatePreferences(client *api.Client, model string, currentPrefs string, feedbacks []FeedbackArticle) (string, error) {
@@ -130,33 +89,11 @@ func UpdatePreferences(client *api.Client, model string, currentPrefs string, fe
 	}
 
 	result, _, _, _, _, _, err := client.Chat(model, []api.ChatMessage{
-		{Role: "system", Content: updatePreferencesSystem},
+		{Role: "system", Content: prompt.GetUpdatePrefs()},
 		{Role: "user", Content: userContent},
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("update preferences: %w", err)
-	}
-
-	return result, nil
-}
-
-// GenerateInitialPreferences creates an initial preference file from favorite papers.
-func GenerateInitialPreferences(client *api.Client, model string, feedbacks []FeedbackArticle) (string, error) {
-	if len(feedbacks) == 0 {
-		return "", nil
-	}
-
-	userContent := "## 用户喜欢的论文\n"
-	for _, fb := range feedbacks {
-		userContent += fmt.Sprintf("- %s\n  摘要: %s\n", fb.Title, truncateText(fb.Abstract, 300))
-	}
-
-	result, _, _, _, _, _, err := client.Chat(model, []api.ChatMessage{
-		{Role: "system", Content: initialPreferencesSystem},
-		{Role: "user", Content: userContent},
-	}, nil)
-	if err != nil {
-		return "", fmt.Errorf("generate initial preferences: %w", err)
 	}
 
 	return result, nil
