@@ -438,7 +438,7 @@ func (c *Client) TranslateArticle(model, title, abstract string) (string, string
 	prompt := `Translate the title and abstract of an academic paper from English to Chinese.
 Return a JSON object with two fields: "title" and "abstract" containing the Chinese translations.
 Rules:
-1. Keep technical terms, model names (e.g. Transformer, BERT, ResNet), and proper nouns in their original English form
+1. Translate the WHOLE title and abstract into Chinese. Keep ONLY individual technical terms, model names, and proper nouns in their original English form (e.g. "Transformer", "BERT", "ResNet", "GAN", "Bach"). Do NOT leave an entire sentence untranslated just because it contains such words.
 2. Preserve LaTeX math expressions and code snippets exactly as-is
 3. Output ONLY the JSON object, no explanations, no markdown fences, no code blocks`
 

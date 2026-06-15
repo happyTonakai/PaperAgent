@@ -1332,9 +1332,20 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) {
 		})
 	}
 
-	cardJSON := buildDailyRecommendCard(items)
-	b.sendInteractiveCard(chatID, cardJSON)
-	log.Printf("[feishu] sent daily recommend card with %d articles to chat %s", len(articles), chatID)
+	// Split into pages so each card stays under Feishu's JSON/element limits
+	// while showing full abstracts. recommendPageSize articles per card.
+	totalPages := (len(items) + recommendPageSize - 1) / recommendPageSize
+	for page := 1; page <= totalPages; page++ {
+		start := (page - 1) * recommendPageSize
+		end := start + recommendPageSize
+		if end > len(items) {
+			end = len(items)
+		}
+		cardJSON := buildDailyRecommendCard(items[start:end], page, totalPages)
+		b.sendInteractiveCard(chatID, cardJSON)
+		log.Printf("[feishu] sent daily recommend card %d/%d (%d articles) to chat %s",
+			page, totalPages, end-start, chatID)
+	}
 }
 
 // handleRecommendLike marks an article as liked (status=2).

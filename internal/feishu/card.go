@@ -675,41 +675,89 @@ func buildCardMarkdown(content string) string {
 type RecommendCardItem struct {
 	ID         string
 	Title      string  // translated (if available) or original
-	Abstract   string  // translated (if available) or original, truncated ~150 chars
+	Abstract   string  // translated (if available) or original, full text
 	Score      float64
 	AXNetVotes *int
 }
 
+// recommendPageSize is the number of articles per card when the daily
+// recommendation is split into multiple cards. Keeps each card well under
+// Feishu's ~30KB JSON / 200-element limits while showing full abstracts.
+const recommendPageSize = 10
+
 // ─── Daily Recommendation Card ───
 
-func buildDailyRecommendCard(items []RecommendCardItem) string {
+// recommendAbstractFallbackLen is the per-abstract truncation length used
+// when a page of full abstracts would push the card JSON over maxCardJSONBytes.
+// Full abstracts are the default; this only kicks in for unusually long abstracts.
+const recommendAbstractFallbackLen = 500
+
+// buildDailyRecommendCard renders one page of the daily recommendation.
+// page is 1-indexed; totalPages is the number of cards that will be sent.
+// If the full-abstract card would exceed maxCardJSONBytes, abstracts are
+// truncated to recommendAbstractFallbackLen runes and a warning is logged.
+func buildDailyRecommendCard(items []RecommendCardItem, page, totalPages int) string {
+	cardJSON := buildDailyRecommendCardRaw(items, page, totalPages)
+	if len(cardJSON) <= maxCardJSONBytes {
+		return cardJSON
+	}
+
+	// Fallback: truncate abstracts so the card fits.
+	log.Printf("[feishu] daily card %d/%d JSON %dB > %dB, truncating abstracts to %d runes",
+		page, totalPages, len(cardJSON), maxCardJSONBytes, recommendAbstractFallbackLen)
+	truncated := make([]RecommendCardItem, len(items))
+	copy(truncated, items)
+	for i := range truncated {
+		if runes := []rune(truncated[i].Abstract); len(runes) > recommendAbstractFallbackLen {
+			truncated[i].Abstract = string(runes[:recommendAbstractFallbackLen]) + "..."
+		}
+	}
+	return buildDailyRecommendCardRaw(truncated, page, totalPages)
+}
+
+// buildDailyRecommendCardRaw is the inner builder that actually constructs
+// the card JSON. Callers should use buildDailyRecommendCard instead, which
+// applies the size fallback.
+func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int) string {
 	c := cardBase()
-	c["header"] = cardHeader("📅 今日论文推荐", "blue")
+	if totalPages > 1 {
+		c["header"] = cardHeader(fmt.Sprintf("📅 今日论文推荐 (%d/%d)", page, totalPages), "blue")
+	} else {
+		c["header"] = cardHeader("📅 今日论文推荐", "blue")
+	}
 
-	elements := make([]map[string]any, 0, len(items)+4)
-
-	elements = append(elements, mdElement("以下是根据你的偏好精选的论文"))
+	elements := make([]map[string]any, 0, len(items)+3)
 
 	for i, item := range items {
-		title := truncateTitle(item.Title, 60)
+		title := item.Title
 		scoreStr := fmt.Sprintf("%.3f", item.Score)
 		voteStr := ""
 		if item.AXNetVotes != nil {
 			voteStr = fmt.Sprintf(" 🔬 %d", *item.AXNetVotes)
 		}
 
-		// Title + score + votes line
-		var textLines []string
-		textLines = append(textLines, fmt.Sprintf("**%d.** %s", i+1, title))
-		textLines = append(textLines, fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr))
-
-		// Truncated abstract line
-		if item.Abstract != "" {
-			abstract := truncateTitle(item.Abstract, 150)
-			textLines = append(textLines, abstract)
+		// Title row uses heading size; score + abstract use normal size.
+		// (Markdown elements cannot change text_size, so we use div+lark_md.)
+		titleEl := map[string]any{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":       "lark_md",
+				"content":   fmt.Sprintf("**%d. %s**", i+1, title),
+				"text_size": "heading",
+			},
 		}
-
-		text := strings.Join(textLines, "\n")
+		bodyText := fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr)
+		if item.Abstract != "" {
+			bodyText += "\n\n" + item.Abstract
+		}
+		bodyEl := map[string]any{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":       "lark_md",
+				"content":   bodyText,
+				"text_size": "normal",
+			},
+		}
 
 		// Like/Dislike/Activate buttons
 		valLike := map[string]string{"action": "recommend:like:" + item.ID, "paper_id": item.ID}
@@ -725,7 +773,7 @@ func buildDailyRecommendCard(items []RecommendCardItem) string {
 			"value": valDislike, "width": "default",
 		}
 		btnActivate := map[string]any{
-			"tag": "button", "text": plainText("🤖"), "type": "primary",
+			"tag": "button", "text": plainText("🤖"), "type": "default",
 			"value": valActivate, "width": "default",
 		}
 
@@ -737,8 +785,8 @@ func buildDailyRecommendCard(items []RecommendCardItem) string {
 					"tag":            "column",
 					"width":          "weighted",
 					"weight":         4,
-					"vertical_align": "center",
-					"elements":       []map[string]any{{"tag": "markdown", "content": text}},
+					"vertical_align": "top",
+					"elements":       []map[string]any{titleEl, bodyEl},
 				},
 				{
 					"tag":            "column",
