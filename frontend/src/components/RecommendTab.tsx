@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { ArticleList } from './ArticleList'
 import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations } from '../hooks/useArticles'
+import { useAppStore } from '../stores/appStore'
 
 type FilterValue = number | 'daily'
 
@@ -9,6 +10,7 @@ export function RecommendTab() {
   const [filter, setFilter] = useState<FilterValue>('daily')
   const [fetching, setFetching] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const contentWidth = useAppStore((s) => s.contentWidth)
 
   const { articles: dailyArticles, loading: dailyLoading, refetch: refetchDaily } = useTodayRecommendations()
   const { articles: filteredArticles, loading: filteredLoading, refetch: refetchFiltered } = useArticles(
@@ -60,7 +62,7 @@ export function RecommendTab() {
   }
 
   return (
-    <div className="recommend-tab">
+    <div className={`recommend-tab ${contentWidth === 'narrow' ? 'max-w-1/2 mx-auto' : 'max-w-3/4 mx-auto'}`}>
       {/* Stats bar */}
       <div className="recommend-stats">
         <div className="stat">
