@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -82,7 +83,27 @@ func FetchArxivRSS(categories []string, maxPerCategory int) ([]database.NewArtic
 	return newArticles, nil
 }
 
+// fetchCategoryRSSFileEnv is an e2e-test bypass: when set, RSS is read from
+// this local file path instead of being fetched over HTTP. See e2e_test.go.
+const fetchCategoryRSSFileEnv = "PAPER_RECOMMEND_RSS_FILE"
+
 func fetchCategoryRSS(category string, max int) ([]database.NewArticle, error) {
+	// E2E bypass: read from a local XML file instead of hitting arXiv.
+	if path := os.Getenv(fetchCategoryRSSFileEnv); path != "" {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read RSS file %s: %w", path, err)
+		}
+		articles, err := parseArxivRSS(body, category)
+		if err != nil {
+			return nil, err
+		}
+		if len(articles) > max {
+			articles = articles[:max]
+		}
+		return articles, nil
+	}
+
 	url := fmt.Sprintf(arxivRSSURL, strings.ToLower(category))
 
 	var lastErr error
