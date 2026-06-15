@@ -725,7 +725,7 @@ func buildDailyRecommendCard(items []RecommendCardItem) string {
 			"value": valDislike, "width": "default",
 		}
 		btnActivate := map[string]any{
-			"tag": "button", "text": plainText("🤖 激活"), "type": "primary",
+			"tag": "button", "text": plainText("🤖"), "type": "primary",
 			"value": valActivate, "width": "default",
 		}
 
@@ -756,7 +756,7 @@ func buildDailyRecommendCard(items []RecommendCardItem) string {
 
 	// Footer
 	elements = append(elements, hrElement())
-	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 激活后在当前会话中直接对话"))
+	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 总结后直接对话"))
 
 	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)
