@@ -9,13 +9,13 @@ interface ConfigData {
 	api: { base_url: string; api_key: string; api_key_source: string; default_model: string }
 	obsidian: { vault_path: string; export_folder: string }
 	ui: { min_recent_rounds: number; max_input_tokens: number }
-	feishu?: { enabled: boolean; app_id: string; app_secret: string }
+	feishu?: { enabled: boolean; app_id: string; app_secret: string; daily_recommend_chat_id: string }
 }
 
 interface ConfigForm {
 	api_key: string; base_url: string; default_model: string
 	min_recent_rounds: string; max_input_tokens: string; obsidian_vault_path: string; obsidian_export_folder: string
-	feishu_enabled: boolean; feishu_app_id: string; feishu_app_secret: string
+	feishu_enabled: boolean; feishu_app_id: string; feishu_app_secret: string; feishu_daily_recommend_chat_id: string
 }
 
 interface PromptInfo { name: string; content: string; source: string }
@@ -79,7 +79,7 @@ export function SettingsDialog() {
 	const [config, setConfig] = useState<ConfigData | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
-	const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '' })
+	const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: '' })
 	const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
 	// Prompts
@@ -120,7 +120,7 @@ export function SettingsDialog() {
 			.then((r) => r.json())
 			.then((data: ConfigData) => {
 				setConfig(data)
-				setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, min_recent_rounds: String(data.ui.min_recent_rounds), max_input_tokens: String(data.ui.max_input_tokens), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '' })
+				setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, min_recent_rounds: String(data.ui.min_recent_rounds), max_input_tokens: String(data.ui.max_input_tokens), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: data.feishu?.daily_recommend_chat_id ?? '' })
 				setApiKeyDirty(false)
 			})
 			.catch((err) => toast.error('加载配置失败: ' + (err instanceof Error ? err.message : '未知错误')))
@@ -186,6 +186,7 @@ export function SettingsDialog() {
 		if (form.feishu_enabled !== (config?.feishu?.enabled ?? false)) body['feishu_enabled'] = form.feishu_enabled
 		if (form.feishu_app_id && form.feishu_app_id !== '••••••' && form.feishu_app_id !== config?.feishu?.app_id) body['feishu_app_id'] = form.feishu_app_id
 		if (form.feishu_app_secret && form.feishu_app_secret !== '••••••' && form.feishu_app_secret !== config?.feishu?.app_secret) body['feishu_app_secret'] = form.feishu_app_secret
+		if (form.feishu_daily_recommend_chat_id !== (config?.feishu?.daily_recommend_chat_id ?? '')) body['feishu_daily_recommend_chat_id'] = form.feishu_daily_recommend_chat_id
 		if (Object.keys(body).length === 0) { toast('没有需要保存的更改'); setSaving(false); close(); return }
 		try {
 			const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -344,6 +345,7 @@ export function SettingsDialog() {
 				{feishuStatus && feishuStatus.last_error && (<p className="text-xs text-red-500">错误: {feishuStatus.last_error}</p>)}
 				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">App ID {config?.feishu?.app_id && <span className="ml-1 text-gray-400">(当前: {config.feishu.app_id})</span>}</label><input type="text" value={form.feishu_app_id} onChange={(e) => updateForm('feishu_app_id', e.target.value)} placeholder="cli_xxxxx" className={inputClass} /></div>
 				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">App Secret {config?.feishu?.app_secret && <span className="ml-1 text-gray-400">(当前: {config.feishu.app_secret})</span>}</label><input type="password" value={form.feishu_app_secret} onChange={(e) => updateForm('feishu_app_secret', e.target.value)} placeholder={config?.feishu?.app_secret ? '输入新 Secret 以替换...' : '飞书应用 Secret'} className={inputClass} /></div>
+				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">每日推荐 Chat ID {config?.feishu?.daily_recommend_chat_id && <span className="ml-1 text-gray-400">(当前: {config.feishu.daily_recommend_chat_id})</span>}</label><input type="text" value={form.feishu_daily_recommend_chat_id} onChange={(e) => updateForm('feishu_daily_recommend_chat_id', e.target.value)} placeholder="oc_xxxxxxxxx" className={inputClass} /></div>
 				<p className="text-xs text-gray-400">保存后自动重连飞书。请在飞书开放平台开启机器人能力并订阅「消息和群组」事件。</p>
 			</fieldset>
 		</div>
