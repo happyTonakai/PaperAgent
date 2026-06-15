@@ -12,6 +12,7 @@ import (
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/recommend"
+	"github.com/happyTonakai/paperagent/internal/scheduler"
 )
 
 // resolveAPIKeyInput normalizes an API key value coming from the settings UI.
@@ -67,8 +68,9 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 		"recommend": map[string]interface{}{
 			"daily_papers":        s.cfg.Recommend.DailyPapers,
 			"scoring_batch_size":  s.cfg.Recommend.ScoringBatchSize,
-			"auto_refresh":        s.cfg.Recommend.AutoRefresh,
 			"diversity_ratio":     s.cfg.Recommend.DiversityRatio,
+			"scheduled_time":      s.cfg.Recommend.ScheduledTime,
+			"push_to_feishu":      s.cfg.Recommend.PushToFeishu,
 		},
 		"arxiv_categories": s.cfg.ArxivCategories,
 		"api": map[string]interface{}{
@@ -95,11 +97,14 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		if v, ok := rc["scoring_batch_size"].(float64); ok {
 			s.cfg.Recommend.ScoringBatchSize = int(v)
 		}
-		if v, ok := rc["auto_refresh"].(bool); ok {
-			s.cfg.Recommend.AutoRefresh = v
-		}
 		if v, ok := rc["diversity_ratio"].(float64); ok {
 			s.cfg.Recommend.DiversityRatio = v
+		}
+		if v, ok := rc["scheduled_time"].(string); ok {
+			s.cfg.Recommend.ScheduledTime = v
+		}
+		if v, ok := rc["push_to_feishu"].(bool); ok {
+			s.cfg.Recommend.PushToFeishu = v
 		}
 	}
 
@@ -157,6 +162,13 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 	if err := s.cfg.Save(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed"})
 		return
+	}
+
+	// Update scheduler config at runtime
+	if s.sched != nil {
+		s.cfg.RLock()
+		s.sched.UpdateConfig(s.cfg.Recommend.ScheduledTime, s.cfg.Recommend.DailyPapers, s.cfg.Recommend.ScoringBatchSize, s.cfg.Recommend.DiversityRatio)
+		s.cfg.RUnlock()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
@@ -408,6 +420,37 @@ func (s *Server) handleRecommendFetchVotes(w http.ResponseWriter, r *http.Reques
 }
 
 // --- Stats ---
+
+// handleRecommendTrigger executes the full pipeline: fetch RSS → generate
+// recommendations → translate → push to Feishu (if configured and enabled).
+// This is the manual trigger endpoint.
+func (s *Server) handleRecommendTrigger(w http.ResponseWriter, r *http.Request) {
+	if s.sched == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scheduler not initialized (no categories configured)"})
+		return
+	}
+
+	s.sched.ManualTrigger()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered"})
+}
+
+// handleRecommendSchedulerStatus returns the current scheduler state.
+func (s *Server) handleRecommendSchedulerStatus(w http.ResponseWriter, r *http.Request) {
+	if s.sched == nil {
+		writeJSON(w, http.StatusOK, scheduler.SchedulerStatus{
+			Scheduled: "",
+		})
+		return
+	}
+
+	status := s.sched.Status()
+	s.cfg.RLock()
+	status.PushToFeishu = s.cfg.Recommend.PushToFeishu
+	s.cfg.RUnlock()
+
+	writeJSON(w, http.StatusOK, status)
+}
 
 func (s *Server) handleRecommendStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := database.GetStats()

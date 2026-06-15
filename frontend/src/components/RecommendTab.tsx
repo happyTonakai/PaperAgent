@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 import { ArticleList } from './ArticleList'
-import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations } from '../hooks/useArticles'
+import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations, triggerFullPipeline } from '../hooks/useArticles'
 import { useAppStore } from '../stores/appStore'
 import { FontFamilyButton } from './FontFamilyButton'
 import { FontSizeButton } from './FontSizeButton'
@@ -13,6 +13,7 @@ export function RecommendTab() {
   const [filter, setFilter] = useState<FilterValue>('daily')
   const [fetching, setFetching] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [triggering, setTriggering] = useState(false)
   const { contentWidth, toggleContentWidth, theme, setTheme, setSettingsOpen } = useAppStore()
   const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
 
@@ -35,6 +36,24 @@ export function RecommendTab() {
     if (filter === 'daily') refetchDaily()
     else refetchFiltered()
   }, [filter, refetchDaily, refetchFiltered, refetchStats])
+
+  const handleTrigger = async () => {
+    setTriggering(true)
+    try {
+      await triggerFullPipeline()
+      toast.success('全流程已触发（抓取 RSS → 推荐 → 飞书推送）')
+      // Refresh after a short delay to allow pipeline to start
+      setTimeout(() => {
+        refetchDaily()
+        refetchFiltered()
+        refetchStats()
+      }, 1000)
+    } catch (e) {
+      toast.error('触发失败: ' + String(e))
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   const handleFetch = async () => {
     setFetching(true)
@@ -153,6 +172,9 @@ export function RecommendTab() {
           </button>
           <button onClick={handleGenerate} disabled={generating}>
             {generating ? '生成中...' : '📅 生成今日推荐'}
+          </button>
+          <button onClick={handleTrigger} disabled={triggering}>
+            {triggering ? '触发中...' : '⚡ 全流程'}
           </button>
         </div>
       </div>

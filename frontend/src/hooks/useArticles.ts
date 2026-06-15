@@ -138,17 +138,31 @@ export async function savePreferences(content: string): Promise<void> {
 }
 
 export async function getRecommendConfig(): Promise<{
-  recommend: { daily_papers: number; scoring_batch_size: number; auto_refresh: boolean }
+  recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number }
   arxiv_categories: string[]
-  api: { scoring: { base_url: string; api_key: string; model: string } | null }
+  api: { scoring: { base_url: string; api_key: string; model: string } | null; translation: { base_url: string; api_key: string; model: string } | null }
 }> {
   return apiGet('/config')
 }
 
-export async function updateRecommendConfig(config: Partial<{
-  recommend: Partial<{ daily_papers: number; scoring_batch_size: number; auto_refresh: boolean }>
-  arxiv_categories: string[]
-  api: { scoring: { base_url?: string; api_key?: string; model?: string } }
-}>): Promise<void> {
+export async function updateRecommendConfig(config: Record<string, unknown>): Promise<void> {
   await apiPut('/config', config)
+}
+
+export interface SchedulerStatus {
+  is_running: boolean
+  last_run: string
+  last_error: string
+  next_run: string
+  scheduled: string
+  daily_count: number
+  push_to_feishu: boolean
+}
+
+export async function triggerFullPipeline(): Promise<{ status: string }> {
+  return apiPost<{ status: string }>('/trigger')
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  return apiGet<SchedulerStatus>('/scheduler-status')
 }

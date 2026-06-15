@@ -93,6 +93,8 @@ func (s *Server) registerRoutes() {
 	// Recommend system routes
 	mux.HandleFunc("GET /api/recommend/config", s.handleRecommendGetConfig)
 	mux.HandleFunc("PUT /api/recommend/config", s.handleRecommendUpdateConfig)
+	mux.HandleFunc("POST /api/recommend/trigger", s.handleRecommendTrigger)
+	mux.HandleFunc("GET /api/recommend/scheduler-status", s.handleRecommendSchedulerStatus)
 	mux.HandleFunc("GET /api/recommend/preferences", s.handleRecommendGetPreferences)
 	mux.HandleFunc("PUT /api/recommend/preferences", s.handleRecommendSavePreferences)
 	mux.HandleFunc("POST /api/recommend/fetch", s.handleRecommendFetch)
@@ -114,7 +116,7 @@ func (s *Server) startScheduler() {
 	categories := s.cfg.ArxivCategories
 	dailyPapers := s.cfg.Recommend.DailyPapers
 	batchSize := s.cfg.Recommend.ScoringBatchSize
-	autoRefresh := s.cfg.Recommend.AutoRefresh
+	scheduledTime := s.cfg.Recommend.ScheduledTime
 	s.cfg.RUnlock()
 
 	if len(categories) == 0 {
@@ -122,28 +124,31 @@ func (s *Server) startScheduler() {
 		return
 	}
 
+	if scheduledTime == "" {
+		scheduledTime = "08:00"
+	}
+
 	// One-time migration: import existing JSON papers to chat_papers
 	if err := s.migrateChatPapers(); err != nil {
 		log.Printf("[server] chat_papers migration: %v", err)
 	}
 
-	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, autoRefresh, s.cfg.Recommend.DiversityRatio)
+	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime)
 
 	// Connect scheduler completion to Feishu daily recommendation push
-	if s.feishuBot != nil {
-		s.sched.SetOnComplete(func(articles []database.Article) {
-			// 1. Translate and persist to DB (if translation API configured)
-			s.translateAndPersistArticles(articles)
+	s.sched.SetOnComplete(func(articles []database.Article) {
+		// 1. Translate and persist to DB (if translation API configured)
+		s.translateAndPersistArticles(articles)
 
-			// 2. Push to Feishu
-			s.cfg.RLock()
-			chatID := s.cfg.Feishu.DailyRecommendChatID
-			s.cfg.RUnlock()
-			if chatID != "" {
-				s.feishuBot.PushDailyRecommend(chatID, articles)
-			}
-		})
-	}
+		// 2. Push to Feishu if enabled
+		s.cfg.RLock()
+		chatID := s.cfg.Feishu.DailyRecommendChatID
+		pushEnabled := s.cfg.Recommend.PushToFeishu
+		s.cfg.RUnlock()
+		if chatID != "" && pushEnabled && s.feishuBot != nil {
+			s.feishuBot.PushDailyRecommend(chatID, articles)
+		}
+	})
 
 	s.sched.Start()
 }

@@ -22,8 +22,18 @@ interface PromptInfo { name: string; content: string; source: string }
 
 interface PreferencesData { content: string }
 
+interface SchedulerStatus {
+	is_running: boolean
+	last_run: string
+	last_error: string
+	next_run: string
+	scheduled: string
+	daily_count: number
+	push_to_feishu: boolean
+}
+
 interface RecommendConfigData {
-	recommend: { daily_papers: number; scoring_batch_size: number; auto_refresh: boolean }
+	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number }
 	arxiv_categories: string[]
 	api: {
 		scoring: { base_url: string; api_key: string; model: string } | null
@@ -92,6 +102,9 @@ export function SettingsDialog() {
 	const [preferencesLoading, setPreferencesLoading] = useState(false)
 	const [preferencesSaving, setPreferencesSaving] = useState(false)
 
+	// Scheduler status
+	const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
+
 	// Close on Escape key
 	useEffect(() => {
 		if (!isSettingsOpen) return
@@ -150,6 +163,12 @@ export function SettingsDialog() {
 			})
 			.catch(() => { })
 			.finally(() => setPreferencesLoading(false))
+
+		// Fetch scheduler status
+		fetch('/api/recommend/scheduler-status')
+			.then((r) => r.json())
+			.then(setSchedulerStatus)
+			.catch(() => { })
 	}, [isSettingsOpen])
 
 	if (!visible) return null
@@ -241,6 +260,11 @@ export function SettingsDialog() {
 			const res = await fetch('/api/recommend/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
 			toast.success('推荐配置已保存')
+			// Refresh scheduler status
+			fetch('/api/recommend/scheduler-status')
+				.then((r) => r.json())
+				.then(setSchedulerStatus)
+				.catch(() => { })
 			close()
 		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
 		finally { setRecSaving(false) }
@@ -327,6 +351,31 @@ export function SettingsDialog() {
 
 	const renderRecommend = () => recLoading ? <div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-gray-400" /></div> : (
 		<div className="space-y-4">
+			{/* Scheduler status */}
+			{schedulerStatus && (
+				<div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3 space-y-1.5">
+					<div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">⏱ 定时调度状态</div>
+					<div className="flex items-center gap-2 text-xs">
+						<span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${schedulerStatus.is_running ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300' : 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'}`}>
+							<span className={`w-1.5 h-1.5 rounded-full ${schedulerStatus.is_running ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'}`} />
+							{schedulerStatus.is_running ? '运行中' : '待命中'}
+						</span>
+					</div>
+					{schedulerStatus.scheduled && (
+						<p className="text-xs text-gray-400">定时时间：{schedulerStatus.scheduled}</p>
+					)}
+					{schedulerStatus.next_run && (
+						<p className="text-xs text-gray-400">下次执行：{schedulerStatus.next_run}</p>
+					)}
+					{schedulerStatus.last_run && (
+						<p className="text-xs text-gray-400">上次执行：{schedulerStatus.last_run}{schedulerStatus.daily_count > 0 ? ` (推荐了 ${schedulerStatus.daily_count} 篇)` : ''}</p>
+					)}
+					{schedulerStatus.last_error && (
+						<p className="text-xs text-red-500">上次错误：{schedulerStatus.last_error}</p>
+					)}
+				</div>
+			)}
+
 			<fieldset className="space-y-3">
 				<legend className="text-xs font-medium text-gray-500 dark:text-gray-400">推荐 API (评分用)</legend>
 				<p className="text-xs text-gray-400">用于论文评分和用户偏好分析的 LLM API。留空则使用主 API 配置。</p>
@@ -349,12 +398,13 @@ export function SettingsDialog() {
 			</fieldset>
 			<hr className="border-gray-200 dark:border-gray-800" />
 			<fieldset className="space-y-3">
-				<legend className="text-xs font-medium text-gray-500 dark:text-gray-400">推荐参数</legend>
+				<legend className="text-xs font-medium text-gray-500 dark:text-gray-400">推荐参数与通知</legend>
 				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">每日推荐数量</label><input type="number" value={recommendConfig?.recommend.daily_papers ?? 20} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, daily_papers: parseInt(e.target.value) || 20 } } : prev)} min={1} max={100} className={inputClass} /></div>
 				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">评分批次大小</label><input type="number" value={recommendConfig?.recommend.scoring_batch_size ?? 10} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scoring_batch_size: parseInt(e.target.value) || 10 } } : prev)} min={1} max={50} className={inputClass} /><p className="text-xs text-gray-400 mt-1">每次 LLM 调用评分多少篇论文</p></div>
+				<div><label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">每日定时推荐时间</label><input type="time" value={recommendConfig?.recommend.scheduled_time ?? '08:00'} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scheduled_time: e.target.value } } : prev)} className={inputClass} /></div>
 				<div className="flex items-center gap-2">
-					<input type="checkbox" id="auto-refresh" checked={recommendConfig?.recommend.auto_refresh ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, auto_refresh: e.target.checked } } : prev)} className="w-4 h-4 rounded border-gray-300" />
-					<label htmlFor="auto-refresh" className="text-xs text-gray-500 dark:text-gray-400">启动时自动抓取 RSS 并生成推荐</label>
+					<input type="checkbox" id="push-to-feishu" checked={recommendConfig?.recommend.push_to_feishu ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, push_to_feishu: e.target.checked } } : prev)} className="w-4 h-4 rounded border-gray-300" />
+					<label htmlFor="push-to-feishu" className="text-xs text-gray-500 dark:text-gray-400">推荐完成后推送飞书</label>
 				</div>
 			</fieldset>
 		</div>

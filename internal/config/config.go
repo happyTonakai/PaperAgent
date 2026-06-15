@@ -41,8 +41,9 @@ type APIEndpoint struct {
 type RecommendConfig struct {
 	DailyPapers      int     `yaml:"daily_papers"`
 	ScoringBatchSize int     `yaml:"scoring_batch_size"`
-	AutoRefresh      bool    `yaml:"auto_refresh"`
 	DiversityRatio    float64 `yaml:"diversity_ratio"` // 0-1: proportion of random exploration articles
+	ScheduledTime    string  `yaml:"scheduled_time"`  // HH:MM format, e.g. "08:00"
+	PushToFeishu     bool    `yaml:"push_to_feishu"`  // push recommendations to feishu
 }
 
 type ObsidianConfig struct {
@@ -154,8 +155,9 @@ func defaultConfig() *Config {
 		Recommend: RecommendConfig{
 			DailyPapers:      20,
 			ScoringBatchSize: 10,
-			AutoRefresh:      true,
 			DiversityRatio:   0.3,
+			ScheduledTime:    "08:00",
+			PushToFeishu:     true,
 		},
 		Obsidian: ObsidianConfig{
 			VaultPath:    "~/Documents/Obsidian/MyVault",
@@ -216,8 +218,9 @@ func (c *Config) Save() error {
 		Recommend: RecommendConfig{
 			DailyPapers:      c.Recommend.DailyPapers,
 			ScoringBatchSize: c.Recommend.ScoringBatchSize,
-			AutoRefresh:      c.Recommend.AutoRefresh,
 			DiversityRatio:   c.Recommend.DiversityRatio,
+			ScheduledTime:    c.Recommend.ScheduledTime,
+			PushToFeishu:     c.Recommend.PushToFeishu,
 		},
 		ArxivCategories: c.ArxivCategories,
 		Obsidian: ObsidianConfig{
