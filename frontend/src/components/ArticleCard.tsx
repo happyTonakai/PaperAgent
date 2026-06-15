@@ -36,6 +36,11 @@ function formatAuthors(author: string | null): string {
   return `${authors.slice(0, 3).join(', ')}, ${authors.slice(-2).join(', ')}, et. al.`
 }
 
+function toPdfUrl(link: string): string {
+  // Convert arxiv abs link to PDF link
+  return link.replace(/^https?:\/\/arxiv\.org\/abs\//, 'https://arxiv.org/pdf/')
+}
+
 export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCardProps) {
   const [showComment, setShowComment] = useState(false)
   const [commentText, setCommentText] = useState(article.comment || '')
@@ -70,7 +75,7 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
         {article.category && <span className="article-category">{article.category}</span>}
       </div>
 
-      <h3 className="article-title">{renderText(article.translated_title || article.title)}</h3>
+      <h3 className="article-title" onClick={() => window.open(toPdfUrl(article.link), '_blank', 'noopener,noreferrer')}>{renderText(article.translated_title || article.title)}</h3>
 
       {article.author && (
         <p className="article-author">{formatAuthors(article.author)}</p>
@@ -107,13 +112,6 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
             onClick={() => setShowComment(!showComment)}
             title="评论"
           >💬</button>
-          <a
-            className="btn-action"
-            href={article.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="打开原文"
-          >🔗</a>
           {onChatClick && (
             <button
               className="btn-action btn-chat"
