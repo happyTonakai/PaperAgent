@@ -137,6 +137,8 @@ func (s *Server) startScheduler() {
 
 	// Connect scheduler completion to Feishu daily recommendation push
 	s.sched.SetOnComplete(func(articles []database.Article) {
+		log.Printf("[scheduler] onComplete: %d articles, feishuBot=%v", len(articles), s.feishuBot != nil)
+
 		// 1. Translate and persist to DB (if translation API configured)
 		s.translateAndPersistArticles(articles)
 
@@ -145,8 +147,11 @@ func (s *Server) startScheduler() {
 		chatID := s.cfg.Feishu.DailyRecommendChatID
 		pushEnabled := s.cfg.Recommend.PushToFeishu
 		s.cfg.RUnlock()
+		log.Printf("[scheduler] onComplete: chatID=%q pushEnabled=%v feishuBot=%v", chatID, pushEnabled, s.feishuBot != nil)
 		if chatID != "" && pushEnabled && s.feishuBot != nil {
 			s.feishuBot.PushDailyRecommend(chatID, articles)
+		} else {
+			log.Printf("[scheduler] onComplete: skipping feishu push (chatID=%q pushEnabled=%v bot=%v)", chatID, pushEnabled, s.feishuBot != nil)
 		}
 	})
 

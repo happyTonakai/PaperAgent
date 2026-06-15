@@ -1275,9 +1275,19 @@ func maskAppID(appID string) string {
 // to the specified Feishu chat. Called by the scheduler after daily pipeline completes.
 // Reads translations from SQLite (populated by translateAndPersistArticles in server.go).
 func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) {
-	if b.client == nil || chatID == "" || len(articles) == 0 {
+	if b.client == nil {
+		log.Printf("[feishu] PushDailyRecommend: client is nil, skipping")
 		return
 	}
+	if chatID == "" {
+		log.Printf("[feishu] PushDailyRecommend: chatID is empty, skipping")
+		return
+	}
+	if len(articles) == 0 {
+		log.Printf("[feishu] PushDailyRecommend: no articles, skipping")
+		return
+	}
+	log.Printf("[feishu] PushDailyRecommend: sending %d articles to chat %s", len(articles), chatID)
 
 	// Re-read from DB to get persisted translations (translated_title, translated_abstract)
 	today := time.Now().Format("2006-01-02")
