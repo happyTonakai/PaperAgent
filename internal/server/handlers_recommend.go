@@ -52,7 +52,8 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 		},
 		"arxiv_categories": s.cfg.ArxivCategories,
 		"api": map[string]interface{}{
-			"scoring": apiEndpointToMap(s.cfg.API.Scoring),
+			"scoring":     apiEndpointToMap(s.cfg.API.Scoring),
+			"translation": apiEndpointToMap(s.cfg.API.Translation),
 		},
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -105,6 +106,25 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 			}
 			if v, ok := sc["model"].(string); ok && v != "" {
 				s.cfg.API.Scoring.Model = v
+			}
+		}
+		if t, exists := apiCfg["translation"]; exists {
+			if t == nil {
+				// Explicit null: disable translation
+				s.cfg.API.Translation = nil
+			} else if tc, ok := t.(map[string]interface{}); ok {
+				if s.cfg.API.Translation == nil {
+					s.cfg.API.Translation = &config.APIEndpoint{}
+				}
+				if v, ok := tc["base_url"].(string); ok && v != "" {
+					s.cfg.API.Translation.BaseURL = v
+				}
+				if v, ok := tc["api_key"].(string); ok && v != "" && !strings.HasPrefix(v, "•") {
+					s.cfg.API.Translation.APIKey = v
+				}
+				if v, ok := tc["model"].(string); ok && v != "" {
+					s.cfg.API.Translation.Model = v
+				}
 			}
 		}
 	}
