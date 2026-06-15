@@ -7,7 +7,14 @@ const BASE = '/api/recommend'
 
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path)
-  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`)
+  if (!res.ok) {
+    let msg = `GET ${path}: ${res.status}`
+    try {
+      const errBody = await res.json() as { error?: string }
+      if (errBody.error) msg += ` - ${errBody.error}`
+    } catch { /* ignore parse errors */ }
+    throw new Error(msg)
+  }
   return res.json()
 }
 
@@ -17,7 +24,14 @@ async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   })
-  if (!res.ok) throw new Error(`POST ${path}: ${res.status}`)
+  if (!res.ok) {
+    let msg = `POST ${path}: ${res.status}`
+    try {
+      const errBody = await res.json() as { error?: string }
+      if (errBody.error) msg += ` - ${errBody.error}`
+    } catch { /* ignore parse errors */ }
+    throw new Error(msg)
+  }
   return res.json()
 }
 
@@ -27,7 +41,14 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`PUT ${path}: ${res.status}`)
+  if (!res.ok) {
+    let msg = `PUT ${path}: ${res.status}`
+    try {
+      const errBody = await res.json() as { error?: string }
+      if (errBody.error) msg += ` - ${errBody.error}`
+    } catch { /* ignore parse errors */ }
+    throw new Error(msg)
+  }
   return res.json()
 }
 

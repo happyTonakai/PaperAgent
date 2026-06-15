@@ -444,10 +444,12 @@ func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Requ
 	s.cfg.RUnlock()
 
 	if chatID == "" {
+		log.Printf("[recommend] push-to-feishu: daily_recommend_chat_id not configured")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "daily_recommend_chat_id not configured"})
 		return
 	}
 	if s.feishuBot == nil {
+		log.Printf("[recommend] push-to-feishu: feishu bot not running")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "feishu bot not running"})
 		return
 	}
@@ -455,14 +457,17 @@ func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Requ
 	today := time.Now().Format("2006-01-02")
 	articles, err := database.GetArticlesByRecommendDate(today)
 	if err != nil {
+		log.Printf("[recommend] push-to-feishu: query articles error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("query articles: %v", err)})
 		return
 	}
 	if len(articles) == 0 {
+		log.Printf("[recommend] push-to-feishu: no articles for %s", today)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "no_articles", "message": fmt.Sprintf("no recommendations for %s", today)})
 		return
 	}
 
+	log.Printf("[recommend] push-to-feishu: pushing %d articles to chat %s", len(articles), chatID)
 	s.feishuBot.PushDailyRecommend(chatID, articles)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "pushed", "count": strconv.Itoa(len(articles))})
 }
