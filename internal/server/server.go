@@ -94,6 +94,7 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("GET /api/recommend/config", s.handleRecommendGetConfig)
 	mux.HandleFunc("PUT /api/recommend/config", s.handleRecommendUpdateConfig)
 	mux.HandleFunc("POST /api/recommend/trigger", s.handleRecommendTrigger)
+	mux.HandleFunc("POST /api/recommend/push-to-feishu", s.handleRecommendPushToFeishu)
 	mux.HandleFunc("GET /api/recommend/scheduler-status", s.handleRecommendSchedulerStatus)
 	mux.HandleFunc("GET /api/recommend/preferences", s.handleRecommendGetPreferences)
 	mux.HandleFunc("PUT /api/recommend/preferences", s.handleRecommendSavePreferences)

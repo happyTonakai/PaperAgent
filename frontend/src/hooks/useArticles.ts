@@ -163,6 +163,10 @@ export async function triggerFullPipeline(): Promise<{ status: string }> {
   return apiPost<{ status: string }>('/trigger')
 }
 
+export async function pushToFeishu(): Promise<{ status: string; count?: number; message?: string }> {
+  return apiPost<{ status: string; count?: number; message?: string }>('/push-to-feishu')
+}
+
 export async function getSchedulerStatus(): Promise<SchedulerStatus> {
   return apiGet<SchedulerStatus>('/scheduler-status')
 }

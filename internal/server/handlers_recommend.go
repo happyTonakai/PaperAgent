@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -433,6 +434,37 @@ func (s *Server) handleRecommendTrigger(w http.ResponseWriter, r *http.Request) 
 	s.sched.ManualTrigger()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered"})
+}
+
+// handleRecommendPushToFeishu pushes today's recommendations to the configured
+// Feishu chat. This is a standalone action — it doesn't re-run the pipeline.
+func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
+	chatID := s.cfg.Feishu.DailyRecommendChatID
+	s.cfg.RUnlock()
+
+	if chatID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "daily_recommend_chat_id not configured"})
+		return
+	}
+	if s.feishuBot == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "feishu bot not running"})
+		return
+	}
+
+	today := time.Now().Format("2006-01-02")
+	articles, err := database.GetArticlesByRecommendDate(today)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("query articles: %v", err)})
+		return
+	}
+	if len(articles) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "no_articles", "message": fmt.Sprintf("no recommendations for %s", today)})
+		return
+	}
+
+	s.feishuBot.PushDailyRecommend(chatID, articles)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "pushed", "count": strconv.Itoa(len(articles))})
 }
 
 // handleRecommendSchedulerStatus returns the current scheduler state.

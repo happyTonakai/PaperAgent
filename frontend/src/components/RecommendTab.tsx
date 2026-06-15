@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 import { ArticleList } from './ArticleList'
-import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations, triggerFullPipeline } from '../hooks/useArticles'
+import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations, triggerFullPipeline, pushToFeishu } from '../hooks/useArticles'
 import { useAppStore } from '../stores/appStore'
 import { FontFamilyButton } from './FontFamilyButton'
 import { FontSizeButton } from './FontSizeButton'
@@ -14,6 +14,7 @@ export function RecommendTab() {
   const [fetching, setFetching] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [triggering, setTriggering] = useState(false)
+  const [pushing, setPushing] = useState(false)
   const { contentWidth, toggleContentWidth, theme, setTheme, setSettingsOpen } = useAppStore()
   const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
 
@@ -52,6 +53,22 @@ export function RecommendTab() {
       toast.error('触发失败: ' + String(e))
     } finally {
       setTriggering(false)
+    }
+  }
+
+  const handlePushFeishu = async () => {
+    setPushing(true)
+    try {
+      const res = await pushToFeishu()
+      if (res.status === 'no_articles') {
+        toast.warning(res.message || '今日无推荐文章')
+      } else {
+        toast.success(`已推送 ${res.count} 篇文章到飞书`)
+      }
+    } catch (e) {
+      toast.error('推送失败: ' + String(e))
+    } finally {
+      setPushing(false)
     }
   }
 
@@ -175,6 +192,9 @@ export function RecommendTab() {
           </button>
           <button onClick={handleTrigger} disabled={triggering}>
             {triggering ? '触发中...' : '⚡ 全流程'}
+          </button>
+          <button onClick={handlePushFeishu} disabled={pushing}>
+            {pushing ? '推送中...' : '💬 推送到飞书'}
           </button>
         </div>
       </div>
