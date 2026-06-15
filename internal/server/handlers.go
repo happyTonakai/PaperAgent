@@ -596,6 +596,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[chat] answer complete: %d chars", len(answer))
 
 	unlock = s.lockPaper(id)
+	// Re-load to get latest state after SSE stream (another request may have
+	// modified the paper during the streaming window).
+	paper, err = session.LoadPaperByRef(id)
+	if err != nil {
+		unlock()
+		log.Printf("[chat] reload failed after stream: %v", err)
+		sw.WriteError("failed to save: paper not found")
+		return
+	}
 	// Save assistant message
 	assistantMsg := session.Message{
 		RoundNumber:      round,
@@ -1150,7 +1159,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Feishu.AppID = v
 	}
 	if v, ok := updates["feishu_app_secret"].(string); ok {
-		if v != "" {
+		if v != "" && !strings.Contains(v, "••••") {
 			s.cfg.Feishu.AppSecret = v
 		}
 	}

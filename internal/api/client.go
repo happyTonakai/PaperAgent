@@ -70,10 +70,13 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
-	Tools    []Tool        `json:"tools,omitempty"`
+	Model         string        `json:"model"`
+	Messages      []ChatMessage `json:"messages"`
+	Stream        bool          `json:"stream"`
+	StreamOptions *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options,omitempty"`
+	Tools         []Tool        `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
@@ -175,6 +178,9 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 			Model:    model,
 			Messages: messages,
 			Stream:   true,
+			StreamOptions: &struct {
+				IncludeUsage bool `json:"include_usage"`
+			}{IncludeUsage: true},
 			Tools:    tools,
 		}
 

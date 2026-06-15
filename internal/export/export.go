@@ -179,38 +179,60 @@ func exportWithTemplate(dir, filename, template string, data TemplateData) (stri
 }
 
 func handleConditionals(template string, data TemplateData) string {
-	// Handle {{- if .SourceURL}}...{{- end}}
-	if data.SourceURL != "" {
-		template = strings.ReplaceAll(template, "{{- if .SourceURL}}", "")
-		template = strings.ReplaceAll(template, "{{- end}}", "")
-	} else {
-		// Remove the conditional block
-		start := strings.Index(template, "{{- if .SourceURL}}")
-		end := strings.Index(template, "{{- end}}")
-		if start != -1 && end != -1 {
-			template = template[:start] + template[end+len("{{- end}}"):]
-		}
+	// Process each conditional with proper {{- if .X}} ... {{- end}} pairing.
+	// Uses depth tracking so that opening/closing markers are correctly matched
+	// even when conditionals appear out of order in user templates.
+	type conditional struct {
+		open string
+		keep bool
+	}
+	items := []conditional{
+		{"{{- if .SourceURL}}", data.SourceURL != ""},
+		{"{{- if .InitialSummary}}", data.InitialSummary != ""},
+		{"{{- if .Messages}}", len(data.Messages) > 0},
 	}
 
-	// Handle {{- if .InitialSummary}}...{{- end}}
-	if data.InitialSummary != "" {
-		template = strings.ReplaceAll(template, "{{- if .InitialSummary}}", "")
-	} else {
-		start := strings.Index(template, "{{- if .InitialSummary}}")
-		end := strings.Index(template, "{{- end}}")
-		if start != -1 && end != -1 {
-			template = template[:start] + template[end+len("{{- end}}"):]
+	for _, item := range items {
+		openIdx := strings.Index(template, item.open)
+		if openIdx == -1 {
+			continue
 		}
-	}
+		// Find matching {{- end}} with depth tracking (handles nested conditionals).
+		depth := 1
+		searchFrom := openIdx + len(item.open)
+		closeIdx := -1
+		for {
+			nextOpen := strings.Index(template[searchFrom:], "{{- if ")
+			nextEnd := strings.Index(template[searchFrom:], "{{- end}}")
+			if nextEnd == -1 {
+				break
+			}
+			if nextOpen != -1 && nextOpen < nextEnd {
+				depth++
+				searchFrom += nextOpen + len("{{- if ")
+				continue
+			}
+			depth--
+			if depth == 0 {
+				closeIdx = searchFrom + nextEnd
+				break
+			}
+			searchFrom += nextEnd + len("{{- end}}")
+		}
+		if closeIdx == -1 {
+			continue
+		}
+		closeTag := "{{- end}}"
 
-	// Handle {{- if .Messages}}...{{- end}}
-	if len(data.Messages) > 0 {
-		template = strings.ReplaceAll(template, "{{- if .Messages}}", "")
-	} else {
-		start := strings.Index(template, "{{- if .Messages}}")
-		end := strings.LastIndex(template, "{{- end}}")
-		if start != -1 && end != -1 {
-			template = template[:start] + template[end+len("{{- end}}"):]
+		if item.keep {
+			// Keep the content, remove only the opening/closing markers.
+			template = template[:openIdx] +
+				template[openIdx+len(item.open):closeIdx] +
+				template[closeIdx+len(closeTag):]
+		} else {
+			// Remove the entire block including markers.
+			template = template[:openIdx] +
+				template[closeIdx+len(closeTag):]
 		}
 	}
 

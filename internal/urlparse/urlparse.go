@@ -193,7 +193,7 @@ func fetchArxivHTMLRaw(url string) (string, error) {
 		},
 	}
 
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv HTML: %w", err)
 	}
@@ -267,7 +267,7 @@ func FetchArxivTitle(arxivID string) (string, error) {
 	url := "https://arxiv.org/abs/" + arxivID
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv page: %w", err)
 	}
@@ -298,7 +298,7 @@ func FetchArxivAbstract(arxivID string) (string, error) {
 	url := "https://arxiv.org/abs/" + arxivID
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv page: %w", err)
 	}
@@ -353,7 +353,7 @@ func tryArxiv2Text(url string) (string, error) {
 
 func httpFetch(url string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching URL: %w", err)
 	}
@@ -369,6 +369,16 @@ func httpFetch(url string) (string, error) {
 	}
 
 	return string(body), nil
+}
+
+// doGet sends a GET request with a User-Agent header set (arXiv requires it).
+func doGet(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "PaperAgent/1.0")
+	return client.Do(req)
 }
 
 // LoadFile loads content from a file path.
