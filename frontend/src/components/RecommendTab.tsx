@@ -1,8 +1,11 @@
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
+import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 import { ArticleList } from './ArticleList'
 import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations } from '../hooks/useArticles'
 import { useAppStore } from '../stores/appStore'
+import { FontFamilyButton } from './FontFamilyButton'
+import { FontSizeButton } from './FontSizeButton'
 
 type FilterValue = number | 'daily'
 
@@ -10,7 +13,8 @@ export function RecommendTab() {
   const [filter, setFilter] = useState<FilterValue>('daily')
   const [fetching, setFetching] = useState(false)
   const [generating, setGenerating] = useState(false)
-  const contentWidth = useAppStore((s) => s.contentWidth)
+  const { contentWidth, toggleContentWidth, theme, setTheme, setSettingsOpen } = useAppStore()
+  const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
 
   const { articles: dailyArticles, loading: dailyLoading, refetch: refetchDaily } = useTodayRecommendations()
   const { articles: filteredArticles, loading: filteredLoading, refetch: refetchFiltered } = useArticles(
@@ -63,6 +67,49 @@ export function RecommendTab() {
 
   return (
     <div className="recommend-tab">
+      {/* Controls bar */}
+      <div
+        className="flex-shrink-0 px-4 py-1.5 flex items-center justify-end gap-1"
+        style={{
+          backgroundColor: 'var(--color-surface)',
+          borderBottom: '1px solid var(--color-border)',
+        }}
+      >
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className={controlBtnClass}
+          style={{ color: 'var(--color-text-muted)' }}
+          title="设置"
+          aria-label="设置"
+        >
+          <Settings size={15} />
+        </button>
+        <button
+          onClick={() => {
+            const cycle: Array<'light' | 'dark' | 'system'> = ['light', 'dark', 'system']
+            const idx = cycle.indexOf(theme)
+            setTheme(cycle[(idx + 1) % cycle.length])
+          }}
+          className={controlBtnClass}
+          style={{ color: 'var(--color-text-muted)' }}
+          title={`主题: ${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
+          aria-label="切换主题"
+        >
+          {theme === 'light' ? <Sun size={15} /> : theme === 'dark' ? <Moon size={15} /> : <Monitor size={15} />}
+        </button>
+        <FontFamilyButton />
+        <FontSizeButton />
+        <button
+          onClick={toggleContentWidth}
+          className={controlBtnClass}
+          style={{ color: 'var(--color-text-muted)' }}
+          title={contentWidth === 'full' ? '窄屏阅读' : '宽屏阅读'}
+          aria-label={contentWidth === 'full' ? '切换到窄屏' : '切换到宽屏'}
+        >
+          {contentWidth === 'full' ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+        </button>
+      </div>
+
       {/* Stats bar */}
       <div className="recommend-stats">
         <div className="stat">
