@@ -72,6 +72,15 @@ func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "config.yaml")
 }
 
+// ConfigExists reports whether the user config file exists on disk.
+// Used by the Web UI to detect a first-run state and auto-open the
+// settings dialog, since a missing config.yaml means the user has not
+// yet configured the API key etc.
+func ConfigExists() bool {
+	_, err := os.Stat(ConfigPath())
+	return err == nil
+}
+
 func PapersDir() string {
 	return filepath.Join(ConfigDir(), "papers")
 }

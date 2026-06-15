@@ -166,6 +166,28 @@ export default function App() {
     return () => mq.removeEventListener('change', handler)
   }, [])
 
+  // First-run detection: if config.yaml doesn't exist on disk, auto-open
+  // the settings dialog so the user is guided through API key setup
+  // instead of staring at a blank UI.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/config/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { config_exists?: boolean; api_key_configured?: boolean } | null) => {
+        if (cancelled || !data) return
+        if (data.config_exists === false) {
+          toast.info('首次启动，请先在「API 配置」中填写 API 密钥', { duration: 6000 })
+          useAppStore.getState().setSettingsOpen(true)
+        }
+      })
+      .catch(() => {
+        // Network/server errors are non-fatal; ignore silently.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Toggle new paper dialog with Cmd+K / Ctrl+K
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

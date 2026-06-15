@@ -214,6 +214,30 @@ func TestConfigDirPaths(t *testing.T) {
 	}
 }
 
+func TestConfigExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	// Initially no config file exists.
+	if ConfigExists() {
+		t.Error("expected ConfigExists() == false when config.yaml is missing")
+	}
+
+	// Create the file -> ConfigExists should return true.
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("api: {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !ConfigExists() {
+		t.Error("expected ConfigExists() == true after writing config.yaml")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
 }

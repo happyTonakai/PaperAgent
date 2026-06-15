@@ -1076,6 +1076,21 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
+// handleConfigStatus returns a lightweight status payload used by the Web UI
+// to detect a first-run state (config.yaml missing on disk) and auto-open
+// the settings dialog instead of showing a blank UI.
+func (s *Server) handleConfigStatus(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
+	apiKey := s.cfg.API.APIKey
+	apiKeyConfigured := apiKey != "" && !strings.HasPrefix(apiKey, "${")
+	s.cfg.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config_exists":      config.ConfigExists(),
+		"api_key_configured": apiKeyConfigured,
+	})
+}
+
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
 	apiKey := s.cfg.API.APIKey
