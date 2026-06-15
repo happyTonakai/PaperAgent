@@ -262,6 +262,16 @@ func (b *Bot) onCardAction(ctx context.Context, event *callback.CardActionTrigge
 	case strings.HasPrefix(actionVal, "recommend:activate:"):
 		articleID := strings.TrimPrefix(actionVal, "recommend:activate:")
 		return b.handleRecommendActivate(articleID, chatID)
+	case actionVal == "recommend:mark-read-page":
+		// Bulk mark all articles in the current page as read.
+		rawIDs, _ := event.Event.Action.Value["paper_ids"].([]any)
+		ids := make([]string, 0, len(rawIDs))
+		for _, v := range rawIDs {
+			if s, ok := v.(string); ok {
+				ids = append(ids, s)
+			}
+		}
+		return b.handleRecommendMarkReadPage(ids, chatID)
 	}
 
 	return nil, nil
@@ -1371,6 +1381,27 @@ func (b *Bot) handleRecommendDislike(articleID, chatID string) (*callback.CardAc
 	}
 	return &callback.CardActionTriggerResponse{
 		Toast: &callback.Toast{Type: "success", Content: "已点踩 👎"},
+	}, nil
+}
+
+// handleRecommendMarkReadPage bulk-marks all articles in the current Feishu
+// recommendation card page as read. Mirrors the WebUI's hover-to-read
+// affordance and the "全部已读" button.
+func (b *Bot) handleRecommendMarkReadPage(articleIDs []string, chatID string) (*callback.CardActionTriggerResponse, error) {
+	if len(articleIDs) == 0 {
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "warning", Content: "本页无文章"},
+		}, nil
+	}
+	if err := database.BatchUpdateArticleStatus(articleIDs, 3); err != nil {
+		log.Printf("[feishu] recommend mark-read-page error: %v", err)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: "error", Content: "操作失败"},
+		}, nil
+	}
+	log.Printf("[feishu] mark-read-page: marked %d articles as read (chat=%s)", len(articleIDs), chatID)
+	return &callback.CardActionTriggerResponse{
+		Toast: &callback.Toast{Type: "success", Content: fmt.Sprintf("已标记本页 %d 篇为已读", len(articleIDs))},
 	}, nil
 }
 

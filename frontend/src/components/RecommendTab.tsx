@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 import { ArticleList } from './ArticleList'
-import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations, triggerFullPipeline, pushToFeishu } from '../hooks/useArticles'
+import { useArticles, useTodayRecommendations, useStats, fetchNewArticles, generateRecommendations, triggerFullPipeline, pushToFeishu, batchUpdateArticleStatus } from '../hooks/useArticles'
 import { useAppStore } from '../stores/appStore'
 import { FontFamilyButton } from './FontFamilyButton'
 import { FontSizeButton } from './FontSizeButton'
@@ -19,7 +19,7 @@ export function RecommendTab() {
   const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
 
   const { articles: dailyArticles, loading: dailyLoading, refetch: refetchDaily } = useTodayRecommendations()
-  const { articles: filteredArticles, loading: filteredLoading, refetch: refetchFiltered } = useArticles(
+  const { articles: filteredArticles, loading: filteredLoading, hasMore, loadMore, refetch: refetchFiltered } = useArticles(
     typeof filter === 'number' ? filter : null
   )
   const { stats, refetch: refetchStats } = useStats()
@@ -32,10 +32,14 @@ export function RecommendTab() {
     window.dispatchEvent(new CustomEvent('recommend-chat', { detail: { arxivId: id, title } }))
   }, [])
 
-  const handleStatusChange = useCallback(() => {
+  // refetch defaults to true; pass false for hover-to-read so the article
+  // stays in the list (the card updates its own data-status locally).
+  const handleStatusChange = useCallback((_id?: string, _status?: number, refetch = true) => {
     refetchStats()
-    if (filter === 'daily') refetchDaily()
-    else refetchFiltered()
+    if (refetch) {
+      if (filter === 'daily') refetchDaily()
+      else refetchFiltered()
+    }
   }, [filter, refetchDaily, refetchFiltered, refetchStats])
 
   const handleTrigger = async () => {
@@ -98,6 +102,34 @@ export function RecommendTab() {
       toast.error('推荐生成失败: ' + String(e))
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const [markingAll, setMarkingAll] = useState(false)
+  // Server caps batch status updates at 500; slice into chunks so a 600+ page
+  // load doesn't 400 on the user. The button is also disabled once we've
+  // already marked the current page, to avoid double-submit.
+  const BATCH_CHUNK = 500
+  const handleMarkAllRead = async () => {
+    if (articles.length === 0) return
+    if (!confirm(`将当前列表中的 ${articles.length} 篇文章全部标记为已读？`)) return
+    setMarkingAll(true)
+    try {
+      const ids = articles.map(a => a.id)
+      let total = 0
+      for (let i = 0; i < ids.length; i += BATCH_CHUNK) {
+        const slice = ids.slice(i, i + BATCH_CHUNK)
+        await batchUpdateArticleStatus(slice, 3)
+        total += slice.length
+      }
+      toast.success(`已标记 ${total} 篇为已读`)
+      // Always refetch the list after a bulk operation — unlike single-card
+      // hover, the parent doesn't know which articles were affected.
+      handleStatusChange(undefined, undefined, true)
+    } catch (e) {
+      toast.error('批量标记失败: ' + String(e))
+    } finally {
+      setMarkingAll(false)
     }
   }
 
@@ -169,8 +201,8 @@ export function RecommendTab() {
       {/* Toolbar */}
       <div className="recommend-toolbar">
         <div className="filter-tabs">
-          {(['daily', 0, 2, -1] as const).map(f => {
-            const labels: Record<string, string> = { daily: '今日推荐', '0': '未读', '2': '喜欢', '-1': '不喜欢' }
+          {(['daily', 0, 2, -1, 3] as const).map(f => {
+            const labels: Record<string, string> = { daily: '今日推荐', '0': '未读', '2': '喜欢', '-1': '不喜欢', '3': '已读' }
             return (
               <button
                 key={String(f)}
@@ -184,6 +216,11 @@ export function RecommendTab() {
         </div>
 
         <div className="toolbar-actions">
+          {(filter === 'daily' || filter === 0) && (
+            <button onClick={handleMarkAllRead} disabled={markingAll || articles.length === 0}>
+              {markingAll ? '标记中...' : '✅ 全部已读'}
+            </button>
+          )}
           <button onClick={handleFetch} disabled={fetching}>
             {fetching ? '抓取中...' : '📥 抓取新文章'}
           </button>
@@ -206,6 +243,8 @@ export function RecommendTab() {
           articles={articles}
           loading={loading}
           error={null}
+          hasMore={filter !== 'daily' ? hasMore : false}
+          onLoadMore={loadMore}
           onStatusChange={handleStatusChange}
           onChatClick={handleChatClick}
         />

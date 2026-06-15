@@ -726,10 +726,12 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 		c["header"] = cardHeader("📅 今日论文推荐", "blue")
 	}
 
-	elements := make([]map[string]any, 0, len(items)+3)
+	elements := make([]map[string]any, 0, len(items)+4)
+	pageIDs := make([]string, 0, len(items))
 
 	for i, item := range items {
 		title := item.Title
+		pageIDs = append(pageIDs, item.ID)
 		scoreStr := fmt.Sprintf("%.3f", item.Score)
 		voteStr := ""
 		if item.AXNetVotes != nil {
@@ -801,6 +803,20 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 			elements = append(elements, hrElement())
 		}
 	}
+
+	// "Mark all as read" button — bulk-marks every article in this page.
+	// (Hover-to-read is the WebUI affordance; this is the Feishu equivalent.)
+	markReadBtn := map[string]any{
+		"tag":  "button",
+		"text": plainText(fmt.Sprintf("✅ 一键已阅本页 %d 篇", len(pageIDs))),
+		"type": "default",
+		"value": map[string]any{
+			"action":    "recommend:mark-read-page",
+			"paper_ids": pageIDs,
+		},
+		"width": "default",
+	}
+	elements = append(elements, markReadBtn)
 
 	// Footer
 	elements = append(elements, hrElement())

@@ -106,6 +106,7 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("GET /api/recommend/dates", s.handleRecommendDates)
 	mux.HandleFunc("GET /api/recommend/dates/{date}", s.handleRecommendArticlesByDate)
 	mux.HandleFunc("PUT /api/recommend/articles/{id}/status", s.handleRecommendUpdateStatus)
+	mux.HandleFunc("PUT /api/recommend/articles/status", s.handleRecommendBatchUpdateStatus)
 	mux.HandleFunc("PUT /api/recommend/articles/{id}/comment", s.handleRecommendUpdateComment)
 	mux.HandleFunc("POST /api/recommend/votes", s.handleRecommendFetchVotes)
 	mux.HandleFunc("GET /api/recommend/stats", s.handleRecommendStats)

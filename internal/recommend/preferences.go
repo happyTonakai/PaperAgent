@@ -45,7 +45,7 @@ func WritePreferences(content string) error {
 type FeedbackArticle struct {
 	Title    string
 	Abstract string
-	Status   int    // 0:unread, 1:clicked, 2:liked, -1:disliked, 3:mark_read
+	Status   int    // 0:unread, 1:clicked, 2:liked, -1:disliked
 	Comment  *string
 	Source   string // "recommend" 或 "chat"
 	Rating   *int   // 问答系统评分 (1-10)，仅 chat 来源
@@ -74,8 +74,6 @@ func UpdatePreferences(client *api.Client, model string, currentPrefs string, fe
 			action = "点击 -推荐系统"
 		case fb.Status == -1 && fb.Source == "recommend":
 			action = "点踩 -推荐系统"
-		case fb.Status == 3 && fb.Source == "recommend":
-			action = "已读 -推荐系统"
 		case fb.Rating != nil && *fb.Rating == 0:
 			action = "评分无（系统默认值，用户未评分）-问答系统"
 		case fb.Rating != nil:
@@ -109,8 +107,10 @@ func CollectYesterdayFeedback() ([]FeedbackArticle, error) {
 	var feedbacks []FeedbackArticle
 
 	// 1. Recommend system: articles with status changes yesterday or today
-	//    (status: 1=clicked, 2=liked, -1=disliked, 3=mark_read)
-	for _, status := range []int{1, 2, -1, 3} {
+	//    (status: 1=clicked, 2=liked, -1=disliked; mark_read=3 is excluded
+	//    because users mark almost everything read by reflex, which would
+	//    pollute the preference signal.)
+	for _, status := range []int{1, 2, -1} {
 		articles, err := database.GetArticles(&status, 200, 0)
 		if err != nil {
 			continue

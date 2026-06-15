@@ -1,10 +1,15 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { RecommendArticle } from '../types'
 import { updateArticleStatus, updateArticleComment } from '../hooks/useArticles'
 
+// Hover duration (ms) after which an unread article is auto-marked as read.
+const HOVER_READ_DELAY_MS = 500
+
 interface ArticleCardProps {
   article: RecommendArticle
-  onStatusChange?: (id: string, status: number) => void
+  // Third arg `refetch` (default true) lets callers like hover-to-read skip
+  // the parent list-refetch so the article stays in place.
+  onStatusChange?: (id: string, status: number, refetch?: boolean) => void
   onChatClick?: (id: string, title: string) => void
 }
 
@@ -44,11 +49,16 @@ function toPdfUrl(link: string): string {
 export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCardProps) {
   const [showComment, setShowComment] = useState(false)
   const [commentText, setCommentText] = useState(article.comment || '')
+  // displayStatus mirrors article.status locally so hover/like/dislike
+  // updates show up immediately in the CSS accent (data-status) without
+  // having to refetch the whole list and risk dropping the article.
+  const [displayStatus, setDisplayStatus] = useState(article.status)
 
   const handleStatus = async (newStatus: number) => {
     const finalStatus = article.status === newStatus ? 0 : newStatus
     try {
       await updateArticleStatus(article.id, finalStatus)
+      setDisplayStatus(finalStatus)
       onStatusChange?.(article.id, finalStatus)
     } catch {}
   }
@@ -68,8 +78,49 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
     })
   }
 
+  // Hover-to-mark-read: only for unread articles, fires once per card mount.
+  // currentStatusRef mirrors displayStatus to avoid stale-closure issues
+  // when the user toggles like/dislike and then hovers again before React
+  // re-renders this card.
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [hoverReadDone, setHoverReadDone] = useState(article.status !== 0)
+  const currentStatusRef = useRef(article.status)
+  currentStatusRef.current = displayStatus
+
+  const handleMouseEnter = () => {
+    if (hoverReadDone) return
+    if (currentStatusRef.current !== 0) return
+    hoverTimer.current = setTimeout(async () => {
+      try {
+        await updateArticleStatus(article.id, 3)
+        // Only mark done after the server confirms. On failure, leave the
+        // state intact so the user can re-hover.
+        setHoverReadDone(true)
+        setDisplayStatus(3)
+        // Tell the parent to refetch stats but NOT the list, so the article
+        // stays in place (we already updated displayStatus locally).
+        onStatusChange?.(article.id, 3, false)
+      } catch {
+        // network error — leave card as-is; user can re-hover
+      }
+    }, HOVER_READ_DELAY_MS)
+  }
+
+  const handleMouseLeave = () => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }
+
   return (
-    <div className="article-card" data-status={article.status}>
+    <div
+      className="article-card"
+      data-status={displayStatus}
+      data-article-id={article.id}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <div className="article-header">
         <span className="article-score">兴趣分: {article.score.toFixed(3)}</span>
         {article.category && <span className="article-category">{article.category}</span>}
@@ -93,20 +144,15 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
 
         <div className="article-actions">
           <button
-            className={`btn-action ${article.status === 2 ? 'active' : ''}`}
+            className={`btn-action ${displayStatus === 2 ? 'active' : ''}`}
             onClick={() => handleStatus(2)}
             title="喜欢"
           >👍</button>
           <button
-            className={`btn-action ${article.status === -1 ? 'active' : ''}`}
+            className={`btn-action ${displayStatus === -1 ? 'active' : ''}`}
             onClick={() => handleStatus(-1)}
             title="不喜欢"
           >👎</button>
-          <button
-            className={`btn-action ${article.status === 3 ? 'active' : ''}`}
-            onClick={() => handleStatus(3)}
-            title="跳过"
-          >→</button>
           <button
             className={`btn-action ${article.comment ? 'has-comment' : ''}`}
             onClick={() => setShowComment(!showComment)}

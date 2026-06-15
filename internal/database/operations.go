@@ -289,6 +289,31 @@ func UpdateArticleStatus(id string, status int) error {
 	return err
 }
 
+// BatchUpdateArticleStatus updates the status for many articles in one
+// statement. Empty IDs is a no-op. Caller is responsible for capping
+// len(ids) to avoid unbounded IN clauses.
+func BatchUpdateArticleStatus(ids []string, status int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	db, err := GetDB()
+	if err != nil {
+		return fmt.Errorf("batch update article status: %w", err)
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+	args := make([]any, len(ids)+1)
+	args[0] = status
+	for i, id := range ids {
+		args[i+1] = id
+	}
+	_, err = db.Exec("UPDATE articles SET status = ? WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return fmt.Errorf("batch update article status (n=%d): %w", len(ids), err)
+	}
+	return nil
+}
+
 // UpdateArticleComment updates the user comment for an article.
 func UpdateArticleComment(id string, comment string) error {
 	db, err := GetDB()

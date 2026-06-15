@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RecommendArticle, RecommendStats } from '../types'
 
 const BASE = '/api/recommend'
+const PAGE_SIZE = 100
 
 // ── Fetch helpers ──
 
@@ -57,27 +58,49 @@ async function apiPut<T>(path: string, body: unknown): Promise<T> {
 export function useArticles(status?: number | null) {
   const [articles, setArticles] = useState<RecommendArticle[]>([])
   const [loading, setLoading] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const offsetRef = useRef(0)
+  // Monotonic request id; out-of-order responses (from rapid tab switches)
+  // are discarded so they don't clobber the latest view.
+  const requestIdRef = useRef(0)
 
-  const fetch = useCallback(async () => {
+  const fetchPage = useCallback(async (reset: boolean) => {
+    const myId = ++requestIdRef.current
     setLoading(true)
     setError(null)
     try {
+      const currentOffset = reset ? 0 : offsetRef.current
       const params = new URLSearchParams()
       if (status != null) params.set('status', String(status))
-      params.set('limit', '100')
+      params.set('limit', String(PAGE_SIZE))
+      params.set('offset', String(currentOffset))
       const data = await apiGet<RecommendArticle[]>('/articles?' + params.toString())
-      setArticles(data)
+      if (myId !== requestIdRef.current) return // stale
+      if (reset) {
+        setArticles(data)
+        offsetRef.current = data.length
+      } else {
+        setArticles(prev => [...prev, ...data])
+        offsetRef.current += data.length
+      }
+      setHasMore(data.length === PAGE_SIZE)
     } catch (e) {
+      if (myId !== requestIdRef.current) return // stale
       setError(String(e))
     } finally {
-      setLoading(false)
+      if (myId === requestIdRef.current) setLoading(false)
     }
   }, [status])
 
-  useEffect(() => { fetch() }, [fetch])
+  useEffect(() => {
+    fetchPage(true)
+  }, [status, fetchPage])
 
-  return { articles, loading, error, refetch: fetch }
+  const loadMore = useCallback(() => fetchPage(false), [fetchPage])
+  const refetch = useCallback(() => fetchPage(true), [fetchPage])
+
+  return { articles, loading, hasMore, error, refetch, loadMore }
 }
 
 export function useTodayRecommendations(date?: string) {
@@ -135,6 +158,12 @@ export async function generateRecommendations(): Promise<number> {
 
 export async function updateArticleStatus(id: string, status: number): Promise<void> {
   await apiPut(`/articles/${encodeURIComponent(id)}/status`, { status })
+}
+
+// batchUpdateArticleStatus marks many articles at once. Empty ids is a no-op.
+export async function batchUpdateArticleStatus(ids: string[], status: number): Promise<void> {
+  if (ids.length === 0) return
+  await apiPut('/articles/status', { ids, status })
 }
 
 export async function updateArticleComment(id: string, comment: string): Promise<void> {

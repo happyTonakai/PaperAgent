@@ -5,12 +5,14 @@ interface ArticleListProps {
   articles: RecommendArticle[]
   loading: boolean
   error: string | null
-  onStatusChange?: (id: string, status: number) => void
+  hasMore?: boolean
+  onStatusChange?: (id: string, status: number, refetch?: boolean) => void
   onChatClick?: (id: string, title: string) => void
+  onLoadMore?: () => void
 }
 
-export function ArticleList({ articles, loading, error, onStatusChange, onChatClick }: ArticleListProps) {
-  if (loading) {
+export function ArticleList({ articles, loading, error, hasMore, onStatusChange, onChatClick, onLoadMore }: ArticleListProps) {
+  if (loading && articles.length === 0) {
     return <div className="recommend-loading">加载中...</div>
   }
 
@@ -32,6 +34,13 @@ export function ArticleList({ articles, loading, error, onStatusChange, onChatCl
           onChatClick={onChatClick}
         />
       ))}
+      {onLoadMore && hasMore && (
+        <div className="article-load-more">
+          <button onClick={onLoadMore} disabled={loading}>
+            {loading ? '加载中...' : '加载更多'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

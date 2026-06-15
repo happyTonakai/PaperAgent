@@ -371,6 +371,36 @@ func (s *Server) handleRecommendUpdateStatus(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// --- Batch Article Status ---
+
+// handleRecommendBatchUpdateStatus updates the status of many articles at once.
+// Used by the "全部已读" / 飞书 "已阅" buttons.
+// Body: {"ids": ["arxiv_id", ...], "status": 3}
+// Caps at 500 ids per call to avoid unbounded IN clauses.
+func (s *Server) handleRecommendBatchUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs    []string `json:"ids"`
+		Status int      `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "no-op"})
+		return
+	}
+	if len(req.IDs) > 500 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many ids (max 500)"})
+		return
+	}
+	if err := database.BatchUpdateArticleStatus(req.IDs, req.Status); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "count": strconv.Itoa(len(req.IDs))})
+}
+
 // --- Article Comment ---
 
 func (s *Server) handleRecommendUpdateComment(w http.ResponseWriter, r *http.Request) {
