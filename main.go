@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/feishu"
@@ -33,11 +34,20 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
-		os.Exit(1)
+		// Config parse errors are fatal
+		if !strings.Contains(err.Error(), "env var not set") &&
+			!strings.Contains(err.Error(), "unresolved env vars") {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		// Unresolved env var references are warnings, not fatal.
+		// The user can fix them via the Web UI settings page.
+		fmt.Fprintf(os.Stderr, "⚠️  Config warning: %v\n", err)
+		fmt.Fprintln(os.Stderr, "   API calls will fail until the keys are configured.")
+		fmt.Fprintln(os.Stderr, "   Open the Web UI settings page, or set the environment variables.")
 	}
 
-	if cfg.API.APIKey == "" || cfg.API.APIKey == "${OPENAI_API_KEY}" {
+	if cfg.API.APIKey == "" {
 		fmt.Fprintln(os.Stderr, "Warning: No API key configured.")
 		fmt.Fprintln(os.Stderr, "Open the Web UI settings page or run:")
 		fmt.Fprintln(os.Stderr, "  export OPENAI_API_KEY=your-key-here")

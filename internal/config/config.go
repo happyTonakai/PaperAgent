@@ -82,16 +82,23 @@ func PromptsDir() string {
 func Load() (*Config, error) {
 	cfg := defaultConfig()
 
-	// Always expand env vars in API key, even if no config file exists
-	resolveAPIKey := func(key string) string {
+	// Always expand env vars in API key, even if no config file exists.
+	// Returns (resolved, error) where error is non-nil when env var
+	// references like ${VAR} are left unresolved.
+	resolveAPIKey := func(key string) (string, error) {
 		expanded := os.ExpandEnv(key)
 		if d, err := decryptKey(expanded); err == nil {
-			return d
+			return d, nil
 		}
-		return expanded
+		// Check for unresolved env var references — these indicate
+		// a configuration mistake and will cause API calls to fail.
+		if hasUnresolvedEnv(expanded) {
+			return expanded, fmt.Errorf("env var not set: %q contains unresolved ${...} reference", expanded)
+		}
+		return expanded, nil
 	}
 
-	cfg.API.APIKey = resolveAPIKey(cfg.API.APIKey)
+	cfg.API.APIKey, _ = resolveAPIKey(cfg.API.APIKey)
 
 	path := ConfigPath()
 	data, err := os.ReadFile(path)
@@ -107,18 +114,34 @@ func Load() (*Config, error) {
 	}
 
 	// Resolve all API keys: expand env vars + decrypt
-	cfg.API.APIKey = resolveAPIKey(cfg.API.APIKey)
+	var resolveErrors []string
+	cfg.API.APIKey, _ = resolveAPIKey(cfg.API.APIKey)
 	if cfg.API.Scoring != nil {
-		cfg.API.Scoring.APIKey = resolveAPIKey(cfg.API.Scoring.APIKey)
+		if _, err := resolveAPIKey(cfg.API.Scoring.APIKey); err != nil {
+			resolveErrors = append(resolveErrors, "scoring: "+err.Error())
+		}
+		cfg.API.Scoring.APIKey, _ = resolveAPIKey(cfg.API.Scoring.APIKey)
 	}
 	if cfg.API.Translation != nil {
-		cfg.API.Translation.APIKey = resolveAPIKey(cfg.API.Translation.APIKey)
+		if _, err := resolveAPIKey(cfg.API.Translation.APIKey); err != nil {
+			resolveErrors = append(resolveErrors, "translation: "+err.Error())
+		}
+		cfg.API.Translation.APIKey, _ = resolveAPIKey(cfg.API.Translation.APIKey)
+	}
+	if len(resolveErrors) > 0 {
+		return cfg, fmt.Errorf("unresolved env vars: %s", strings.Join(resolveErrors, "; "))
 	}
 
 	// Expand ~ in paths
 	cfg.Obsidian.VaultPath = expandHome(cfg.Obsidian.VaultPath)
 
 	return cfg, nil
+}
+
+// hasUnresolvedEnv reports whether s still contains any ${VAR} patterns
+// that os.ExpandEnv failed to resolve.
+func hasUnresolvedEnv(s string) bool {
+	return strings.Contains(s, "${") && strings.Contains(s, "}")
 }
 
 func defaultConfig() *Config {

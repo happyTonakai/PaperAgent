@@ -26,16 +26,26 @@ func resolveAPIKeyInput(v string) string {
 
 // --- Scoring client helper ---
 
-func (s *Server) scoringClient() *api.Client {
-	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-
-	ep := s.cfg.API.Scoring
+// buildScoringClient creates an API client from the current scoring config.
+func buildScoringClient(cfg *config.Config) *api.Client {
+	ep := cfg.API.Scoring
 	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
 		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
 	}
-	// Fallback to main API config
-	return api.NewClientFromEndpoint(s.cfg.API.BaseURL, s.cfg.API.APIKey, s.cfg.API.DefaultModel)
+	return api.NewClientFromEndpoint(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.DefaultModel)
+}
+
+// buildTranslationClient creates an API client from the current translation config.
+func buildTranslationClient(cfg *config.Config) *api.Client {
+	ep := cfg.API.Translation
+	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
+		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
+	}
+	return nil
+}
+
+func (s *Server) scoringClient() *api.Client {
+	return s.scoringAPI
 }
 
 func (s *Server) scoringModel() string {
@@ -111,7 +121,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 			if v, ok := sc["base_url"].(string); ok && v != "" {
 				s.cfg.API.Scoring.BaseURL = v
 			}
-			if v, ok := sc["api_key"].(string); ok && v != "" && !strings.HasPrefix(v, "•") {
+			if v, ok := sc["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
 				s.cfg.API.Scoring.APIKey = resolveAPIKeyInput(v)
 			}
 			if v, ok := sc["model"].(string); ok && v != "" {
@@ -129,7 +139,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 				if v, ok := tc["base_url"].(string); ok && v != "" {
 					s.cfg.API.Translation.BaseURL = v
 				}
-				if v, ok := tc["api_key"].(string); ok && v != "" && !strings.HasPrefix(v, "•") {
+				if v, ok := tc["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
 					s.cfg.API.Translation.APIKey = resolveAPIKeyInput(v)
 				}
 				if v, ok := tc["model"].(string); ok && v != "" {
@@ -138,6 +148,9 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
+	// Refresh cached API clients (while still holding the lock for consistency)
+	s.scoringAPI = buildScoringClient(s.cfg)
+	s.translationAPI = buildTranslationClient(s.cfg)
 
 	s.cfg.Unlock()
 
@@ -430,17 +443,8 @@ func (s *Server) handleRecommendStats(w http.ResponseWriter, r *http.Request) {
 
 // ─── Translation helpers ───
 
-// translationClient returns an API client for the translation endpoint,
-// or nil if translation is not configured.
 func (s *Server) translationClient() *api.Client {
-	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-
-	ep := s.cfg.API.Translation
-	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
-		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
-	}
-	return nil
+	return s.translationAPI
 }
 
 // translateAndPersistArticles translates articles' titles and abstracts (if translation

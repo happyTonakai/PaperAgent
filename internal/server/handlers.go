@@ -1122,7 +1122,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfg.Lock()
-	if v, ok := updates["api_key"].(string); ok && v != "" {
+	if v, ok := updates["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
 		s.cfg.API.APIKey = resolveAPIKeyInput(v)
 	}
 	if v, ok := updates["base_url"].(string); ok && v != "" {
