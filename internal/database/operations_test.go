@@ -299,7 +299,8 @@ func TestMarkDailyRecommendations_NotEnoughScored(t *testing.T) {
 func TestMarkDailyRecommendations_NoScoredArticles(t *testing.T) {
 	defer setupTestDB(t)()
 
-	// Insert 5 unread, unscored articles
+	// Insert 5 unread, unscored articles (score stays 0 — e.g. when
+	// preferences are empty and LLM scoring was skipped).
 	for i := 1; i <= 5; i++ {
 		id := fmt.Sprintf("2401.030%02d", i)
 		err := SaveArticle(&NewArticle{
@@ -318,10 +319,42 @@ func TestMarkDailyRecommendations_NoScoredArticles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkDailyRecommendations: %v", err)
 	}
-	// With no scored articles, the score step returns 0. The random step
-	// queries WHERE score > 0, so it also returns 0. Total should be 0.
-	if count != 0 {
-		t.Errorf("expected 0 recommendations (no scored articles), got %d", count)
+	// With score >= 0 (instead of > 0), both the score step (3 newest by
+	// created_at DESC) and the random step (2 from the remaining 2) pick
+	// articles. All 5 should be recommended.
+	if count != 5 {
+		t.Errorf("expected 5 recommendations (fallback to all unread), got %d", count)
+	}
+
+	recs, err := GetArticlesByRecommendDate(today)
+	if err != nil {
+		t.Fatalf("GetArticlesByRecommendDate: %v", err)
+	}
+	if len(recs) != 5 {
+		t.Fatalf("expected 5 recommended articles, got %d", len(recs))
+	}
+
+	// All 5 should be tagged (either 'score' or 'random').
+	scoreCount, randomCount := 0, 0
+	for _, r := range recs {
+		if r.RecommendationType == nil {
+			t.Errorf("article[%s] has nil recommendation_type", r.ID)
+			continue
+		}
+		switch *r.RecommendationType {
+		case "score":
+			scoreCount++
+		case "random":
+			randomCount++
+		default:
+			t.Errorf("unknown recommendation_type: %q", *r.RecommendationType)
+		}
+	}
+	if scoreCount == 0 {
+		t.Error("expected at least 1 score-type rec (newest by created_at)")
+	}
+	if randomCount == 0 {
+		t.Error("expected at least 1 random-type rec from remaining")
 	}
 }
 

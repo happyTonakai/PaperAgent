@@ -29,46 +29,48 @@ func GenerateDailyRecommendations(scoring *ScoringClient, dailyPapers, batchSize
 	}
 
 	if prefs == "" {
-		log.Println("[recommend] preferences empty, skipping scoring")
-		return nil, nil
-	}
-
-	// Get unscored articles
-	unscored, err := database.GetUnscoredArticles(500)
-	if err != nil {
-		return nil, fmt.Errorf("get unscored: %w", err)
-	}
-
-	if len(unscored) > 0 {
-		log.Printf("[recommend] scoring %d unscored articles...", len(unscored))
-		articles := make([]ArticleInfo, len(unscored))
-		for i, a := range unscored {
-			abstract := ""
-			if a.Abstract != nil {
-				abstract = *a.Abstract
-			}
-			articles[i] = ArticleInfo{
-				ID:       a.ID,
-				Title:    a.Title,
-				Abstract: abstract,
-			}
-		}
-
-		onProgress := func(completed, total int) {
-			log.Printf("[recommend] scoring batch %d/%d", completed, total)
-		}
-
-		scores, err := ScoreArticlesBatch(scoring.Client, scoring.Model, prefs, articles, batchSize, onProgress)
-		if err != nil {
-			return nil, fmt.Errorf("score articles: %w", err)
-		}
-
-		if err := database.UpdateArticleScores(scores); err != nil {
-			return nil, fmt.Errorf("update scores: %w", err)
-		}
-		log.Printf("[recommend] scored %d articles", len(scores))
+		// No preferences → cannot run LLM scoring. Still continue to
+		// MarkDailyRecommendations; it will pick from all unread articles
+		// (now that the SQL filter is score >= 0) ordered by created_at DESC.
+		log.Println("[recommend] preferences empty, skipping LLM scoring")
 	} else {
-		log.Println("[recommend] no unscored articles to score")
+		// Get unscored articles
+		unscored, err := database.GetUnscoredArticles(500)
+		if err != nil {
+			return nil, fmt.Errorf("get unscored: %w", err)
+		}
+
+		if len(unscored) > 0 {
+			log.Printf("[recommend] scoring %d unscored articles...", len(unscored))
+			articles := make([]ArticleInfo, len(unscored))
+			for i, a := range unscored {
+				abstract := ""
+				if a.Abstract != nil {
+					abstract = *a.Abstract
+				}
+				articles[i] = ArticleInfo{
+					ID:       a.ID,
+					Title:    a.Title,
+					Abstract: abstract,
+				}
+			}
+
+			onProgress := func(completed, total int) {
+				log.Printf("[recommend] scoring batch %d/%d", completed, total)
+			}
+
+			scores, err := ScoreArticlesBatch(scoring.Client, scoring.Model, prefs, articles, batchSize, onProgress)
+			if err != nil {
+				return nil, fmt.Errorf("score articles: %w", err)
+			}
+
+			if err := database.UpdateArticleScores(scores); err != nil {
+				return nil, fmt.Errorf("update scores: %w", err)
+			}
+			log.Printf("[recommend] scored %d articles", len(scores))
+		} else {
+			log.Println("[recommend] no unscored articles to score")
+		}
 	}
 
 	// Mark daily recommendations

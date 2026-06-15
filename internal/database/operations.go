@@ -391,10 +391,13 @@ func MarkDailyRecommendations(date string, count int, diversityRatio float64) (i
 
 	// Step 1: Top-scored articles
 	if scoreCount > 0 {
+		// score >= 0 (not > 0) so that unscored articles (score = 0, e.g. when
+		// preferences are empty) still get picked. created_at DESC is the
+		// tiebreaker for all-zero scores — newest unread first.
 		rows, err := tx.Query(
 			`SELECT id FROM articles
-			 WHERE status = 0 AND score > 0
-			 ORDER BY score DESC LIMIT ?`,
+			 WHERE status = 0 AND score >= 0
+			 ORDER BY score DESC, created_at DESC LIMIT ?`,
 			scoreCount,
 		)
 		if err != nil {
@@ -437,9 +440,11 @@ func MarkDailyRecommendations(date string, count int, diversityRatio float64) (i
 
 	// Step 2: Random exploration from remaining scored articles
 	if randomCount > 0 {
+		// score >= 0 (not > 0) to include unscored articles in random pool
+		// when preferences are empty.
 		rows, err := tx.Query(
 			`SELECT id FROM articles
-			 WHERE status = 0 AND score > 0 AND recommend_date IS NULL
+			 WHERE status = 0 AND score >= 0 AND recommend_date IS NULL
 			 ORDER BY RANDOM() LIMIT ?`,
 			randomCount,
 		)
