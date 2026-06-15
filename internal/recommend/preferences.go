@@ -69,17 +69,17 @@ func UpdatePreferences(client *api.Client, model string, currentPrefs string, fe
 		action := "未知"
 		switch {
 		case fb.Status == 2 && fb.Source == "recommend":
-			action = "点赞(非常感兴趣)-推荐系统"
+			action = "点赞 -推荐系统"
 		case fb.Status == 1 && fb.Source == "recommend":
-			action = "点击(比较感兴趣)-推荐系统"
+			action = "点击 -推荐系统"
 		case fb.Status == -1 && fb.Source == "recommend":
-			action = "点踩(不感兴趣)-推荐系统"
-		case fb.Rating != nil && *fb.Rating >= 8:
-			action = fmt.Sprintf("评分%d(非常感兴趣)-问答系统", *fb.Rating)
-		case fb.Rating != nil && *fb.Rating <= 3:
-			action = fmt.Sprintf("评分%d(不感兴趣)-问答系统", *fb.Rating)
+			action = "点踩 -推荐系统"
+		case fb.Status == 3 && fb.Source == "recommend":
+			action = "已读 -推荐系统"
+		case fb.Rating != nil && *fb.Rating == 0:
+			action = "评分无（系统默认值，用户未评分）-问答系统"
 		case fb.Rating != nil:
-			action = fmt.Sprintf("评分%d(一般)-问答系统", *fb.Rating)
+			action = fmt.Sprintf("评分%d/10 -问答系统", *fb.Rating)
 		}
 
 		userContent += fmt.Sprintf("- [%s] %s\n  摘要: %s\n", action, fb.Title, truncateText(fb.Abstract, 300))
