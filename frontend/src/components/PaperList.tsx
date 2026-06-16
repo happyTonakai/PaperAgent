@@ -1,4 +1,4 @@
-import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, Terminal, AlertTriangle, Search, X, Pin, PinOff } from 'lucide-react'
+import { Plus, Trash2, MoreHorizontal, Download, Pencil, ArrowUp, ArrowDown, Settings, ScrollText, AlertTriangle, Search, X, Pin, PinOff } from 'lucide-react'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePaperList, useDeletePaper, useExportPaper, useUpdateTitle, useUpdateRating, useSummarizeExport, useTogglePin } from '../hooks/usePapers'
 import { useAppStore } from '../stores/appStore'
@@ -69,7 +69,7 @@ export function PaperList() {
   const updateRating = useUpdateRating()
   const summarizeExport = useSummarizeExport()
   const togglePin = useTogglePin()
-  const { currentPaperId, setCurrentPaperId, setNewPaperOpen, setSettingsOpen, setLogOpen, sidebarWidth, setSidebarWidth } = useAppStore()
+  const { currentPaperId, setCurrentPaperId, setNewPaperOpen, setSettingsOpen, sidebarWidth, setSidebarWidth } = useAppStore()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [editingTitle, setEditingTitle] = useState<string | null>(null)
@@ -626,29 +626,6 @@ export function PaperList() {
             </div>
           </div>
         ))}
-      </div>
-
-      {/* Bottom bar */}
-      <div
-        className="flex-shrink-0 px-4 py-2 flex items-center gap-1"
-        style={{
-          borderTop: '1px solid var(--color-border-light)',
-        }}
-      >
-        <button
-          onClick={() => setLogOpen(true)}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-all duration-200 hover:bg-[var(--color-bg-inset)]"
-          style={{
-            fontFamily: 'var(--font-ui)',
-            color: 'var(--color-text-muted)',
-          }}
-          title="查看服务器日志"
-          aria-label="日志"
-        >
-          <Terminal size={13} />
-          日志
-        </button>
-        <div className="flex-1" />
       </div>
 
       {/* Right-click context menu */}

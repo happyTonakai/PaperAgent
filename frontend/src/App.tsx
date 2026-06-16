@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { Toaster, toast } from 'sonner'
-import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
+import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2, Terminal } from 'lucide-react'
 import { PaperList } from './components/PaperList'
 import { ChatView } from './components/ChatView'
 import { InputBox } from './components/InputBox'
@@ -353,6 +353,15 @@ export default function App() {
             aria-label="设置"
           >
             <Settings size={15} />
+          </button>
+          <button
+            onClick={() => useAppStore.getState().setLogOpen(true)}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title="查看服务器日志"
+            aria-label="日志"
+          >
+            <Terminal size={15} />
           </button>
         </div>
       </div>
