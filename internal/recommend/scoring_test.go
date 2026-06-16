@@ -30,13 +30,31 @@ func TestParseScoringResponse_WithCodeFence(t *testing.T) {
 }
 
 func TestParseScoringResponse_ClampBounds(t *testing.T) {
-	raw := `[{"id":"a","score":1.5},{"id":"b","score":-0.5}]`
+	raw := `[{"id":"a","score":1.5},{"id":"b","score":-1.5},{"id":"c","score":-1.0}]`
 	scores := parseScoringResponse(raw)
-	if scores["a"] > 1.0 || scores["a"] < 0 {
-		t.Errorf("score a=%f not clamped to [0,1]", scores["a"])
+	if scores["a"] > 1.0 {
+		t.Errorf("score a=%f not clamped to <=1", scores["a"])
 	}
-	if scores["b"] > 1.0 || scores["b"] < 0 {
-		t.Errorf("score b=%f not clamped to [0,1]", scores["b"])
+	if scores["b"] < -1.0 {
+		t.Errorf("score b=%f not clamped to >=-1", scores["b"])
+	}
+	if scores["c"] != -1.0 {
+		t.Errorf("score c=%f, want -1.0 (negative scores are allowed)", scores["c"])
+	}
+}
+
+func TestParseScoringResponse_NegativeScores(t *testing.T) {
+	// Negative scores (down to -1) are valid: -1 = clearly not interested.
+	raw := `[{"id":"dislike1","score":-1.0},{"id":"dislike2","score":-1},{"id":"like","score":0.8}]`
+	scores := parseScoringResponse(raw)
+	if scores["dislike1"] != -1.0 {
+		t.Errorf("dislike1 score = %f, want -1.0", scores["dislike1"])
+	}
+	if scores["dislike2"] != -1.0 {
+		t.Errorf("dislike2 score = %f, want -1.0", scores["dislike2"])
+	}
+	if scores["like"] != 0.8 {
+		t.Errorf("like score = %f, want 0.8", scores["like"])
 	}
 }
 

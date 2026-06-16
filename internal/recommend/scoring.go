@@ -103,8 +103,11 @@ func parseScoringResponse(raw string) map[string]float64 {
 	scores := make(map[string]float64, len(items))
 	for _, item := range items {
 		if item.ID != "" {
-			if item.Score < 0 {
-				item.Score = 0
+			// Score range is [-1, 1]: -1 = clearly not interested (excluded
+			// from recommendations), 0 = neutral/unscored, 1 = perfect match.
+			// Round to 1 decimal to swallow LLM float jitter (e.g. -0.9999).
+			if item.Score < -1 {
+				item.Score = -1
 			}
 			if item.Score > 1 {
 				item.Score = 1

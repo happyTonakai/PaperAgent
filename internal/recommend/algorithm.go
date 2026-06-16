@@ -137,9 +137,28 @@ func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers,
 
 	// Step 1: Fetch RSS
 	if len(categories) > 0 {
+		// Re-read preferences in case Step 0 wrote a new file (the
+		// in-memory `prefs` from above is still the old version). The
+		// "## 排除关键词" section may have been updated by the LLM.
+		freshPrefs, _ := ReadPreferences()
+		if freshPrefs == "" {
+			freshPrefs = prefs
+		}
+
 		articles, err := FetchArxivRSS(categories, 100)
 		if err != nil {
 			return nil, fmt.Errorf("fetch RSS: %w", err)
+		}
+		if len(articles) > 0 {
+			// Drop RSS articles that match the user's "excluded keywords"
+			// (parsed from the up-to-date preferences). The skipped ones
+			// never reach the database, scoring, or recommendation pool.
+			excluded := ParseExcludedKeywords(freshPrefs)
+			before := len(articles)
+			articles = FilterArticlesByKeywords(articles, excluded)
+			if dropped := before - len(articles); dropped > 0 {
+				log.Printf("[recommend] filtered out %d RSS articles by excluded keywords (%d kept)", dropped, len(articles))
+			}
 		}
 		if len(articles) > 0 {
 			inserted, err := database.SaveArticles(articles)
