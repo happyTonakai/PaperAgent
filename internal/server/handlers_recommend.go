@@ -38,12 +38,14 @@ func buildScoringClient(cfg *config.Config) *api.Client {
 }
 
 // buildTranslationClient creates an API client from the current translation config.
+// If no dedicated translation config is set, falls back to the main API so that
+// users can opt out of configuring a separate endpoint.
 func buildTranslationClient(cfg *config.Config) *api.Client {
 	ep := cfg.API.Translation
 	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
 		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
 	}
-	return nil
+	return api.NewClientFromEndpoint(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.DefaultModel)
 }
 
 func (s *Server) scoringClient() *api.Client {
@@ -568,8 +570,10 @@ func (s *Server) translateAndPersistArticles(articles []database.Article) {
 
 	s.cfg.RLock()
 	model := ""
-	if s.cfg.API.Translation != nil {
+	if s.cfg.API.Translation != nil && s.cfg.API.Translation.Model != "" {
 		model = s.cfg.API.Translation.Model
+	} else {
+		model = s.cfg.API.DefaultModel
 	}
 	s.cfg.RUnlock()
 

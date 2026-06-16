@@ -163,6 +163,7 @@ export function SettingsDialog() {
 	const [recLoading, setRecLoading] = useState(false)
 	const [recSaving, setRecSaving] = useState(false)
 	const [useMainForScoring, setUseMainForScoring] = useState(true)
+	const [useMainForTranslation, setUseMainForTranslation] = useState(true)
 
 	// ── Prompts accordion state ──
 	const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({})
@@ -287,7 +288,10 @@ export function SettingsDialog() {
 
 				const translation = recommendConfig.api.translation
 				let translationBody: Record<string, string> | null = null
-				if (translation) {
+				if (useMainForTranslation) {
+					// When reuse is enabled, force-send null on the wire
+					translationBody = null
+				} else if (translation) {
 					const allEmpty = !translation.base_url.trim() && !translation.model.trim()
 						&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
 					if (!allEmpty) {
@@ -304,7 +308,9 @@ export function SettingsDialog() {
 				const scChanged = useMainForScoring
 					? recConfigOrig.api.scoring !== null
 					: scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring)
-				const trChanged = translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation)
+				const trChanged = useMainForTranslation
+					? recConfigOrig.api.translation !== null
+					: translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation)
 
 				if (scChanged || trChanged) {
 					const apiBody: Record<string, unknown> = {}
@@ -452,22 +458,36 @@ export function SettingsDialog() {
 			{/* 3. 翻译 API — 推荐摘要翻译 */}
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>翻译 API · 推荐摘要翻译</legend>
-				<p className={hintCls}>将推荐论文的标题/摘要翻译为中文。留空则不翻译，保留原始英文。</p>
-				<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => {
-					if (!prev) return prev
-					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-					return { ...prev, api: { ...prev.api, translation: { ...t, api_key: v } } }
-				})} className={inputCls} /></div>
-				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => {
-					if (!prev) return prev
-					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-					return { ...prev, api: { ...prev.api, translation: { ...t, base_url: e.target.value } } }
-				})} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.translation?.model ?? ''} onChange={(e) => setRecommendConfig(prev => {
-					if (!prev) return prev
-					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-					return { ...prev, api: { ...prev.api, translation: { ...t, model: e.target.value } } }
-				})} className={inputCls} placeholder="gpt-4o-mini" /></div>
+				<p className={hintCls}>将推荐论文的标题/摘要翻译为中文。</p>
+				<div className="flex items-center gap-2">
+					<input
+						type="checkbox"
+						id="use-main-for-translation"
+						checked={useMainForTranslation}
+						onChange={(e) => setUseMainForTranslation(e.target.checked)}
+						className="w-4 h-4 rounded border-[var(--color-border)]"
+					/>
+					<label htmlFor="use-main-for-translation" className={labelCls}>复用主 API 配置</label>
+				</div>
+				{!useMainForTranslation && (
+					<>
+						<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => {
+							if (!prev) return prev
+							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+							return { ...prev, api: { ...prev.api, translation: { ...t, api_key: v } } }
+						})} className={inputCls} /></div>
+						<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => {
+							if (!prev) return prev
+							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+							return { ...prev, api: { ...prev.api, translation: { ...t, base_url: e.target.value } } }
+						})} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
+						<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.translation?.model ?? ''} onChange={(e) => setRecommendConfig(prev => {
+							if (!prev) return prev
+							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+							return { ...prev, api: { ...prev.api, translation: { ...t, model: e.target.value } } }
+						})} className={inputCls} placeholder="gpt-4o-mini" /></div>
+					</>
+				)}
 			</fieldset>
 
 			<hr className={dividerCls} />
