@@ -54,7 +54,7 @@ const inputCls =
 	'w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors'
 const labelCls = 'text-xs text-[var(--color-text-secondary)] block mb-1'
 const hintCls = 'text-xs text-[var(--color-text-muted)] mt-1'
-const legendCls = 'text-xs font-medium text-[var(--color-text-secondary)]'
+const legendCls = 'text-sm font-semibold text-[var(--color-text)]'
 const dividerCls = 'border-[var(--color-border-light)]'
 
 const tabCls = (active: boolean) =>
@@ -579,26 +579,6 @@ export function SettingsDialog() {
 		<div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[var(--color-text-muted)]" /></div>
 	) : (
 		<div className="space-y-4">
-			{/* Scheduler status */}
-			{schedulerStatus && (
-				<div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-1.5">
-					<div className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">⏱ 定时调度状态</div>
-					<div className="flex items-center gap-2 text-xs">
-						<span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${
-							schedulerStatus.is_running
-								? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
-								: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-						}`}>
-							<StatusDot color={schedulerStatus.is_running ? 'yellow' : 'green'} />
-							{schedulerStatus.is_running ? '运行中' : '待命中'}
-						</span>
-					</div>
-					{schedulerStatus.scheduled && <p className={hintCls}>定时时间：{schedulerStatus.scheduled}</p>}
-					{schedulerStatus.next_run && <p className={hintCls}>下次执行：{schedulerStatus.next_run}</p>}
-					{schedulerStatus.last_run && <p className={hintCls}>上次执行：{schedulerStatus.last_run}{schedulerStatus.daily_count > 0 ? ` (推荐了 ${schedulerStatus.daily_count} 篇)` : ''}</p>}
-					{schedulerStatus.last_error && <p className="text-xs text-red-500">上次错误：{schedulerStatus.last_error}</p>}
-				</div>
-			)}
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>arXiv 订阅分类</legend>
 				<p className={hintCls}>每天从这些 arXiv 分类中拉取最新论文。</p>
@@ -611,6 +591,26 @@ export function SettingsDialog() {
 				<div><label className={labelCls}>评分批次大小</label><input type="number" value={recommendConfig?.recommend.scoring_batch_size ?? 10} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scoring_batch_size: parseInt(e.target.value) || 10 } } : prev)} min={1} max={50} className={inputCls} /><p className={hintCls}>每次 LLM 调用评分多少篇论文</p></div>
 				<div><label className={labelCls}>探索比例 (diversity_ratio)</label><input type="number" value={recommendConfig?.recommend.diversity_ratio ?? 0.3} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, diversity_ratio: parseFloat(e.target.value) || 0 } } : prev)} min={0} max={1} step={0.05} className={inputCls} /><p className={hintCls}>0 = 纯按评分排序，1 = 完全随机探索。推荐值 0.2–0.3</p></div>
 				<div><label className={labelCls}>每日定时推荐时间</label><input type="time" value={recommendConfig?.recommend.scheduled_time ?? '08:00'} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scheduled_time: e.target.value } } : prev)} className={inputCls} /></div>
+				{/* Scheduler status — placed right after the time input, before the feishu push toggle */}
+				{schedulerStatus && (
+					<div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-1.5">
+						<div className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">⏱ 定时调度状态</div>
+						<div className="flex items-center gap-2 text-xs">
+							<span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${
+								schedulerStatus.is_running
+									? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
+									: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+							}`}>
+								<StatusDot color={schedulerStatus.is_running ? 'yellow' : 'green'} />
+								{schedulerStatus.is_running ? '运行中' : '待命中'}
+							</span>
+						</div>
+						{schedulerStatus.scheduled && <p className={hintCls}>定时时间：{schedulerStatus.scheduled}</p>}
+						{schedulerStatus.next_run && <p className={hintCls}>下次执行：{schedulerStatus.next_run}</p>}
+						{schedulerStatus.last_run && <p className={hintCls}>上次执行：{schedulerStatus.last_run}{schedulerStatus.daily_count > 0 ? ` (推荐了 ${schedulerStatus.daily_count} 篇)` : ''}</p>}
+						{schedulerStatus.last_error && <p className="text-xs text-red-500">上次错误：{schedulerStatus.last_error}</p>}
+					</div>
+				)}
 				<div className="flex items-center gap-2">
 					<input type="checkbox" id="push-to-feishu" checked={recommendConfig?.recommend.push_to_feishu ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, push_to_feishu: e.target.checked } } : prev)} className="w-4 h-4 rounded border-[var(--color-border)]" />
 					<label htmlFor="push-to-feishu" className={labelCls}>推荐完成后推送飞书</label>
