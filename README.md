@@ -1,8 +1,11 @@
 # PaperAgent 📄
 
-**给你的论文装上 AI 大脑 —— 粘贴 arXiv 链接，深度解析，多轮追问。**
+**给你的论文装上 AI 大脑 —— 粘贴 arXiv 链接，深度解析，多轮追问；每天还有精选 arXiv 推荐自动送到飞书。**
 
-PaperAgent 是一个 AI 论文阅读助手。给它一篇论文（arXiv 链接），AI 生成详实、可复现级别的深度解析，随后进入多轮问答模式。所有对话持久化到本地，随时可以恢复。
+PaperAgent 是一个 Go + Web UI 的 AI 论文阅读助手，已经从「单功能 Q&A」演化为「**Q&A + 每日推荐**」双系统产品。中文 UI / 中文文档。
+
+- **Q&A 系统**：用户给一篇论文（URL / arXiv ID / 粘贴），AI 生成详尽摘要后进入多轮问答
+- **每日推荐**：定时从 arXiv RSS 拉取新论文，LLM 按用户偏好打分，每天生成一批推荐并可推送到飞书
 
 <p align="center">
   <img src="screenshots/main.png" alt="PaperAgent 主界面" width="800">
@@ -29,10 +32,10 @@ Gemini 有 1M token 上下文，听起来很美好。但论文全文本身就有
 我们的上下文策略分三层：
 
 1. **论文全文（始终保留）** — AI 回答的锚点，永不丢失。
-2. **动态上下文窗口** — 可配置的 token 输入上限（`max_input_tokens`）。对话初期，所有 QA 轮次全部保留。当累计 token 接近上限时，**硬截断**到可配置的最小轮数（`min_recent_rounds`），并以此为新「锚点」重新开始累计。我们不使用上下文压缩，而是直接截断，因为在论文阅读中，多轮之前的问答内容已经不再重要。
+2. **动态上下文窗口** — 可配置的 token 输入上限（`max_input_tokens`，默认 30000）。对话初期，所有 QA 轮次全部保留。当累计 token 接近上限时，**硬截断**到可配置的最小轮数（`min_recent_rounds`，默认 2），并以此为新「锚点」重新开始累计。我们不使用上下文压缩，而是直接截断 —— 在论文阅读中，多轮之前的问答内容已经不再重要。
 3. **锚点之内、上限之下，前缀稳定** — 截断后，后续的 10+ 轮问答中前缀不再变化，KV 缓存持续命中。直到再次逼近上限，触发下一次截断。
 
-初始生成的深度摘要则**不进入**后续对话上下文，避免占用宝贵的窗口。
+初始生成的深度摘要则**不进入**后续对话上下文，避免占用宝贵的窗口。`/btw` 旁听消息（`SkipContext: true`）也从上下文窗口排除。
 
 ## 安装
 
@@ -105,20 +108,45 @@ just arxiv2md
 `~/.config/paperagent/config.yaml` 是主配置文件：
 
 ```yaml
+# 论文对话系统（Q&A）使用的主 API
 api:
   base_url: "https://api.openai.com/v1"
-  api_key: "${OPENAI_API_KEY}"
+  api_key: "${OPENAI_API_KEY}"        # 自动 AES-256-GCM 加密后写盘
   default_model: "gpt-4o"
-obsidian:
-  vault_path: "~/Documents/Obsidian/MyVault"
-  export_folder: "Papers"
-ui:
-  min_recent_rounds: 2
-  max_input_tokens: 30000
+  # 可选：每日推荐的评分/翻译 API（留空则复用主 API）
+  scoring:                             # 推荐打分 & 偏好分析
+    base_url: "https://api.openai.com/v1"
+    api_key: "sk-..."
+    model: "gpt-4o-mini"
+  translation:                         # 推荐摘要翻译
+    base_url: "https://api.openai.com/v1"
+    api_key: "sk-..."
+    model: "gpt-4o-mini"
+
+# 每日推荐订阅的 arXiv 分类
+arxiv_categories: ["cs.AI", "cs.CL", "cs.LG"]
+
+recommend:
+  daily_papers: 20
+  scoring_batch_size: 10
+  diversity_ratio: 0.3                 # 0-1：随机探索占比
+  scheduled_time: "08:00"              # HH:MM
+  push_to_feishu: true                 # 推荐完成后推飞书
+
 feishu:
   enabled: true
   app_id: "cli_xxxxx"
   app_secret: "xxxxx"
+  daily_recommend_chat_id: "oc_xxxxx"  # 每日推荐推送目标群
+
+# 论文导出（Markdown 文件夹路径，支持 ~ 展开）
+obsidian:
+  export_path: "~/Documents/Obsidian/MyVault/Papers"
+
+# 上下文截断参数
+ui:
+  min_recent_rounds: 2
+  max_input_tokens: 30000
 ```
 
 支持 `${ENV_VAR}` 语法引用环境变量，避免明文写入敏感信息：
@@ -128,22 +156,26 @@ export OPENAI_API_KEY="sk-..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 ```
 
-然后在 `config.yaml` 中用 `api_key: "${OPENAI_API_KEY}"` 引用即可。
+然后在 `config.yaml` 中用 `api_key: "${OPENAI_API_KEY}"` 引用即可。`api_key` 写盘时自动用 AES-256-GCM 加密（密钥在 `~/.config/paperagent/.key`）。
 
-自定义 Prompt 也属于文件配置的一部分，在 `~/.config/paperagent/prompts/` 下放置同名文件即可覆盖内置模板：
+#### 自定义 Prompt
 
-- `system.txt` — 基础系统提示词（角色设定，简短）
+`~/.config/paperagent/prompts/` 下放同名文件即可覆盖内置模板：
+
+- `system.txt` — 基础系统提示词（**锁住，不允许覆写**）
 - `heavy.txt` — 初始深度摘要的任务 prompt
 - `light.txt` — 问答阶段的任务 prompt
 - `summarize.txt` — 对话元总结的任务 prompt
+- `scoring.txt` — 论文评分 prompt
+- `update-prefs.txt` — 偏好更新 prompt
 
 ### 2. Web UI 设置页面
 
-程序运行后打开浏览器，点击左下角设置图标，可以在 Web 界面中直接修改 API 配置（API Key、Base URL、模型等），修改即时生效。
+程序运行后打开浏览器，点击右上角齿轮图标，可以在 Web 界面中直接修改所有配置（5 个 tab：API 与凭据 / 提示词模板 / 飞书机器人 / 推荐系统 / 推荐偏好），修改即时生效。密码字段默认遮罩，可点眼睛图标查看。首次启动若 `config.yaml` 不存在，会自动弹出设置对话框引导用户配置 API 密钥。
 
 ### 飞书 Bot（可选）
 
-在配置中启用飞书后，可在飞书群聊/私聊中使用斜杠命令操作：
+启用后在飞书群聊/私聊中使用斜杠命令操作论文，并可接收每日推荐推送：
 
 | 命令 | 功能 |
 |---|---|
@@ -152,12 +184,13 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 | `/search <关键词>` | 按标题搜索论文，结果格式同 `/list` |
 | `/summary` | 拉取当前论文初始总结 |
 | `/fetch [n]` | 拉取最近 n 轮问答（默认 2） |
+| `/chat <问题>` | 对当前论文多轮 Q&A |
 | `/btw <问题>` | 提问但不记入上下文 |
 | `/rate <1-10>` | 给当前论文打分 |
 | `/pin` | 置顶/取消置顶当前论文 |
 | `/help` | 帮助信息 |
 
-直接发消息即可对当前论文多轮 Q&A。配置保存后自动热加载，无需重启。
+直接发消息（不带 `/` 前缀）即可对当前论文多轮 Q&A。配置保存后自动热加载，无需重启。
 
 <p align="center">
   <img src="screenshots/lark.png" alt="PaperAgent 飞书 Bot" width="500">
@@ -171,20 +204,39 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 - 权限：`im:message`、`im:message:send_as_bot`
 - 事件订阅：`im.message.receive_v1`、`card.action.trigger`
 
+## 每日推荐
+
+PaperAgent 每天会按你配置的 arXiv 分类拉取新论文，**用 LLM 按你写的研究偏好打分**，选 Top N 推送到飞书（可选）。
+
+**推荐管线**（每天触发一次）：
+
+1. 收集昨日反馈（你点赞/点踩/已读/打分的论文）
+2. LLM 把反馈合成新的 `preferences.md`（你在设置里也能直接编辑）
+3. 从 arXiv RSS 拉新论文（按 arXiv ID 去重，过滤 `replace` 公告）
+4. LLM 批量打分（`scoring` API）
+5. 混合策略选 top N：`daily_papers × (1 - diversity_ratio)` 走 top score，其余随机探索
+6. 拉 HuggingFace / AlphaXiv 票数（仅展示，不入排序）
+7. 可选：用 `translation` API 把标题/摘要翻译成中文
+8. 推送飞书交互卡片到 `daily_recommend_chat_id`（点赞/点踩/已读/进入对话）
+
+> 第一天推送会用空偏好打分；你给反馈后从第二天起 LLM 持续更新 `preferences.md`。`preferences.md` 在 `~/.config/paperagent/preferences.md`，可手动编辑。
+
 ## 使用
 
 ### 启动
 
 ```bash
 # 启动 Web UI（默认）：浏览器自动打开，端口被占用时自动 +1
-paperagent
+./paperagent
 
 # 开发模式：Go 后端 + Vite HMR 前端，浏览器访问 http://localhost:5173
 just dev
 
-# 也可指定监听地址
-PAPER_ADDR=":9000" paperagent
+# 指定监听地址
+PAPER_ADDR=":9000" ./paperagent
 ```
+
+> 开发模式自动设置 `PAPER_NO_BROWSER=1`（禁止自动打开浏览器）和 `PAPER_FOREGROUND=1`（禁止后台 daemonize）。手动启动时也可通过这两个环境变量控制行为。
 
 ### Web UI 操作
 
@@ -192,19 +244,21 @@ PAPER_ADDR=":9000" paperagent
 |---|---|
 | 新建论文 | 点击左侧"+"按钮，输入 arXiv URL |
 | 快捷新建 | 直接粘贴 arXiv 链接到底部输入框，按 Enter 自动创建 |
-| 搜索论文 | 点击🔍按钮或按 `Cmd+Shift+F`，实时过滤论文列表 |
+| 搜索论文 | 点击 🔍 按钮或按 `Cmd+Shift+F`，实时过滤论文列表 |
 | 选择论文 | 点击左侧论文列表 |
+| 切换 Tab | 顶部：💬 论文对话 / 📅 每日推荐 |
 | 置顶/取消置顶 | 右键论文 → 置顶/取消置顶，置顶论文排在列表最前 |
 | 提问 | 底部输入框输入问题，Enter 发送 |
 | 换行 | Shift+Enter |
 | 重新生成回答 | 鼠标悬浮 AI 回复 → 🔄 按钮 → 确认 |
 | 删除轮次 | 鼠标悬浮 AI 回复 → 🗑️ 按钮 → 确认 |
 | 命令 | 输入 `/` 触发命令补全 |
-| `/export` | 导出当前论文到 Obsidian |
-| `/config` | 打开设置（主题切换） |
+| `/export` | 导出当前论文到配置的导出文件夹 |
+| `/config` | 打开设置 |
 | `/btw <问题>` | 提问但不记入上下文 |
 | 复制原文 | 鼠标悬浮在 AI 回复上，点击 📋 按钮复制原始 Markdown |
 | `/help` | 显示帮助 |
+| 每日推荐 | 切换到「每日推荐」Tab，可浏览/打分/评论/搜索历史推荐 |
 
 > **自动恢复**：关闭 PaperAgent 后重新打开，自动恢复到最后阅读的论文。
 
@@ -212,53 +266,80 @@ PAPER_ADDR=":9000" paperagent
 
 ## 架构
 
+**双系统架构**：
+
 ```
-┌────────────────────────────────────────────────────┐
-│                  浏览器 (React SPA)                  │
-│  PaperList │ ChatView │ InputBox │ NewPaperDialog  │
-│  ───────────────────────────────────────────────── │
-│  Zustand (状态管理) │ TanStack Query (数据请求)    │
-│  react-markdown │ KaTeX │ rehype-highlight        │
-└──────────────────┬─────────────────────────────────┘
-                   │ HTTP (JSON / SSE)
-┌──────────────────▼─────────────────────────────────┐
-│              Go HTTP 服务器 (:8686)                  │
-│  ┌─────────────┐ ┌──────────┐ ┌──────────────────┐ │
-│  │ REST API    │ │ SSE      │ │ 静态资源 (embed) │ │
-│  │ /api/papers │ │ /chat    │ │ React SPA        │ │
-│  │ /api/config │ │ /retry   │ │ 内嵌在二进制中   │ │
-│  └──────┬──────┘ └──────────┘ └──────────────────┘ │
-└─────────┼──────────────────────────────────────────┘
-          │
-┌─────────▼──────────────────────────────────────────┐
-│             内部模块                                 │
-│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐ │
-│  │ session  │ │ api      │ │ prompt             │ │
-│  │ 持久化   │ │ 流式调用 │ │ 模板 (//go:embed)  │ │
-│  │ JSON文件 │ │ OpenAI   │ │ + 用户覆盖         │ │
-│  └──────────┘ └──────────┘ └────────────────────┘ │
-│  ┌──────────┐ ┌──────────┐ ┌────────────────────┐ │
-│  │ urlparse │ │ export   │ │ config             │ │
-│  │ 加载论文 │ │ Obsidian │ │ 三层叠加配置       │ │
-│  └──────────┘ └──────────┘ └────────────────────┘ │
-└────────────────────────────────────────────────────┘
+            ┌──────────────────┐
+            │   Web UI (React) │
+            └────────┬─────────┘
+                     │ HTTP / SSE
+            ┌────────▼─────────┐
+            │   HTTP Server    │  internal/server/
+            │  (embed.FS SPA)  │  + handlers_recommend.go
+            └────┬──────┬──────┘
+                 │      │
+   ┌─────────────┘      └──────────────┐
+   ▼                                  ▼
+┌──────────────┐               ┌──────────────┐
+│  Q&A System  │               │  Recommend   │
+│  session/    │               │  recommend/  │
+│  api/        │               │  database/   │
+│  prompt/     │               │  scheduler/  │
+│  urlparse/   │               │              │
+└──────┬───────┘               └──────┬───────┘
+       │                              │
+       └──────────┬───────────────────┘
+                  ▼
+          ┌──────────────┐
+          │  config/     │
+          │  export/     │
+          │  feishu/     │
+          │  systray/    │
+          └──────────────┘
 ```
 
-### 核心设计：两阶段状态机
+**进程模型**：`main.go` 加载配置 → `daemonize()`（非 Windows 下默认调用 `setsid`）→ `systray.Run()` 启动系统托盘；托盘 `onReady` 中启动 HTTP server、飞书 bot（如果 `feishu.enabled`）、每日推荐 scheduler，然后打开浏览器。SIGINT/SIGTERM 走托盘 `Quit` 路径优雅退出。
 
-**INIT 阶段**：`system.txt` + 论文全文 + `heavy.txt` 任务指令 → 流式生成深度 Markdown 摘要。同时异步用轻量模型提取论文标题。
+### Q&A 二阶段状态机
 
-**CHAT 阶段**：每次提问 = `system.txt` + 论文全文 + `light.txt` 任务指令 + 动态上下文窗口。窗口从锚点开始自然增长，超过 `max_input_tokens` 上限时硬截断到 `min_recent_rounds` 轮，前缀稳定后 KV 缓存持续命中。回复流式渲染。
+- **INIT**：`system.txt` + 论文全文 + `heavy.txt` 任务提示 → API → SSE 流式输出 Markdown 摘要；title 从 arXiv HTML 解析
+- **CHAT**：每轮 = `system.txt` + 论文全文 + `light.txt` + 动态上下文（从 `TruncationAnchor` 算起；超 `max_input_tokens` 硬截断到 `min_recent_rounds`） → SSE 流式回答
 
-**BTW 模式**：使用 `/btw <问题>` 提问时，该轮问答虽然正常显示，但 `skip_context` 标记为 `true`，不会进入后续对话的上下文。适合问一些辅助性的问题（如术语解释、公式推导），不会干扰主线的上下文连贯性。
+### 每日推荐管线（每天触发一次）
 
-**关键原则**：论文全文始终在 L1 上下文中。初始摘要和 BTW 轮次不在 Chat 阶段重复发送。QA 上下文采用锚点 + 动态截断：窗口从锚点自然增长，超上限时硬截断到最小轮数，保证 KV 缓存友好。
+1. **收集反馈**：`CollectYesterdayFeedback()` 汇集推荐系统（`articles.status`）和 Q&A 系统（`chat_papers.updated_at` + rating）的反馈信号
+2. **更新偏好**：`UpdatePreferences()` 用 LLM 把反馈合成新的 `preferences.md`
+3. **拉 RSS**：`FetchArxivRSS(categories, 100)` 从配置的 arXiv category 拉新论文（按 arXiv ID 去重，过滤 `replace` 公告）
+4. **LLM 打分**：`ScoreArticlesBatch()` 按偏好 + 摘要批量打分
+5. **选 top N**：`MarkDailyRecommendations()` 混合策略
+6. **拉社区票数**：`FetchVotesForArticles()` 并行查 HuggingFace / AlphaXiv
+7. **翻译**（可选）：独立 translation API 翻成中文
+8. **推飞书**：`PushDailyRecommend()` 推送交互卡片
+
+`Scheduler` 每分钟醒一次，看是否到 `scheduled_time` 且今天没跑过。
+
+### 模块布局
+
+| Package | 职责 |
+|---|---|
+| `config/` | `~/.config/paperagent/config.yaml` 加载、env var override、AES-256-GCM 加密 API key、路径 helper |
+| `api/` | OpenAI 兼容 HTTP 客户端，同步 / SSE 流式（`<-chan StreamChunk`） |
+| `session/` | `Paper` / `Message` 模型，`Manager` 持久化到 `~/.config/paperagent/papers/{uuid}.json` |
+| `prompt/` | `//go:embed` 模板：`system.txt` / `heavy.txt` / `light.txt` / `summarize.txt` / `scoring.txt` / `update-prefs.txt` |
+| `urlparse/` | arXiv URL/ID 归一化，HTML 优先 → TeX → PDF |
+| `export/` | 导出到 `obsidian.export_path` 的 Markdown 文件 |
+| `database/` | SQLite 池（`modernc.org/sqlite`，纯 Go 零 CGO），`articles` / `chat_papers` 表 |
+| `recommend/` | RSS 拉取、LLM 打分、偏好更新、票数、推荐算法主入口 |
+| `scheduler/` | cron 风格调度器，`onComplete` 回调触发翻译 + 推飞书 |
+| `server/` | HTTP server（`//go:embed frontend-dist`），SSE 流式响应，日志环形缓冲 |
+| `systray/` | `fyne.io/systray` 封装，菜单项 + 左键直接开浏览器 |
+| `feishu/` | 飞书机器人，WebSocket 事件分发，slash 命令处理，交互卡片 |
 
 ### API 端点
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
-| `/api/papers` | POST | 新建论文（URL -> 抓取 -> INIT 摘要流式输出 via SSE） |
+| `/api/papers` | POST | 新建论文（URL → 抓取 → INIT 摘要流式输出 via SSE） |
 | `/api/papers` | GET | 论文列表 |
 | `/api/papers/{id}` | GET | 获取论文详情 + 对话历史 |
 | `/api/papers/{id}` | DELETE | 删除论文 |
@@ -270,39 +351,57 @@ PAPER_ADDR=":9000" paperagent
 | `/api/papers/{id}/chat/{n}/retry` | POST | 重新生成第 n 轮回答（SSE） |
 | `/api/papers/{id}/export` | POST | 导出到 Obsidian |
 | `/api/papers/{id}/rounds/{n}` | DELETE | 删除指定轮次及该轮所有消息 |
-| `/api/config` | GET | 查看配置 |
-| `/api/config` | POST | 更新配置 |
-| `/api/prompts` | GET | 查看内置/自定义提示词模板列表 |
-| `/api/prompts` | POST | 保存自定义提示词覆盖 |
 | `/api/active-paper` | GET | 获取当前活跃论文 ID |
 | `/api/active-paper` | PUT | 设置当前活跃论文 ID |
+| `/api/config` | GET | 查看配置 |
+| `/api/config` | POST | 更新配置 |
+| `/api/config/status` | GET | 配置存在性 + API key 是否已配置（用于首启引导） |
+| `/api/prompts` | GET | 查看内置/自定义提示词模板列表 |
+| `/api/prompts` | POST | 保存自定义提示词覆盖 |
+| `/api/feishu/status` | GET | 飞书连接状态（connected / enabled / last_error） |
+| `/api/recommend/config` | GET | 推荐系统配置 |
+| `/api/recommend/config` | PUT | 更新推荐系统配置 |
+| `/api/recommend/preferences` | GET | 查看偏好 Markdown |
+| `/api/recommend/preferences` | PUT | 保存偏好 Markdown |
+| `/api/recommend/scheduler-status` | GET | Scheduler 当前状态（运行中/待命中、上次/下次执行时间、错误） |
+| `/api/recommend/articles` | GET | 推荐论文列表（分页 + 过滤） |
+| `/api/recommend/articles/{id}` | PATCH | 更新推荐状态（点赞/点踩/已读/评论） |
+| `/api/recommend/trigger` | POST | 手动触发一次推荐管线 |
+| `/api/logs` | GET | 内存日志环形缓冲（最近 N 条） |
 
 所有流式端点使用 Server-Sent Events (SSE)，事件类型：`created` / `chunk` / `done` / `error` / `title`。
 
 ### 数据持久化
 
-每篇论文以 JSON 文件保存在 `~/.config/paperagent/papers/{uuid}.json`，包含完整论文内容、摘要、对话历史。支持 UUID 会话 ID 和旧版数字 ID 向后兼容。
+- **Q&A**：`~/.config/paperagent/papers/{uuid}.json`，包含完整论文内容、摘要、对话历史。支持 UUID 会话 ID 和旧版数字 ID 向后兼容
+- **推荐系统**：`~/.config/paperagent/zenflow.db`（SQLite，WAL 模式），`articles`（推荐论文、状态、票数）和 `chat_papers`（Q&A 元数据快照）两张表
+- **首次启动**会自动从 `papers/*.json` 迁移到 `chat_papers` 表
 
 ## 开发
 
 ```bash
-# 完整构建（前端 + Go）
-just build
+# 查看所有 justfile recipe
+just --list
 
-# 开发模式（热更新）
+# 开发模式（Go + Vite HMR 并发）
 just dev
 
-# 仅构建 Go
-just build-go
+# 完整构建（前端 + Go），产出单二进制
+just build
 
-# arxiv2md 独立工具
+# 独立 arxiv2md 工具
 just arxiv2md
 
-# 代码检查
-just vet
-just typecheck   # 前端 TypeScript 检查
+# 静态分析
+just vet                # Go vet
+just typecheck          # 前端 tsc --noEmit
 
-# 测试
+# 单元测试（不打 API）
+go test ./internal/config/ ./internal/session/ ./internal/prompt/ \
+        ./internal/urlparse/ ./internal/export/ ./internal/database/ \
+        ./internal/recommend/ -v
+
+# 全部测试
 go test ./... -v
 
 # 清理
@@ -317,16 +416,21 @@ just clean
 
 | 层 | 技术 |
 |---|---|
-| 前端 UI | React 19, TypeScript, Tailwind CSS 4 |
+| 前端 UI | React 19, TypeScript, Tailwind CSS 4, Vite 6 |
 | 状态管理 | Zustand 5 |
 | 数据请求 | TanStack React Query 5 |
 | Markdown 渲染 | react-markdown + remark-math + rehype-katex + rehype-highlight |
 | 图标 | Lucide React |
+| Toast | sonner |
 | 后端 | Go 1.25+ (net/http, embed) |
 | SSE 流式 | Server-Sent Events |
 | LLM API | OpenAI 兼容接口 |
-| 持久化 | JSON 文件 (~/.config/paperagent/papers/) |
-| 飞书 | larksuite/oapi-sdk-go v3, WebSocket + 交互卡片 |
+| 持久化 (Q&A) | JSON 文件 (~/.config/paperagent/papers/) |
+| 持久化 (推荐) | SQLite via `modernc.org/sqlite`（纯 Go 零 CGO），WAL 模式 |
+| 飞书 | `larksuite/oapi-sdk-go/v3`，WebSocket + 交互卡片 |
+| 系统托盘 | `fyne.io/systray` |
+| 公式 | KaTeX |
+| 代码高亮 | highlight.js |
 
 ## 许可
 
