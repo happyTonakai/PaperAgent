@@ -157,9 +157,24 @@ CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`
 5. **选 top N**：`MarkDailyRecommendations()` 用混合策略：`daily_papers × (1 - diversity_ratio)` 走 top score，其余走随机探索；每条打上 `recommendation_type = 'score'|'random'`
 6. **拉社区票数**：`FetchVotesForArticles()` 并行查 HuggingFace / AlphaXiv（仅展示，不入排序）
 7. **翻译**（可选）：独立 translation API 翻成中文写回 `translated_title` / `translated_abstract`
-8. **推飞书**：`PushDailyRecommend()` 推送交互卡片到 `daily_recommend_chat_id`
+8. **推飞书**：`Server.RunPush(force)` —— 推送唯一入口，先判断节假日（见下），查 `pushed_at IS NULL` 的积压批次，调 `feishu.PushDailyRecommend()` 推 `daily_recommend_chat_id`，推完后批量写 `pushed_at = now`
 
-`Scheduler` 每分钟醒一次，看是否到 `scheduled_time`（HH:MM）且今天没跑过。完成后通过 `onComplete` 回调触发翻译 + 飞书推送。
+`Scheduler` 每分钟醒一次，看是否到 `scheduled_time`（HH:MM）且今天没跑过。完成后通过 `onComplete` 回调触发翻译 + `RunPush(force=false)`。
+
+**节假日跳过 / 积压合并推送**（`internal/holiday/` + `server.RunPush`）：
+
+- `articles.pushed_at` (schema v5) 追踪推送状态：`NULL` = 待推，有值 = 已推
+- 节假日判断在 `holiday.Checker.IsHoliday()`，三步走：
+  1. `Provider` chain（现为 timor.tech 一个，按序可拓展到 3 个）+ in-memory cache（24h，按 date 切分）
+  2. chain 全失败 → `IsWeekendHoliday()` (周六周日 = 假) fallback，打日志
+  3. 仍 fail → 当工作日，**不阻塞推送**
+- `Server.RunPush(force)` 流程（推送唯一入口，scheduler.onComplete / Web UI / 飞书 `/push` 三者共享）:
+  1. force=false → `IsHoliday(today)`，节假日 → return 0（**不查 DB**），log `[push] today is holiday, skipping`
+  2. 查 DB 拿 `pushed_at IS NULL AND recommend_date IS NOT NULL` 的全部（按 `recommend_date ASC, batch_order ASC` 排序——积压优先于今天）
+  3. 调 `feishu.PushDailyRecommend()` + `MarkArticlesPushed(ids, ts)`
+- 飞书端 `/push` 命令：用户主动调，绕过节假日判断走 force=true 路径。流程同 `POST /api/recommend/push-to-feishu`
+- `SchedulerStatus` 增 `pending_push_count` + `last_push_at`，UI 展示「积压 N 篇 · 上次推送 ...」
+- `ManualTrigger()` (= `POST /api/recommend/trigger`) 始终 force=true，走完整 pipeline + 强制推
 
 ### 模块布局（`internal/`）
 

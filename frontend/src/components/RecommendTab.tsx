@@ -255,6 +255,14 @@ export function RecommendTab() {
             {schedulerStatus?.next_run && (
               <span>· 下次 {formatSchedulerTime(schedulerStatus.next_run)}</span>
             )}
+            {schedulerStatus && schedulerStatus.pending_push_count > 0 && (
+              <span style={{ color: 'var(--color-accent)' }}>
+                · 积压 {schedulerStatus.pending_push_count} 篇
+              </span>
+            )}
+            {schedulerStatus?.last_push_at && (
+              <span>· 上次推送 {formatSchedulerTime(schedulerStatus.last_push_at)}</span>
+            )}
           </div>
 
           {(filter === 'daily' || filter === 0) && (

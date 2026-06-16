@@ -30,6 +30,12 @@ type Article struct {
 	TranslatedAbstract *string `json:"translated_abstract,omitempty"`
 	RecommendationType *string `json:"recommendation_type,omitempty"`
 	CreatedAt          string  `json:"created_at"`
+	// PushedAt records when this article was last pushed to the user via
+	// Feishu. NULL means it has never been pushed and is still in the
+	// pending backlog. The holiday-skip feature relies on this: if push
+	// is skipped on a holiday, articles stay NULL until a later workday
+	// drains them.
+	PushedAt *string `json:"pushed_at,omitempty"`
 }
 
 // NewArticle is the data needed to insert a new article from RSS.
@@ -45,7 +51,7 @@ type NewArticle struct {
 const articleCols = `id, title, link, abstract, status, score, author, category,
 	hf_upvotes, ax_net_votes, votes_updated_at, comment,
 	recommend_date, batch_order, translated_title, translated_abstract,
-	recommendation_type, created_at`
+	recommendation_type, created_at, pushed_at`
 
 func scanArticle(scanner interface {
 	Scan(dest ...interface{}) error
@@ -57,7 +63,7 @@ func scanArticle(scanner interface {
 		&a.HFUpvotes, &a.AXNetVotes, &a.VotesUpdatedAt,
 		&a.Comment, &a.RecommendDate, &a.BatchOrder,
 		&a.TranslatedTitle, &a.TranslatedAbstract,
-		&a.RecommendationType, &a.CreatedAt,
+		&a.RecommendationType, &a.CreatedAt, &a.PushedAt,
 	)
 	return a, err
 }
@@ -562,6 +568,107 @@ func GetRecommendationDates() ([]string, error) {
 		dates = append(dates, d)
 	}
 	return dates, rows.Err()
+}
+
+// GetUnpushedArticles returns articles that have been assigned a
+// recommend_date but never pushed to the user (pushed_at IS NULL). They are
+// ordered by recommend_date ASC, batch_order ASC so that older backlogs
+// drain first when a push finally goes out.
+//
+// `limit` caps the result; callers that want to drain everything should
+// loop until len(returned) < limit.
+func GetUnpushedArticles(limit int) ([]Article, error) {
+	db, err := GetDB()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(
+		`SELECT `+articleCols+` FROM articles
+		 WHERE pushed_at IS NULL AND recommend_date IS NOT NULL
+		 ORDER BY recommend_date ASC, batch_order ASC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var articles []Article
+	for rows.Next() {
+		a, err := scanArticle(rows)
+		if err != nil {
+			return nil, err
+		}
+		articles = append(articles, a)
+	}
+	return articles, rows.Err()
+}
+
+// MaxINClauseIDs caps the number of IDs in a single MarkArticlesPushed
+// call. SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; we stay under
+// 900 to leave headroom for other parameters. RunPush drains the backlog
+// in batches of 500 to stay well under this limit.
+const MaxINClauseIDs = 900
+
+// MarkArticlesPushed sets pushed_at = ts for the given article IDs.
+// An empty IDs slice is a no-op. `ts` should be a SQLite-friendly timestamp
+// (e.g. time.Now().Format("2006-01-02 15:04:05")).
+func MarkArticlesPushed(ids []string, ts string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(ids) > MaxINClauseIDs {
+		return fmt.Errorf("mark articles pushed: too many ids %d (max %d)", len(ids), MaxINClauseIDs)
+	}
+	db, err := GetDB()
+	if err != nil {
+		return fmt.Errorf("mark articles pushed: %w", err)
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = strings.TrimSuffix(placeholders, ",")
+	args := make([]any, len(ids)+1)
+	args[0] = ts
+	for i, id := range ids {
+		args[i+1] = id
+	}
+	_, err = db.Exec("UPDATE articles SET pushed_at = ? WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return fmt.Errorf("mark articles pushed (n=%d): %w", len(ids), err)
+	}
+	return nil
+}
+
+// LastPushAt returns the most recent pushed_at across all articles, or an
+// empty string if nothing has been pushed yet.
+func LastPushAt() (string, error) {
+	db, err := GetDB()
+	if err != nil {
+		return "", err
+	}
+	var ts *string
+	err = db.QueryRow("SELECT MAX(pushed_at) FROM articles WHERE pushed_at IS NOT NULL").Scan(&ts)
+	if err != nil {
+		return "", err
+	}
+	if ts == nil {
+		return "", nil
+	}
+	return *ts, nil
+}
+
+// CountUnpushedArticles returns the number of articles that have a
+// recommend_date but have not been pushed yet.
+func CountUnpushedArticles() (int, error) {
+	db, err := GetDB()
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = db.QueryRow(
+		`SELECT COUNT(*) FROM articles WHERE pushed_at IS NULL AND recommend_date IS NOT NULL`,
+	).Scan(&n)
+	return n, err
 }
 
 // GetStats returns counts of articles by status.

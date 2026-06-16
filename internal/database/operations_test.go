@@ -493,3 +493,215 @@ func TestChatPaperUpsertAndQuery(t *testing.T) {
 // ─── helpers ───
 
 func strPtr(s string) *string { return &s }
+
+// ─── pushed_at: pending backlog & mark-pushed ────────────────────────
+
+// seedPushedAtArticles inserts a configurable list of articles with explicit
+// recommend_date / batch_order / pushed_at values. Used to control the test
+// fixture precisely (rather than running the full MarkDailyRecommendations
+// pipeline).
+func seedPushedAtArticles(t *testing.T, recs []struct {
+	id, recDate string
+	batchOrder  int
+	pushedAt    *string
+}) {
+	t.Helper()
+	db, err := GetDB()
+	if err != nil {
+		t.Fatalf("GetDB: %v", err)
+	}
+	for _, r := range recs {
+		var pushed interface{}
+		if r.pushedAt != nil {
+			pushed = *r.pushedAt
+		}
+		_, err := db.Exec(
+			`INSERT INTO articles (id, title, link, recommend_date, batch_order, pushed_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			r.id, "t-"+r.id, "https://arxiv.org/abs/"+r.id, r.recDate, r.batchOrder, pushed,
+		)
+		if err != nil {
+			t.Fatalf("insert %s: %v", r.id, err)
+		}
+	}
+}
+
+func TestGetUnpushedArticles_FiltersAndOrders(t *testing.T) {
+	defer setupTestDB(t)()
+
+	pushedYesterday := "2026-06-15 08:00:00"
+	seedPushedAtArticles(t, []struct {
+		id, recDate string
+		batchOrder  int
+		pushedAt    *string
+	}{
+		{"a1", "2026-06-14", 0, nil},                          // pending, oldest
+		{"a2", "2026-06-14", 1, nil},                          // pending, same date later
+		{"a3", "2026-06-14", 0, &pushedYesterday},             // already pushed, must be excluded
+		{"a4", "2026-06-15", 0, nil},                          // pending, newer date
+		{"a5", "2026-06-15", 0, nil},                          // pending, same date
+		{"a6", "2026-06-15", 1, &pushedYesterday},             // already pushed, newer date
+		{"a7", "2026-06-13", 0, nil},                          // pending, oldest of all
+		{"a8", "2026-06-15", 0, nil},                          // no recommend_date
+		// a8 has recommend_date=nil so should be excluded by the WHERE clause.
+	})
+	// a8 must be excluded by the WHERE clause (recommend_date IS NOT NULL),
+	// so clear it after seeding. Fail the test loudly if setup didn't
+	// take — silent failures here would mask off-by-one in fixture shape.
+	db, err := GetDB()
+	if err != nil {
+		t.Fatalf("GetDB: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE articles SET recommend_date = NULL WHERE id = 'a8'`); err != nil {
+		t.Fatalf("clear a8.recommend_date: %v", err)
+	}
+
+	got, err := GetUnpushedArticles(100)
+	if err != nil {
+		t.Fatalf("GetUnpushedArticles: %v", err)
+	}
+
+	wantIDs := []string{"a7", "a1", "a2", "a4", "a5"}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("len(got) = %d, want %d (got IDs: %v)", len(got), len(wantIDs), idsOf(got))
+	}
+	for i, w := range wantIDs {
+		if got[i].ID != w {
+			t.Errorf("got[%d].ID = %q, want %q (full: %v)", i, got[i].ID, w, idsOf(got))
+		}
+	}
+}
+
+func TestGetUnpushedArticles_LimitsResult(t *testing.T) {
+	defer setupTestDB(t)()
+	seedPushedAtArticles(t, []struct {
+		id, recDate string
+		batchOrder  int
+		pushedAt    *string
+	}{
+		{"a1", "2026-06-14", 0, nil},
+		{"a2", "2026-06-15", 0, nil},
+		{"a3", "2026-06-16", 0, nil},
+	})
+	got, err := GetUnpushedArticles(2)
+	if err != nil {
+		t.Fatalf("GetUnpushedArticles: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("len = %d, want 2", len(got))
+	}
+}
+
+func TestMarkArticlesPushed_UpdatesAndPreservesExisting(t *testing.T) {
+	defer setupTestDB(t)()
+	oldPush := "2026-06-10 08:00:00"
+	seedPushedAtArticles(t, []struct {
+		id, recDate string
+		batchOrder  int
+		pushedAt    *string
+	}{
+		{"a1", "2026-06-14", 0, nil},
+		{"a2", "2026-06-15", 0, &oldPush}, // already pushed
+		{"a3", "2026-06-16", 0, nil},
+	})
+
+	ts := "2026-06-17 08:00:00"
+	if err := MarkArticlesPushed([]string{"a1", "a3"}, ts); err != nil {
+		t.Fatalf("MarkArticlesPushed: %v", err)
+	}
+
+	a1, _ := GetArticleByID("a1")
+	if a1 == nil || a1.PushedAt == nil || *a1.PushedAt != ts {
+		t.Errorf("a1.PushedAt = %v, want %s", a1.PushedAt, ts)
+	}
+	a2, _ := GetArticleByID("a2")
+	if a2 == nil || a2.PushedAt == nil || *a2.PushedAt != oldPush {
+		t.Errorf("a2.PushedAt = %v, want %s (preserved)", a2.PushedAt, oldPush)
+	}
+	a3, _ := GetArticleByID("a3")
+	if a3 == nil || a3.PushedAt == nil || *a3.PushedAt != ts {
+		t.Errorf("a3.PushedAt = %v, want %s", a3.PushedAt, ts)
+	}
+}
+
+func TestMarkArticlesPushed_EmptyIsNoop(t *testing.T) {
+	defer setupTestDB(t)()
+	if err := MarkArticlesPushed(nil, "2026-06-17 08:00:00"); err != nil {
+		t.Errorf("nil ids should be no-op, got: %v", err)
+	}
+	if err := MarkArticlesPushed([]string{}, "2026-06-17 08:00:00"); err != nil {
+		t.Errorf("empty ids should be no-op, got: %v", err)
+	}
+}
+
+func TestMarkArticlesPushed_RejectsTooManyIDs(t *testing.T) {
+	defer setupTestDB(t)()
+	ids := make([]string, MaxINClauseIDs+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("a%d", i)
+	}
+	err := MarkArticlesPushed(ids, "2026-06-17 08:00:00")
+	if err == nil {
+		t.Fatal("expected error when len(ids) > MaxINClauseIDs")
+	}
+}
+
+func TestLastPushAt_ReturnsMostRecent(t *testing.T) {
+	defer setupTestDB(t)()
+	seedPushedAtArticles(t, []struct {
+		id, recDate string
+		batchOrder  int
+		pushedAt    *string
+	}{
+		{"a1", "2026-06-14", 0, strPtr("2026-06-15 08:00:00")},
+		{"a2", "2026-06-15", 0, strPtr("2026-06-20 08:00:00")},
+		{"a3", "2026-06-16", 0, strPtr("2026-06-18 08:00:00")},
+		{"a4", "2026-06-17", 0, nil}, // not pushed
+	})
+	got, err := LastPushAt()
+	if err != nil {
+		t.Fatalf("LastPushAt: %v", err)
+	}
+	if got != "2026-06-20 08:00:00" {
+		t.Errorf("LastPushAt = %q, want 2026-06-20 08:00:00", got)
+	}
+}
+
+func TestLastPushAt_EmptyWhenNoPushes(t *testing.T) {
+	defer setupTestDB(t)()
+	got, err := LastPushAt()
+	if err != nil {
+		t.Fatalf("LastPushAt: %v", err)
+	}
+	if got != "" {
+		t.Errorf("LastPushAt = %q, want empty", got)
+	}
+}
+
+func TestCountUnpushedArticles(t *testing.T) {
+	defer setupTestDB(t)()
+	seedPushedAtArticles(t, []struct {
+		id, recDate string
+		batchOrder  int
+		pushedAt    *string
+	}{
+		{"a1", "2026-06-14", 0, nil},
+		{"a2", "2026-06-15", 0, strPtr("2026-06-20 08:00:00")},
+		{"a3", "2026-06-16", 0, nil},
+	})
+	n, err := CountUnpushedArticles()
+	if err != nil {
+		t.Fatalf("CountUnpushedArticles: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("CountUnpushedArticles = %d, want 2", n)
+	}
+}
+
+func idsOf(articles []Article) []string {
+	out := make([]string, len(articles))
+	for i, a := range articles {
+		out[i] = a.ID
+	}
+	return out
+}

@@ -50,6 +50,23 @@ type Bot struct {
 	mu        sync.RWMutex
 	connected bool
 	lastError string
+
+	// forcePush is an externally injected function that drains the pending
+	// recommendation backlog and pushes it to the daily-recommend chat.
+	// Set by the server via SetForcePushFunc. Returns the number of articles
+	// pushed and any error. The Feishu /push command calls this regardless
+	// of the holiday-skip rule, so the user can always force a push from
+	// chat when they want to.
+	forcePush func() (int, error)
+}
+
+// SetForcePushFunc injects the function invoked by the /push slash command.
+// Typically wired up by the server so the bot and the scheduler share one
+// push code path.
+func (b *Bot) SetForcePushFunc(fn func() (int, error)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.forcePush = fn
 }
 
 // feishuRequestFunc is the callback type used by withFreshTenantAccessTokenRetry.
@@ -317,8 +334,10 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 		b.cmdRate(chatID, ratingStr)
 	case text == "/pin":
 		b.cmdPinToggle(chatID)
+	case text == "/push":
+		b.cmdPush(chatID)
 	case strings.HasPrefix(text, "/"):
-		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/rate <1-10>` — 给当前论文打分\n• `/pin` — 置顶/取消置顶当前论文\n• `/help` — 查看帮助")
+		b.sendText(chatID, "未知命令。可用命令：\n• `/new <链接>` — 新建论文总结\n• `/list` — 查看文章列表\n• `/summary` — 查看当前论文总结\n• `/fetch [n]` — 拉取最近 n 轮问答\n• `/btw <问题>` — 提问但不记入上下文\n• `/rate <1-10>` — 给当前论文打分\n• `/pin` — 置顶/取消置顶当前论文\n• `/push` — 立即推送积压推荐\n• `/help` — 查看帮助")
 	default:
 		// Check if the input is just an arXiv URL/ID — auto-create new paper.
 		if arxivURL, _, ok := urlparse.NormalizeArxivInput(text); ok {
@@ -343,6 +362,36 @@ func (b *Bot) handleCommand(chatID, messageID, text string) {
 			b.sendText(chatID, "请先使用 `/new <链接>` 创建一篇论文，然后再进行问答。\n\n使用 `/help` 查看所有命令。")
 		}
 	}
+}
+
+// cmdPush drains the pending recommendation backlog and pushes it to the
+// configured daily-recommend chat. Used when the user wants to override the
+// holiday-skip rule (e.g. on a long weekend they want the papers anyway).
+// Target chat is the daily_recommend_chat_id, not the chat where /push was
+// sent from — keeping a single merge point matches the scheduler's behavior.
+func (b *Bot) cmdPush(chatID string) {
+	b.mu.RLock()
+	fn := b.forcePush
+	b.mu.RUnlock()
+
+	if fn == nil {
+		b.sendText(chatID, "❌ 推送服务未初始化。请检查服务端是否正常运行。")
+		return
+	}
+
+	b.sendText(chatID, "⏳ 正在推送待阅推荐……")
+
+	n, err := fn()
+	if err != nil {
+		log.Printf("[feishu] cmdPush: force push error: %v", err)
+		b.sendText(chatID, fmt.Sprintf("❌ 推送失败：%v", err))
+		return
+	}
+	if n == 0 {
+		b.sendText(chatID, "✅ 推送完成：暂无积压推荐。")
+		return
+	}
+	b.sendText(chatID, fmt.Sprintf("✅ 已推送 %d 篇推荐到每日推荐群。", n))
 }
 
 // cmdNew creates a new paper from a URL and streams the summary.
@@ -445,11 +494,14 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	b.streamSummary(chatID, paper)
 }
 
-// sendInteractiveCard sends an interactive card and returns the message ID (may be empty on failure).
-func (b *Bot) sendInteractiveCard(chatID, cardJSON string) string {
+// sendInteractiveCard sends an interactive card and returns (message ID, error).
+// The message ID may be empty even on success if the API response doesn't
+// include one. Callers that don't care about the error (e.g. fire-and-forget
+// streaming updates) should use `_ = b.sendInteractiveCard(...)`.
+func (b *Bot) sendInteractiveCard(chatID, cardJSON string) (string, error) {
 	ctx := context.Background()
 	var msgID string
-	_ = b.doFeishuCall(ctx, "send card", func(client *lark.Client) error {
+	err := b.doFeishuCall(ctx, "send card", func(client *lark.Client) error {
 		resp, e := client.Im.Message.Create(ctx,
 			larkim.NewCreateMessageReqBuilder().
 				ReceiveIdType("chat_id").
@@ -470,14 +522,14 @@ func (b *Bot) sendInteractiveCard(chatID, cardJSON string) string {
 		}
 		return nil
 	})
-	return msgID
+	return msgID, err
 }
 
 // streamSummary streams the summary generation progress via interactive cards.
 // When a card fills up, it is frozen and a new streaming continuation card is sent.
 func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	// Send loading card
-	cardMsgID := b.sendInteractiveCard(chatID, buildLoadingCard(paper.Ref(), paper.Title))
+	cardMsgID, _ := b.sendInteractiveCard(chatID, buildLoadingCard(paper.Ref(), paper.Title))
 	if cardMsgID == "" {
 		log.Printf("[feishu] failed to send loading card")
 		b.sendText(chatID, "❌ 发送进度卡片失败")
@@ -543,7 +595,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 			// Send new streaming continuation card (converted)
 			overflowStart := active.startAt + len(fits)
 			overflowContent := total[overflowStart:]
-			newID := b.sendInteractiveCard(chatID, buildStreamingContinuationCard(latexToUnicode(overflowContent)))
+			newID, _ := b.sendInteractiveCard(chatID, buildStreamingContinuationCard(latexToUnicode(overflowContent)))
 			if newID != "" {
 				slots = append(slots, cardSlot{id: newID, startAt: overflowStart})
 				log.Printf("[feishu] summary card full -> card #%d (total so far: %d chars)", len(slots), len(total))
@@ -588,7 +640,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	if overflow != "" {
 		// Last card's content still doesn't fit — freeze as continuation, send one more done card
 		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
-		b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(overflow), promptTokens, completionTokens, cachedTokens))
+		_, _ = b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(overflow), promptTokens, completionTokens, cachedTokens))
 	} else if len(slots) == 1 {
 		// Single card: patch from streaming to done in-place
 		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
@@ -880,7 +932,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 
 	// Send initial "thinking" card
-	cardMsgID := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title))
+	cardMsgID, _ := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title))
 	if cardMsgID == "" {
 		log.Printf("[feishu] failed to send thinking card")
 		// Fall back to text
@@ -945,7 +997,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 			// Send new streaming continuation card (converted)
 			overflowStart := active.startAt + len(fits)
 			overflowContent := total[overflowStart:]
-			newID := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(latexToUnicode(overflowContent)))
+			newID, _ := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(latexToUnicode(overflowContent)))
 			if newID != "" {
 				slots = append(slots, chatCardSlot{id: newID, startAt: overflowStart})
 				log.Printf("[feishu] chat card full -> card #%d (total so far: %d chars)", len(slots), len(total))
@@ -994,7 +1046,7 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	if overflow != "" {
 		// Last card still doesn't fit — freeze, send one more done card
 		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
-		b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, latexToUnicode(overflow), round, promptTokens, completionTokens, cachedTokens))
+		_, _ = b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, latexToUnicode(overflow), round, promptTokens, completionTokens, cachedTokens))
 	} else {
 		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, latexToUnicode(fits), round, promptTokens, completionTokens, cachedTokens))
 	}
@@ -1268,6 +1320,7 @@ const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"• **/btw <问题>** — 提问但不记入上下文\n" +
 	"• **/rate <1-10>** — 给当前论文打分\n" +
 	"• **/pin** — 置顶/取消置顶当前论文\n" +
+	"• **/push** — 立即推送积压的每日推荐（绕过节假日跳过）\n" +
 	"• **/help** — 显示本帮助\n" +
 	"\n" +
 	"直接发送文字即可对当前论文进行多轮 Q&A。"
@@ -1281,21 +1334,26 @@ func maskAppID(appID string) string {
 
 // ─── Daily Recommendation Push ───
 
-// PushDailyRecommend sends today's recommended articles as an interactive card
-// to the specified Feishu chat. Called by the scheduler after daily pipeline completes.
-// Reads translations from SQLite (populated by translateAndPersistArticles in server.go).
-func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) {
+// PushDailyRecommend sends the given recommended articles as one or more
+// interactive cards to the specified Feishu chat. Called by the scheduler
+// after the daily pipeline completes and by the Feishu /push command.
+// Reads translations from SQLite (populated by translateAndPersistArticles
+// in server.go).
+//
+// Returns an error if any card send fails. Callers should NOT mark the
+// articles as pushed_at on error, so a later push retries the entire batch.
+func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) error {
 	if b.client == nil {
 		log.Printf("[feishu] PushDailyRecommend: client is nil, skipping")
-		return
+		return fmt.Errorf("feishu client is nil")
 	}
 	if chatID == "" {
 		log.Printf("[feishu] PushDailyRecommend: chatID is empty, skipping")
-		return
+		return fmt.Errorf("chatID is empty")
 	}
 	if len(articles) == 0 {
 		log.Printf("[feishu] PushDailyRecommend: no articles, skipping")
-		return
+		return nil
 	}
 	log.Printf("[feishu] PushDailyRecommend: sending %d articles to chat %s", len(articles), chatID)
 
@@ -1352,10 +1410,13 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) {
 			end = len(items)
 		}
 		cardJSON := buildDailyRecommendCard(items[start:end], page, totalPages)
-		b.sendInteractiveCard(chatID, cardJSON)
+		if _, err := b.sendInteractiveCard(chatID, cardJSON); err != nil {
+			return fmt.Errorf("send daily recommend card %d/%d: %w", page, totalPages, err)
+		}
 		log.Printf("[feishu] sent daily recommend card %d/%d (%d articles) to chat %s",
 			page, totalPages, end-start, chatID)
 	}
+	return nil
 }
 
 // handleRecommendLike marks an article as liked (status=2).

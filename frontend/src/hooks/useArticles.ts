@@ -234,6 +234,8 @@ export interface SchedulerStatus {
   scheduled: string
   daily_count: number
   push_to_feishu: boolean
+  pending_push_count: number
+  last_push_at: string
 }
 
 export async function triggerFullPipeline(): Promise<{ status: string }> {

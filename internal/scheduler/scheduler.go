@@ -14,8 +14,10 @@ import (
 )
 
 // AfterRecommendFunc is called after each successful daily recommendation run
-// with the recommended articles. Used for Feishu notifications, etc.
-type AfterRecommendFunc func(articles []database.Article)
+// with the recommended articles. `force` indicates whether the run was a
+// manual trigger that should bypass the holiday-skip rule (i.e. the user
+// explicitly asked for a push right now).
+type AfterRecommendFunc func(articles []database.Article, force bool)
 
 // SchedulerStatus exposes current scheduler state for the UI.
 type SchedulerStatus struct {
@@ -26,6 +28,14 @@ type SchedulerStatus struct {
 	Scheduled    string `json:"scheduled"`   // configured time "HH:MM"
 	DailyCount   int    `json:"daily_count"` // how many papers the last run recommended
 	PushToFeishu bool   `json:"push_to_feishu"`
+	// PendingPushCount is the size of the push backlog (articles with
+	// pushed_at IS NULL AND recommend_date IS NOT NULL). Populated by the
+	// server, not the scheduler itself. When this is non-zero and today
+	// was a holiday, the next workday's push will drain it.
+	PendingPushCount int `json:"pending_push_count"`
+	// LastPushAt is the timestamp of the most recent successful push, or
+	// empty if nothing has been pushed yet. Populated by the server.
+	LastPushAt string `json:"last_push_at"`
 }
 
 // Scheduler manages periodic background tasks.
@@ -92,7 +102,7 @@ func (s *Scheduler) Start() {
 			select {
 			case <-ticker.C:
 				if s.shouldRun() {
-					s.runOnce()
+					s.runOnce(false)
 				}
 			case <-s.stopCh:
 				log.Printf("[scheduler] stopped")
@@ -134,9 +144,12 @@ func (s *Scheduler) Status() SchedulerStatus {
 	}
 }
 
-// ManualTrigger executes one full pipeline cycle immediately.
+// ManualTrigger executes one full pipeline cycle immediately and forces a
+// push (force=true) regardless of whether the scheduler would have skipped
+// the push because of a holiday. Used by the Web UI "全流程触发" button and
+// by the Feishu /push command path.
 func (s *Scheduler) ManualTrigger() {
-	s.runOnce()
+	s.runOnce(true)
 }
 
 // shouldRun checks if the current time matches the scheduled time
@@ -169,8 +182,9 @@ func (s *Scheduler) shouldRun() bool {
 	return true
 }
 
-// runOnce executes one full pipeline cycle.
-func (s *Scheduler) runOnce() {
+// runOnce executes one full pipeline cycle. `force` propagates to onComplete
+// so the push layer knows whether to bypass the holiday-skip rule.
+func (s *Scheduler) runOnce(force bool) {
 	s.mu.Lock()
 	if s.isRunning {
 		s.mu.Unlock()
@@ -181,7 +195,7 @@ func (s *Scheduler) runOnce() {
 	s.mu.Unlock()
 
 	today := time.Now().Format("2006-01-02")
-	log.Printf("[scheduler] starting daily pipeline for %s", today)
+	log.Printf("[scheduler] starting daily pipeline for %s (force=%v)", today, force)
 
 	recs, err := recommend.FetchAndRecommend(s.categories, s.scoring, s.dailyPapers, s.batchSize, s.diversityRatio)
 
@@ -204,7 +218,7 @@ func (s *Scheduler) runOnce() {
 	log.Printf("[scheduler] daily pipeline done: %d recommendations", len(recs))
 
 	if onComplete != nil && len(recs) > 0 {
-		onComplete(recs)
+		onComplete(recs, force)
 	}
 }
 

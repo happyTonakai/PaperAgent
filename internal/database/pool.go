@@ -151,6 +151,7 @@ func migrate(conn *sql.DB) error {
 		{2, schemaV2},
 		{3, schemaV3},
 		{4, schemaV4},
+		{5, schemaV5},
 	}
 
 	for _, m := range migrations {

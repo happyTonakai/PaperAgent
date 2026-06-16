@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -468,16 +467,23 @@ func (s *Server) handleRecommendTrigger(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered"})
 }
 
-// handleRecommendPushToFeishu pushes today's recommendations to the configured
-// Feishu chat. This is a standalone action — it doesn't re-run the pipeline.
+// handleRecommendPushToFeishu drains the pending recommendation backlog and
+// pushes it to the configured Feishu chat. Holiday-skip is bypassed (force
+// push) so users can trigger this from the Web UI on demand. Reuses the
+// shared RunPush path used by the scheduler and the Feishu /push command.
 func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
 	chatID := s.cfg.Feishu.DailyRecommendChatID
+	pushEnabled := s.cfg.Recommend.PushToFeishu
 	s.cfg.RUnlock()
 
 	if chatID == "" {
 		log.Printf("[recommend] push-to-feishu: daily_recommend_chat_id not configured")
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "daily_recommend_chat_id not configured"})
+		return
+	}
+	if !pushEnabled {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "push_to_feishu is disabled in config"})
 		return
 	}
 	if s.feishuBot == nil {
@@ -486,22 +492,16 @@ func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	today := time.Now().Format("2006-01-02")
-	articles, err := database.GetArticlesByRecommendDate(today)
+	n, err := s.RunPush(true)
 	if err != nil {
-		log.Printf("[recommend] push-to-feishu: query articles error: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("query articles: %v", err)})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if len(articles) == 0 {
-		log.Printf("[recommend] push-to-feishu: no articles for %s", today)
-		writeJSON(w, http.StatusOK, map[string]string{"status": "no_articles", "message": fmt.Sprintf("no recommendations for %s", today)})
+	if n == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "no_articles", "message": "no pending recommendations"})
 		return
 	}
-
-	log.Printf("[recommend] push-to-feishu: pushing %d articles to chat %s", len(articles), chatID)
-	s.feishuBot.PushDailyRecommend(chatID, articles)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "pushed", "count": strconv.Itoa(len(articles))})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "pushed", "count": strconv.Itoa(n)})
 }
 
 // handleRecommendSchedulerStatus returns the current scheduler state.
@@ -517,6 +517,26 @@ func (s *Server) handleRecommendSchedulerStatus(w http.ResponseWriter, r *http.R
 	s.cfg.RLock()
 	status.PushToFeishu = s.cfg.Recommend.PushToFeishu
 	s.cfg.RUnlock()
+
+	// Augment with push-backlog stats. These are derived from the DB, not
+	// the scheduler itself, but they belong in the same response so the
+	// UI can show "积压 N 篇" / "上次推送 X" alongside scheduler state.
+	// A DB error here sets a sentinel value so the UI can distinguish
+	// "no backlog" (0) from "unknown" (sentinel) — silently treating DB
+	// errors as "0" would mislead users about whether the pipeline is
+	// healthy.
+	if pending, err := database.CountUnpushedArticles(); err == nil {
+		status.PendingPushCount = pending
+	} else {
+		log.Printf("[recommend] scheduler-status: count unpushed: %v", err)
+		status.PendingPushCount = -1
+	}
+	if last, err := database.LastPushAt(); err == nil {
+		status.LastPushAt = last
+	} else {
+		log.Printf("[recommend] scheduler-status: last push at: %v", err)
+		status.LastPushAt = "error"
+	}
 
 	writeJSON(w, http.StatusOK, status)
 }

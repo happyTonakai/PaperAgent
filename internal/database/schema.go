@@ -56,3 +56,13 @@ ALTER TABLE articles ADD COLUMN ax_upvotes INTEGER;
 ALTER TABLE articles ADD COLUMN ax_downvotes INTEGER;
 UPDATE articles SET ax_upvotes = ax_net_votes, ax_downvotes = 0 WHERE ax_net_votes IS NOT NULL;
 `
+
+// schemaV5 adds pushed_at to track whether a recommended article has been
+// pushed to the user via Feishu. NULL = pending; non-NULL = already pushed.
+// This enables the holiday-skip / backlog-merge push behavior: on a holiday
+// the push is skipped and articles stay NULL, then a later workday push
+// drains the entire pending backlog.
+const schemaV5 = `
+ALTER TABLE articles ADD COLUMN pushed_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_articles_pushed_at ON articles(pushed_at);
+`
