@@ -580,6 +580,26 @@ export function SettingsDialog() {
 		<div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[var(--color-text-muted)]" /></div>
 	) : (
 		<div className="space-y-4">
+			{/* Scheduler status */}
+			{schedulerStatus && (
+				<div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-1.5">
+					<div className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">⏱ 定时调度状态</div>
+					<div className="flex items-center gap-2 text-xs">
+						<span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${
+							schedulerStatus.is_running
+								? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'
+								: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+						}`}>
+							<StatusDot color={schedulerStatus.is_running ? 'yellow' : 'green'} />
+							{schedulerStatus.is_running ? '运行中' : '待命中'}
+						</span>
+					</div>
+					{schedulerStatus.scheduled && <p className={hintCls}>定时时间：{schedulerStatus.scheduled}</p>}
+					{schedulerStatus.next_run && <p className={hintCls}>下次执行：{schedulerStatus.next_run}</p>}
+					{schedulerStatus.last_run && <p className={hintCls}>上次执行：{schedulerStatus.last_run}{schedulerStatus.daily_count > 0 ? ` (推荐了 ${schedulerStatus.daily_count} 篇)` : ''}</p>}
+					{schedulerStatus.last_error && <p className="text-xs text-red-500">上次错误：{schedulerStatus.last_error}</p>}
+				</div>
+			)}
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>arXiv 订阅分类</legend>
 				<p className={hintCls}>每天从这些 arXiv 分类中拉取最新论文。</p>
@@ -701,10 +721,8 @@ export function SettingsDialog() {
 		}
 	}
 
-	// Display status bar between header and tabs when there is scheduler or feishu issue
-	const hasStatusBar =
-		(schedulerStatus?.scheduled && (recommendConfig?.arxiv_categories?.length ?? 0) > 0) ||
-		(feishuStatus?.enabled && (!feishuStatus.connected || feishuStatus.last_error))
+	// Display status bar between header and tabs when there's a feishu issue
+	const hasStatusBar = feishuStatus?.enabled && (!feishuStatus.connected || feishuStatus.last_error)
 
 	return (
 		<div
@@ -725,15 +743,6 @@ export function SettingsDialog() {
 				{/* Status bar — only when there's something to report */}
 				{hasStatusBar && (
 					<div className="px-4 py-1.5 bg-[var(--color-bg)] border-b border-[var(--color-border-light)] space-y-0.5 text-xs">
-						{/* Scheduler */}
-						{schedulerStatus?.scheduled && (recommendConfig?.arxiv_categories?.length ?? 0) > 0 && (
-							<div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-								<StatusDot color={schedulerStatus.is_running ? 'yellow' : 'green'} />
-								<span>定时推荐 {schedulerStatus.scheduled}</span>
-								{schedulerStatus.next_run && <span className="text-[var(--color-text-muted)]">· 下次 {schedulerStatus.next_run}</span>}
-								{schedulerStatus.last_error && <span className="text-red-500">· ⚠ {schedulerStatus.last_error}</span>}
-							</div>
-						)}
 						{/* Feishu — only when enabled but not connected */}
 						{feishuStatus?.enabled && (!feishuStatus.connected || feishuStatus.last_error) && (
 							<div className="flex items-center gap-1.5">
