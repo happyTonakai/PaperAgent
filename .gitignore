@@ -22,3 +22,6 @@ skills-lock.json
 .DS_Store
 *.zip
 arxiv2md
+
+# Nix build output
+result
