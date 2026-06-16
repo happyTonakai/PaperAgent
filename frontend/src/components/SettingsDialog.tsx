@@ -7,14 +7,14 @@ type Tab = 'api' | 'prompts' | 'feishu' | 'recommend' | 'preferences'
 
 interface ConfigData {
 	api: { base_url: string; api_key: string; api_key_source: string; default_model: string }
-	obsidian: { vault_path: string; export_folder: string }
+	obsidian: { export_path: string }
 	ui: { min_recent_rounds: number; max_input_tokens: number }
 	feishu?: { enabled: boolean; app_id: string; app_secret: string; daily_recommend_chat_id: string }
 }
 
 interface ConfigForm {
 	api_key: string; base_url: string; default_model: string
-	min_recent_rounds: string; max_input_tokens: string; obsidian_vault_path: string; obsidian_export_folder: string
+	min_recent_rounds: string; max_input_tokens: string; obsidian_export_path: string
 	feishu_enabled: boolean; feishu_app_id: string; feishu_app_secret: string; feishu_daily_recommend_chat_id: string
 }
 
@@ -181,7 +181,7 @@ export function SettingsDialog() {
 	const [config, setConfig] = useState<ConfigData | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
-	const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: '' })
+	const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_export_path: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: '' })
 	const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
 	// ── Prompts ──
@@ -236,7 +236,7 @@ export function SettingsDialog() {
 			.then((r) => r.json())
 			.then((data: ConfigData) => {
 				setConfig(data)
-				setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, min_recent_rounds: String(data.ui.min_recent_rounds), max_input_tokens: String(data.ui.max_input_tokens), obsidian_vault_path: data.obsidian.vault_path, obsidian_export_folder: data.obsidian.export_folder, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: data.feishu?.daily_recommend_chat_id ?? '' })
+				setForm({ api_key: '', base_url: data.api.base_url, default_model: data.api.default_model, min_recent_rounds: String(data.ui.min_recent_rounds), max_input_tokens: String(data.ui.max_input_tokens), obsidian_export_path: data.obsidian.export_path, feishu_enabled: data.feishu?.enabled ?? false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: data.feishu?.daily_recommend_chat_id ?? '' })
 				setApiKeyDirty(false)
 			})
 			.catch((err) => toast.error('加载配置失败: ' + (err instanceof Error ? err.message : '未知错误')))
@@ -300,8 +300,7 @@ export function SettingsDialog() {
 			if (form.default_model !== config?.api.default_model) body['default_model'] = form.default_model
 			if (String(form.min_recent_rounds) !== String(config?.ui.min_recent_rounds)) body['min_recent_rounds'] = Number(form.min_recent_rounds)
 			if (String(form.max_input_tokens) !== String(config?.ui.max_input_tokens)) body['max_input_tokens'] = Number(form.max_input_tokens)
-			if (form.obsidian_vault_path !== config?.obsidian.vault_path) body['obsidian_vault_path'] = form.obsidian_vault_path
-			if (form.obsidian_export_folder !== config?.obsidian.export_folder) body['obsidian_export_folder'] = form.obsidian_export_folder
+			if (form.obsidian_export_path !== config?.obsidian.export_path) body['obsidian_export_path'] = form.obsidian_export_path
 
 			let mainChanged = Object.keys(body).length > 0
 			if (mainChanged) {
@@ -539,11 +538,11 @@ export function SettingsDialog() {
 
 			<hr className={dividerCls} />
 
-			{/* 5. Obsidian 导出 */}
+			{/* 5. 导出设置 */}
 			<fieldset className="space-y-3">
-				<legend className={legendCls}>Obsidian 导出</legend>
-				<div><label className={labelCls}>Vault 路径</label><input type="text" value={form.obsidian_vault_path} onChange={(e) => updateForm('obsidian_vault_path', e.target.value)} placeholder="~/Documents/Obsidian/MyVault" className={inputCls} /></div>
-				<div><label className={labelCls}>导出文件夹</label><input type="text" value={form.obsidian_export_folder} onChange={(e) => updateForm('obsidian_export_folder', e.target.value)} placeholder="Papers" className={inputCls} /></div>
+				<legend className={legendCls}>导出设置</legend>
+				<p className={hintCls}>将论文和对话导出为 Markdown 文件，保存到此文件夹。支持 ~ 路径展开。</p>
+				<div><label className={labelCls}>导出文件夹</label><input type="text" value={form.obsidian_export_path} onChange={(e) => updateForm('obsidian_export_path', e.target.value)} placeholder="~/Papers" className={inputCls} /></div>
 			</fieldset>
 		</div>
 	)

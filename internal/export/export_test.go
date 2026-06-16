@@ -53,8 +53,7 @@ func TestExportToObsidian(t *testing.T) {
 
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    tmpDir,
-			ExportFolder: "Papers",
+			ExportPath: filepath.Join(tmpDir, "Papers"),
 		},
 	}
 
@@ -132,14 +131,14 @@ func TestExportToObsidian(t *testing.T) {
 func TestExportNoVaultPath(t *testing.T) {
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath: "",
+			ExportPath: "",
 		},
 	}
 	p := &session.Paper{ID: 1, Title: "Test"}
 
 	_, err := ExportToObsidian(cfg, p)
 	if err == nil {
-		t.Error("expected error for empty vault path")
+		t.Error("expected error for empty export path")
 	}
 }
 
@@ -147,8 +146,7 @@ func TestExportNoTitle(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    tmpDir,
-			ExportFolder: "Papers",
+			ExportPath: filepath.Join(tmpDir, "Papers"),
 		},
 	}
 	p := &session.Paper{ID: 42, Content: "test"}
@@ -165,12 +163,11 @@ func TestExportNoTitle(t *testing.T) {
 
 func TestExportCreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	vaultPath := filepath.Join(tmpDir, "NewVault")
+	exportPath := filepath.Join(tmpDir, "NewVault", "Research", "Papers")
 
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    vaultPath,
-			ExportFolder: "Research/Papers",
+			ExportPath: exportPath,
 		},
 	}
 	p := &session.Paper{ID: 1, Title: "Test"}
@@ -180,7 +177,7 @@ func TestExportCreatesDirectory(t *testing.T) {
 		t.Fatalf("export should create dirs, got error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(vaultPath, "Research", "Papers")); os.IsNotExist(err) {
+	if _, err := os.Stat(exportPath); os.IsNotExist(err) {
 		t.Error("export directory should have been created")
 	}
 }

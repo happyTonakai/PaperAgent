@@ -1115,8 +1115,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"default_model":  s.cfg.API.DefaultModel,
 		},
 		"obsidian": map[string]string{
-			"vault_path":    s.cfg.Obsidian.VaultPath,
-			"export_folder": s.cfg.Obsidian.ExportFolder,
+			"export_path": s.cfg.Obsidian.ExportPath,
 		},
 		"ui": map[string]int{
 			"min_recent_rounds": s.cfg.UI.MinRecentRounds,
@@ -1161,11 +1160,8 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := updates["max_input_tokens"].(float64); ok {
 		s.cfg.UI.MaxInputTokens = int(v)
 	}
-	if v, ok := updates["obsidian_vault_path"].(string); ok {
-		s.cfg.Obsidian.VaultPath = v
-	}
-	if v, ok := updates["obsidian_export_folder"].(string); ok {
-		s.cfg.Obsidian.ExportFolder = v
+	if v, ok := updates["obsidian_export_path"].(string); ok {
+		s.cfg.Obsidian.ExportPath = v
 	}
 	if v, ok := updates["feishu_enabled"].(bool); ok {
 		s.cfg.Feishu.Enabled = v

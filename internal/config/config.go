@@ -47,8 +47,7 @@ type RecommendConfig struct {
 }
 
 type ObsidianConfig struct {
-	VaultPath     string `yaml:"vault_path"`
-	ExportFolder  string `yaml:"export_folder"`
+	ExportPath string `yaml:"export_path"`
 }
 
 type UIConfig struct {
@@ -123,6 +122,23 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Migration: older configs split the export destination into
+	// vault_path + export_folder. If we read an old config (no export_path
+	// but the legacy fields present), concatenate them into export_path.
+	if cfg.Obsidian.ExportPath == "" {
+		var legacy struct {
+			Obsidian struct {
+				VaultPath    string `yaml:"vault_path"`
+				ExportFolder string `yaml:"export_folder"`
+			} `yaml:"obsidian"`
+		}
+		if err := yaml.Unmarshal(data, &legacy); err == nil {
+			if legacy.Obsidian.VaultPath != "" || legacy.Obsidian.ExportFolder != "" {
+				cfg.Obsidian.ExportPath = filepath.Join(legacy.Obsidian.VaultPath, legacy.Obsidian.ExportFolder)
+			}
+		}
+	}
+
 	// Resolve all API keys: expand env vars + decrypt
 	var resolveErrors []string
 	cfg.API.APIKey, _ = resolveAPIKey(cfg.API.APIKey)
@@ -143,7 +159,9 @@ func Load() (*Config, error) {
 	}
 
 	// Expand ~ in paths
-	cfg.Obsidian.VaultPath = expandHome(cfg.Obsidian.VaultPath)
+	if cfg.Obsidian.ExportPath != "" {
+		cfg.Obsidian.ExportPath = expandHome(cfg.Obsidian.ExportPath)
+	}
 
 	return cfg, nil
 }
@@ -169,8 +187,7 @@ func defaultConfig() *Config {
 			PushToFeishu:     true,
 		},
 		Obsidian: ObsidianConfig{
-			VaultPath:    "~/Documents/Obsidian/MyVault",
-			ExportFolder: "Papers",
+			ExportPath: "~/Papers",
 		},
 		UI: UIConfig{
 			MinRecentRounds: 2,
@@ -233,8 +250,7 @@ func (c *Config) Save() error {
 		},
 		ArxivCategories: c.ArxivCategories,
 		Obsidian: ObsidianConfig{
-			VaultPath:    c.Obsidian.VaultPath,
-			ExportFolder: c.Obsidian.ExportFolder,
+			ExportPath: c.Obsidian.ExportPath,
 		},
 		UI: UIConfig{
 			MinRecentRounds: c.UI.MinRecentRounds,

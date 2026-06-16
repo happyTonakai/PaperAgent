@@ -63,11 +63,11 @@ type TemplateData struct {
 }
 
 func ExportToObsidian(cfg *config.Config, p *session.Paper) (string, error) {
-	if cfg.Obsidian.VaultPath == "" {
-		return "", fmt.Errorf("obsidian vault path not configured")
+	if cfg.Obsidian.ExportPath == "" {
+		return "", fmt.Errorf("export path not configured")
 	}
 
-	exportDir := filepath.Join(cfg.Obsidian.VaultPath, cfg.Obsidian.ExportFolder)
+	exportDir := cfg.Obsidian.ExportPath
 	if err := os.MkdirAll(exportDir, 0755); err != nil {
 		return "", fmt.Errorf("creating export directory: %w", err)
 	}
