@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Loader2, Save, ChevronRight, ChevronsUpDown } from 'lucide-react'
+import { X, Loader2, Save, ChevronRight, ChevronsUpDown, Eye, EyeOff } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
 
@@ -74,6 +74,37 @@ function StatusDot({ color }: { color: 'green' | 'red' | 'yellow' }) {
 	)
 }
 
+function SecretInput({
+	value, onChange, placeholder, className,
+}: {
+	value: string
+	onChange: (v: string) => void
+	placeholder?: string
+	className?: string
+}) {
+	const [show, setShow] = useState(false)
+	return (
+		<div className="relative">
+			<input
+				type={show ? 'text' : 'password'}
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				placeholder={placeholder}
+				className={`${className ?? ''} pr-8`}
+			/>
+			<button
+				type="button"
+				onClick={() => setShow(!show)}
+				className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+				tabIndex={-1}
+				aria-label={show ? '隐藏' : '显示'}
+			>
+				{show ? <EyeOff size={14} /> : <Eye size={14} />}
+			</button>
+		</div>
+	)
+}
+
 // ── helper: compare recommend API sections for dirtiness ──
 function scoringChanged(a: RecommendConfigData['api']['scoring'], b: RecommendConfigData['api']['scoring']) {
 	if (!a && !b) return false
@@ -131,6 +162,7 @@ export function SettingsDialog() {
 	const [recConfigOrig, setRecConfigOrig] = useState<RecommendConfigData | null>(null) // snapshot for dirtiness
 	const [recLoading, setRecLoading] = useState(false)
 	const [recSaving, setRecSaving] = useState(false)
+	const [useMainForScoring, setUseMainForScoring] = useState(true)
 
 	// ── Prompts accordion state ──
 	const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({})
@@ -242,12 +274,15 @@ export function SettingsDialog() {
 
 			// 2) Save scoring / translation if changed
 			if (recommendConfig && recConfigOrig) {
-				const scoringBody: Record<string, string> = {
-					base_url: recommendConfig.api.scoring?.base_url ?? '',
-					model: recommendConfig.api.scoring?.model ?? '',
-				}
-				if (recommendConfig.api.scoring?.api_key && !recommendConfig.api.scoring.api_key.startsWith('\u2022')) {
-					scoringBody.api_key = recommendConfig.api.scoring.api_key
+				let scoringBody: Record<string, string> | null = null
+				if (!useMainForScoring) {
+					scoringBody = {
+						base_url: recommendConfig.api.scoring?.base_url ?? '',
+						model: recommendConfig.api.scoring?.model ?? '',
+					}
+					if (recommendConfig.api.scoring?.api_key && !recommendConfig.api.scoring.api_key.startsWith('\u2022')) {
+						scoringBody.api_key = recommendConfig.api.scoring.api_key
+					}
 				}
 
 				const translation = recommendConfig.api.translation
@@ -266,7 +301,9 @@ export function SettingsDialog() {
 					}
 				}
 
-				const scChanged = scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring)
+				const scChanged = useMainForScoring
+					? recConfigOrig.api.scoring !== null
+					: scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring)
 				const trChanged = translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation)
 
 				if (scChanged || trChanged) {
@@ -378,7 +415,7 @@ export function SettingsDialog() {
 					<label className={labelCls}>
 						API Key{config && <span className="ml-1 text-[var(--color-text-muted)]">({config.api.api_key_source === 'config' ? '文件配置' : '环境变量'}: {config.api.api_key})</span>}
 					</label>
-					<input type="password" value={form.api_key} onChange={(e) => updateForm('api_key', e.target.value)} placeholder={config ? '输入新密钥以替换...' : ''} className={inputCls} />
+					<SecretInput value={form.api_key} onChange={(v) => updateForm('api_key', v)} placeholder={config ? '输入新密钥以替换...' : ''} className={inputCls} />
 					{!apiKeyDirty && <p className={hintCls}>输入新密钥以替换。全大写名称（如 OPENAI_API_KEY）则引用环境变量</p>}
 				</div>
 				<div><label className={labelCls}>Base URL</label><input type="text" value={form.base_url} onChange={(e) => updateForm('base_url', e.target.value)} className={inputCls} /></div>
@@ -390,10 +427,24 @@ export function SettingsDialog() {
 			{/* 2. 评分 API — 推荐论文打分 & 偏好分析 */}
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>评分 API · 推荐打分 & 偏好分析</legend>
-				<p className={hintCls}>每日推荐管线中，对 arXiv 论文打分和用户偏好分析的 LLM API。留空则复用主 API。</p>
-				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, api_key: e.target.value } } } : prev)} className={inputCls} /></div>
-				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputCls} placeholder="gpt-4o-mini" /></div>
+				<p className={hintCls}>每日推荐管线中，对 arXiv 论文打分和用户偏好分析的 LLM API。</p>
+				<div className="flex items-center gap-2">
+					<input
+						type="checkbox"
+						id="use-main-for-scoring"
+						checked={useMainForScoring}
+						onChange={(e) => setUseMainForScoring(e.target.checked)}
+						className="w-4 h-4 rounded border-[var(--color-border)]"
+					/>
+					<label htmlFor="use-main-for-scoring" className={labelCls}>复用主 API 配置</label>
+				</div>
+				{!useMainForScoring && (
+					<>
+						<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, api_key: v } } } : prev)} className={inputCls} /></div>
+						<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
+						<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputCls} placeholder="gpt-4o-mini" /></div>
+					</>
+				)}
 			</fieldset>
 
 			<hr className={dividerCls} />
@@ -402,10 +453,10 @@ export function SettingsDialog() {
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>翻译 API · 推荐摘要翻译</legend>
 				<p className={hintCls}>将推荐论文的标题/摘要翻译为中文。留空则不翻译，保留原始英文。</p>
-				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => {
+				<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => {
 					if (!prev) return prev
 					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-					return { ...prev, api: { ...prev.api, translation: { ...t, api_key: e.target.value } } }
+					return { ...prev, api: { ...prev.api, translation: { ...t, api_key: v } } }
 				})} className={inputCls} /></div>
 				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => {
 					if (!prev) return prev
@@ -460,7 +511,7 @@ export function SettingsDialog() {
 				</div>
 				{feishuStatus && feishuStatus.last_error && (<p className="text-xs text-red-500">错误: {feishuStatus.last_error}</p>)}
 				<div><label className={labelCls}>App ID {config?.feishu?.app_id && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.app_id})</span>}</label><input type="text" value={form.feishu_app_id} onChange={(e) => updateForm('feishu_app_id', e.target.value)} placeholder="cli_xxxxx" className={inputCls} /></div>
-				<div><label className={labelCls}>App Secret {config?.feishu?.app_secret && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.app_secret})</span>}</label><input type="password" value={form.feishu_app_secret} onChange={(e) => updateForm('feishu_app_secret', e.target.value)} placeholder={config?.feishu?.app_secret ? '输入新 Secret 以替换...' : '飞书应用 Secret'} className={inputCls} /></div>
+				<div><label className={labelCls}>App Secret {config?.feishu?.app_secret && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.app_secret})</span>}</label><SecretInput value={form.feishu_app_secret} onChange={(v) => updateForm('feishu_app_secret', v)} placeholder={config?.feishu?.app_secret ? '输入新 Secret 以替换...' : '飞书应用 Secret'} className={inputCls} /></div>
 				<div><label className={labelCls}>每日推荐 Chat ID {config?.feishu?.daily_recommend_chat_id && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.daily_recommend_chat_id})</span>}</label><input type="text" value={form.feishu_daily_recommend_chat_id} onChange={(e) => updateForm('feishu_daily_recommend_chat_id', e.target.value)} placeholder="oc_xxxxxxxxx" className={inputCls} /></div>
 				<p className={hintCls}>保存后自动重连飞书 WebSocket。</p>
 			</fieldset>
