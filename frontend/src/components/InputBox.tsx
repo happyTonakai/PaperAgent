@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Command } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
-import { useExportPaper } from '../hooks/usePapers'
+import { useExportPaper, usePaper } from '../hooks/usePapers'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -25,6 +25,7 @@ function isArxivInput(s: string): boolean {
 export function InputBox() {
   const { currentPaperId, isStreaming, setSettingsOpen, sendQuestion, contentWidth } = useAppStore()
   const exportPaper = useExportPaper()
+  const { data: paper } = usePaper(currentPaperId)
   const qc = useQueryClient()
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const isComposingRef = useRef(false)
@@ -400,18 +401,42 @@ export function InputBox() {
               e.currentTarget.style.boxShadow = 'var(--shadow-sm)'
             }}
           />
-          <button
-            onClick={handleSend}
-            disabled={isStreaming}
-            className="flex-shrink-0 p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
-            style={{
-              backgroundColor: 'var(--color-accent)',
-              color: '#fff',
-            }}
-            aria-label="发送"
-          >
-            <Send size={15} />
-          </button>
+          <div className="flex flex-col gap-3 flex-shrink-0">
+            {paper?.arxiv_id && (
+              <a
+                href={`https://arxiv.org/pdf/${paper.arxiv_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-2 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 flex items-center justify-center"
+                style={{
+                  backgroundColor: 'var(--color-bg-inset)',
+                  color: 'var(--color-text-secondary)',
+                  boxShadow: 'var(--shadow-sm)',
+                }}
+                title="打开论文 PDF"
+                aria-label="打开论文 PDF"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="8" y1="13" x2="16" y2="13" />
+                  <line x1="8" y1="17" x2="12" y2="17" />
+                </svg>
+              </a>
+            )}
+            <button
+              onClick={handleSend}
+              disabled={isStreaming}
+              className="p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
+              style={{
+                backgroundColor: 'var(--color-accent)',
+                color: '#fff',
+              }}
+              aria-label="发送"
+            >
+              <Send size={15} />
+            </button>
+          </div>
         </div>
       </div>
     </div>

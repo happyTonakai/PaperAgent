@@ -321,35 +321,6 @@ pre code.hljs {
   overflow: hidden;
 }
 
-.recommend-stats {
-  display: flex;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--color-bg-elevated);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.recommend-stats .stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 60px;
-}
-
-.recommend-stats .stat-value {
-  font-size: 1.3em;
-  font-weight: 700;
-  color: var(--color-accent);
-  line-height: 1.2;
-}
-
-.recommend-stats .stat-label {
-  font-size: 0.72em;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
 .recommend-toolbar {
   display: flex;
   align-items: center;

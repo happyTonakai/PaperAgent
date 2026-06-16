@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { Toaster, toast } from 'sonner'
+import { Settings, Sun, Moon, Monitor, Maximize2, Minimize2 } from 'lucide-react'
 import { PaperList } from './components/PaperList'
 import { ChatView } from './components/ChatView'
 import { InputBox } from './components/InputBox'
@@ -8,9 +9,12 @@ import { NewPaperDialog } from './components/NewPaperDialog'
 import { SettingsDialog } from './components/SettingsDialog'
 import { LogDialog } from './components/LogDialog'
 import { RecommendTab } from './components/RecommendTab'
+import { FontFamilyButton } from './components/FontFamilyButton'
+import { FontSizeButton } from './components/FontSizeButton'
 import { useConnection } from './hooks/useConnection'
 import { useAppStore, applyTheme } from './stores/appStore'
 import { useQueryClient } from '@tanstack/react-query'
+import type { Theme } from './types'
 
 // Helper: sync the active paper ID to the server.
 export async function setActivePaperOnServer(id: string | null) {
@@ -284,26 +288,73 @@ export default function App() {
   }, [qc])
 
   const activeTab = useAppStore((s) => s.activeTab)
+  const { theme, setTheme, setSettingsOpen, contentWidth, toggleContentWidth } = useAppStore()
+  const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
 
   return (
     <div
       className="h-screen flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}
     >
-      {/* Tab bar */}
-      <div className="flex items-center gap-0 px-4 pt-2 pb-0 border-b border-[var(--color-border)]" style={{ backgroundColor: 'var(--color-bg-elevated)' }}>
-        <button
-          onClick={() => useAppStore.getState().setActiveTab('chat')}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'chat' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+      {/* Tab bar + global controls */}
+      <div
+        className="flex items-center justify-between px-4 pt-1.5 pb-0 border-b border-[var(--color-border)]"
+        style={{ backgroundColor: 'var(--color-bg-elevated)' }}
+      >
+        <div className="flex items-center gap-0">
+          <button
+            onClick={() => useAppStore.getState().setActiveTab('chat')}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'chat' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+          >
+            💬 论文对话
+          </button>
+          <button
+            onClick={() => useAppStore.getState().setActiveTab('recommend')}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'recommend' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+          >
+            📅 每日推荐
+          </button>
+        </div>
+
+        {/* Global controls (shared by both tabs) */}
+        <div
+          className="flex items-center gap-0.5 pr-1"
+          style={{ fontFamily: 'var(--font-ui)' }}
         >
-          💬 论文对话
-        </button>
-        <button
-          onClick={() => useAppStore.getState().setActiveTab('recommend')}
-          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === 'recommend' ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-0 text-[var(--color-text)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
-        >
-          📅 每日推荐
-        </button>
+          <button
+            onClick={toggleContentWidth}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title={contentWidth === 'full' ? '窄屏阅读' : '宽屏阅读'}
+            aria-label={contentWidth === 'full' ? '切换到窄屏' : '切换到宽屏'}
+          >
+            {contentWidth === 'full' ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+          <button
+            onClick={() => {
+              const cycle: Theme[] = ['light', 'dark', 'system']
+              const idx = cycle.indexOf(theme)
+              setTheme(cycle[(idx + 1) % cycle.length])
+            }}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title={`主题: ${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
+            aria-label="切换主题"
+          >
+            {theme === 'light' ? <Sun size={15} /> : theme === 'dark' ? <Moon size={15} /> : <Monitor size={15} />}
+          </button>
+          <FontFamilyButton />
+          <FontSizeButton />
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className={controlBtnClass}
+            style={{ color: 'var(--color-text-muted)' }}
+            title="设置"
+            aria-label="设置"
+          >
+            <Settings size={15} />
+          </button>
+        </div>
       </div>
 
       {activeTab === 'chat' ? (
