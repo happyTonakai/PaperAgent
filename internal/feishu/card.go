@@ -732,7 +732,7 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 	for i, item := range items {
 		title := item.Title
 		pageIDs = append(pageIDs, item.ID)
-		scoreStr := fmt.Sprintf("%.3f", item.Score)
+		scoreStr := fmt.Sprintf("%.2f", item.Score)
 		voteStr := ""
 		if item.AXNetVotes != nil {
 			voteStr = fmt.Sprintf(" 🔬 %d", *item.AXNetVotes)
@@ -748,17 +748,24 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 				"text_size": "heading",
 			},
 		}
-		bodyText := fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr)
-		if item.Abstract != "" {
-			bodyText += "\n\n" + item.Abstract
-		}
-		bodyEl := map[string]any{
+		scoreEl := map[string]any{
 			"tag": "div",
 			"text": map[string]any{
 				"tag":       "lark_md",
-				"content":   bodyText,
+				"content":   fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr),
 				"text_size": "normal",
 			},
+		}
+		var abstractEl map[string]any
+		if item.Abstract != "" {
+			abstractEl = map[string]any{
+				"tag": "div",
+				"text": map[string]any{
+					"tag":       "lark_md",
+					"content":   item.Abstract,
+					"text_size": "normal",
+				},
+			}
 		}
 
 		// Like/Dislike/Activate buttons
@@ -779,30 +786,47 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 			"value": valActivate, "width": "default",
 		}
 
-		colSet := map[string]any{
+		// Layout: title, then score+votes, then abstract, then 3 horizontal buttons
+		// stacked as their own row. Putting the buttons on the same row as the score
+		// forced a wrap on narrow phone screens; giving them their own row keeps
+		// each row single-purpose and easy to scan.
+		btnRow := map[string]any{
 			"tag":       "column_set",
 			"flex_mode": "none",
 			"columns": []map[string]any{
 				{
 					"tag":            "column",
-					"width":          "weighted",
-					"weight":         4,
-					"vertical_align": "top",
-					"elements":       []map[string]any{titleEl, bodyEl},
+					"width":          "auto",
+					"vertical_align": "center",
+					"elements":       []map[string]any{btnLike},
 				},
 				{
 					"tag":            "column",
 					"width":          "auto",
 					"vertical_align": "center",
-					"elements":       []map[string]any{btnLike, btnDislike, btnActivate},
+					"elements":       []map[string]any{btnDislike},
+				},
+				{
+					"tag":            "column",
+					"width":          "auto",
+					"vertical_align": "center",
+					"elements":       []map[string]any{btnActivate},
 				},
 			},
 		}
-		elements = append(elements, colSet)
+		elements = append(elements, titleEl, scoreEl)
+		if abstractEl != nil {
+			elements = append(elements, abstractEl)
+		}
+		elements = append(elements, btnRow)
 		if i < len(items)-1 {
 			elements = append(elements, hrElement())
 		}
 	}
+
+	// Separator before the bulk-action button so it reads as a footer-level
+	// action, distinct from the per-article buttons above.
+	elements = append(elements, hrElement())
 
 	// "Mark all as read" button — bulk-marks every article in this page.
 	// (Hover-to-read is the WebUI affordance; this is the Feishu equivalent.)
