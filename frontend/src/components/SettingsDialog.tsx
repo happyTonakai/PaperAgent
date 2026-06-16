@@ -105,6 +105,42 @@ function SecretInput({
 	)
 }
 
+// ── hook: propagate wheel from a scrollable child to its scrollable
+//    ancestor when the child is at the top/bottom edge. Solves the
+//    "I can only scroll the dialog from the edge" UX problem.
+function usePropagateWheel<T extends HTMLElement>(): React.RefObject<T | null> {
+	const ref = useRef<T | null>(null)
+	useEffect(() => {
+		const el = ref.current
+		if (!el) return
+		const handler = (e: WheelEvent) => {
+			const { scrollTop, scrollHeight, clientHeight } = el
+			const atTop = scrollTop <= 0
+			const atBottom = scrollTop + clientHeight >= scrollHeight
+			const scrollingUp = e.deltaY < 0
+			const scrollingDown = e.deltaY > 0
+			if ((scrollingUp && atTop) || (scrollingDown && atBottom)) {
+				let parent: HTMLElement | null = el.parentElement
+				while (parent) {
+					const overflow = getComputedStyle(parent).overflowY
+					if (overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') {
+						const before = parent.scrollTop
+						parent.scrollTop += e.deltaY
+						if (parent.scrollTop !== before) {
+							e.preventDefault()
+							return
+						}
+					}
+					parent = parent.parentElement
+				}
+			}
+		}
+		el.addEventListener('wheel', handler, { passive: false })
+		return () => el.removeEventListener('wheel', handler)
+	}, [])
+	return ref
+}
+
 // ── helper: compare recommend API sections for dirtiness ──
 function scoringChanged(a: RecommendConfigData['api']['scoring'], b: RecommendConfigData['api']['scoring']) {
 	if (!a && !b) return false
@@ -180,6 +216,8 @@ export function SettingsDialog() {
 	const [preferencesOriginal, setPreferencesOriginal] = useState('')
 	const [preferencesLoading, setPreferencesLoading] = useState(false)
 	const [preferencesSaving, setPreferencesSaving] = useState(false)
+	const preferencesTaRef = usePropagateWheel<HTMLTextAreaElement>()
+	const promptsTaRef = usePropagateWheel<HTMLTextAreaElement>()
 
 	// ── Scheduler status ──
 	const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
@@ -568,6 +606,7 @@ export function SettingsDialog() {
 		<div className="space-y-3">
 			<p className={hintCls}>用 Markdown 自由描述你的研究兴趣，作为推荐论文的评分依据。留空时推荐退化为按时间倒序选择未读论文。</p>
 			<textarea
+				ref={preferencesTaRef}
 				value={preferencesContent}
 				onChange={(e) => setPreferencesContent(e.target.value)}
 				placeholder={'## 感兴趣的主题\n- ...\n\n## 偏好的研究方法/技术\n- ...\n\n## 备注\n- ...'}
@@ -616,6 +655,7 @@ export function SettingsDialog() {
 						{isOpen && (
 							<div className="px-3 pb-3">
 								<textarea
+									ref={promptsTaRef}
 									value={promptEdits[p.name] || ''}
 									onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
 									className={`${inputCls} font-mono resize-y`}
