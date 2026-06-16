@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Loader2, Save } from 'lucide-react'
+import { X, Loader2, Save, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
 
@@ -131,6 +131,16 @@ export function SettingsDialog() {
 	const [recConfigOrig, setRecConfigOrig] = useState<RecommendConfigData | null>(null) // snapshot for dirtiness
 	const [recLoading, setRecLoading] = useState(false)
 	const [recSaving, setRecSaving] = useState(false)
+
+	// ── Prompts accordion state ──
+	const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({})
+	const togglePrompt = (name: string) => setExpandedPrompts((prev) => ({ ...prev, [name]: !prev[name] }))
+	const expandAllPrompts = () => {
+		const all: Record<string, boolean> = {}
+		prompts.forEach((p) => { all[p.name] = true })
+		setExpandedPrompts(all)
+	}
+	const collapseAllPrompts = () => setExpandedPrompts({})
 
 	// ── Preferences ──
 	const [preferencesContent, setPreferencesContent] = useState('')
@@ -520,21 +530,52 @@ export function SettingsDialog() {
 	const renderPrompts = () => promptsLoading ? (
 		<div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[var(--color-text-muted)]" /></div>
 	) : (
-		<div className="space-y-5">
-			{prompts.map((p) => (
-				<div key={p.name}>
-					<div className="flex items-center gap-2 mb-1.5">
-						<label className={labelCls}>{promptLabels[p.name] || p.name}</label>
-						{p.source === 'custom' && <span className="text-xs text-[var(--color-accent)]">已自定义</span>}
+		<div className="space-y-1">
+			{/* toolbar */}
+			<div className="flex items-center gap-2 mb-3">
+				<button
+					onClick={expandAllPrompts}
+					className="text-xs px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated)] transition-colors flex items-center gap-1"
+				>
+					<ChevronsUpDown size={12} />
+					全部展开
+				</button>
+				<button
+					onClick={collapseAllPrompts}
+					className="text-xs px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated)] transition-colors"
+				>
+					全部收起
+				</button>
+			</div>
+
+			{prompts.map((p) => {
+				const isOpen = expandedPrompts[p.name] ?? false
+				return (
+					<div key={p.name} className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+						<button
+							onClick={() => togglePrompt(p.name)}
+							className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--color-bg)] transition-colors"
+						>
+							<ChevronRight
+								size={14}
+								className={`text-[var(--color-text-muted)] transition-transform duration-200 flex-shrink-0 ${isOpen ? 'rotate-90' : ''}`}
+							/>
+							<span className="text-xs font-medium text-[var(--color-text)]">{promptLabels[p.name] || p.name}</span>
+							{p.source === 'custom' && <span className="text-xs text-[var(--color-accent)]">已自定义</span>}
+						</button>
+						{isOpen && (
+							<div className="px-3 pb-3">
+								<textarea
+									value={promptEdits[p.name] || ''}
+									onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
+									className={`${inputCls} font-mono resize-y`}
+									rows={14}
+								/>
+							</div>
+						)}
 					</div>
-					<textarea
-						value={promptEdits[p.name] || ''}
-						onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
-						className={`${inputCls} font-mono resize-y`}
-						rows={12}
-					/>
-				</div>
-			))}
+				)
+			})}
 		</div>
 	)
 
