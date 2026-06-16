@@ -615,3 +615,17 @@ pre code.hljs {
   color: white;
   border-color: var(--color-accent);
 }
+
+/* ===== Accordion (settings prompts) ===== */
+.accordion-item {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.accordion-item.open {
+  grid-template-rows: 1fr;
+}
+.accordion-item > .accordion-content {
+  overflow: hidden;
+  min-height: 0;
+}

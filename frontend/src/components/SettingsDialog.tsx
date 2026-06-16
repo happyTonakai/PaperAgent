@@ -652,17 +652,20 @@ export function SettingsDialog() {
 							<span className="text-xs font-medium text-[var(--color-text)]">{promptLabels[p.name] || p.name}</span>
 							{p.source === 'custom' && <span className="text-xs text-[var(--color-accent)]">已自定义</span>}
 						</button>
-						{isOpen && (
-							<div className="px-3 pb-3">
-								<textarea
-									ref={promptsTaRef}
-									value={promptEdits[p.name] || ''}
-									onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
-									className={`${inputCls} font-mono resize-y`}
-									rows={14}
-								/>
+						{/* Animated accordion body */}
+						<div className={`accordion-item ${isOpen ? 'open' : ''}`}>
+							<div className="accordion-content">
+								<div className="px-3 pb-3">
+									<textarea
+										ref={promptsTaRef}
+										value={promptEdits[p.name] || ''}
+										onChange={(e) => setPromptEdits((prev) => ({ ...prev, [p.name]: e.target.value }))}
+										className={`${inputCls} font-mono resize-y`}
+										rows={14}
+									/>
+								</div>
 							</div>
-						)}
+						</div>
 					</div>
 				)
 			})}
