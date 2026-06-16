@@ -382,6 +382,12 @@ pre code.hljs {
   color: var(--color-text);
 }
 
+.recommend-toolbar .toolbar-actions button.active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+}
+
 .recommend-toolbar .toolbar-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

@@ -144,6 +144,33 @@ export function useStats() {
   return { stats, refetch: fetch }
 }
 
+// Polls /api/recommend/scheduler-status on a timer. Used by the RecommendTab
+// status indicator ("上次推荐 HH:MM"); the same endpoint is also shown in
+// the settings dialog. Default cadence is 60s — frequent enough to feel
+// live, light enough that the UI doesn't churn.
+export function useSchedulerStatus(refreshIntervalMs = 60000) {
+  const [status, setStatus] = useState<SchedulerStatus | null>(null)
+
+  const fetch = useCallback(async () => {
+    try {
+      const data = await apiGet<SchedulerStatus>('/scheduler-status')
+      setStatus(data)
+    } catch {
+      // silently fail
+    }
+  }, [])
+
+  useEffect(() => {
+    fetch()
+    if (refreshIntervalMs > 0) {
+      const t = setInterval(fetch, refreshIntervalMs)
+      return () => clearInterval(t)
+    }
+  }, [fetch, refreshIntervalMs])
+
+  return { status, refetch: fetch }
+}
+
 // ── Actions ──
 
 export async function fetchNewArticles(): Promise<number> {
