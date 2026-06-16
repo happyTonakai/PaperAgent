@@ -3,7 +3,7 @@ import { X, Loader2, Save } from 'lucide-react'
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
 
-type Tab = 'config' | 'prompts' | 'recommend' | 'preferences'
+type Tab = 'api' | 'prompts' | 'feishu' | 'recommend' | 'preferences'
 
 interface ConfigData {
 	api: { base_url: string; api_key: string; api_key_source: string; default_model: string }
@@ -49,7 +49,7 @@ const promptLabels: Record<string, string> = {
 	'update-prefs': '偏好更新 (update-prefs)',
 }
 
-// ── shared style tokens (Tailwind arbitrary values using CSS vars) ──
+// ── shared style tokens ──
 const inputCls =
 	'w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:border-[var(--color-accent)] transition-colors'
 const labelCls = 'text-xs text-[var(--color-text-secondary)] block mb-1'
@@ -64,7 +64,6 @@ const tabCls = (active: boolean) =>
 			: 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
 	}`
 
-// ── tiny status dots ──
 function StatusDot({ color }: { color: 'green' | 'red' | 'yellow' }) {
 	return (
 		<span
@@ -75,9 +74,21 @@ function StatusDot({ color }: { color: 'green' | 'red' | 'yellow' }) {
 	)
 }
 
+// ── helper: compare recommend API sections for dirtiness ──
+function scoringChanged(a: RecommendConfigData['api']['scoring'], b: RecommendConfigData['api']['scoring']) {
+	if (!a && !b) return false
+	if (!a || !b) return true
+	return a.base_url !== b.base_url || a.model !== b.model || (a.api_key && !a.api_key.startsWith('\u2022') && a.api_key !== (b.api_key ?? ''))
+}
+function translationChanged(a: RecommendConfigData['api']['translation'], b: RecommendConfigData['api']['translation']) {
+	if (!a && !b) return false
+	if (!a || !b) return true
+	return a.base_url !== b.base_url || a.model !== b.model || (a.api_key && !a.api_key.startsWith('\u2022') && a.api_key !== (b.api_key ?? ''))
+}
+
 export function SettingsDialog() {
 	const { isSettingsOpen, setSettingsOpen } = useAppStore()
-	const [tab, setTab] = useState<Tab>('config')
+	const [tab, setTab] = useState<Tab>('api')
 	const [visible, setVisible] = useState(false)
 	const [closing, setClosing] = useState(false)
 
@@ -99,34 +110,35 @@ export function SettingsDialog() {
 	const pointerDownRef = useRef<EventTarget | null>(null)
 	const close = () => setSettingsOpen(false)
 
-	// Config
+	// ── Config (main API + UI + Obsidian + Feishu) ──
 	const [config, setConfig] = useState<ConfigData | null>(null)
 	const [loading, setLoading] = useState(false)
 	const [saving, setSaving] = useState(false)
 	const [form, setForm] = useState<ConfigForm>({ api_key: '', base_url: '', default_model: '', min_recent_rounds: '2', max_input_tokens: '30000', obsidian_vault_path: '', obsidian_export_folder: '', feishu_enabled: false, feishu_app_id: '', feishu_app_secret: '', feishu_daily_recommend_chat_id: '' })
 	const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
-	// Prompts
+	// ── Prompts ──
 	const [prompts, setPrompts] = useState<PromptInfo[]>([])
 	const [promptEdits, setPromptEdits] = useState<Record<string, string>>({})
 	const [promptsLoading, setPromptsLoading] = useState(false)
 	const [promptsSaving, setPromptsSaving] = useState(false)
 
-	// Feishu status
+	// ── Feishu status ──
 	const [feishuStatus, setFeishuStatus] = useState<{ connected: boolean; enabled: boolean; last_error?: string } | null>(null)
 
-	// Recommend settings
+	// ── Recommend settings (scoring API, translation API, recommend params, arxiv) ──
 	const [recommendConfig, setRecommendConfig] = useState<RecommendConfigData | null>(null)
+	const [recConfigOrig, setRecConfigOrig] = useState<RecommendConfigData | null>(null) // snapshot for dirtiness
 	const [recLoading, setRecLoading] = useState(false)
 	const [recSaving, setRecSaving] = useState(false)
 
-	// Preferences
+	// ── Preferences ──
 	const [preferencesContent, setPreferencesContent] = useState('')
 	const [preferencesOriginal, setPreferencesOriginal] = useState('')
 	const [preferencesLoading, setPreferencesLoading] = useState(false)
 	const [preferencesSaving, setPreferencesSaving] = useState(false)
 
-	// Scheduler status
+	// ── Scheduler status ──
 	const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null)
 
 	useEffect(() => {
@@ -169,7 +181,10 @@ export function SettingsDialog() {
 		setRecLoading(true)
 		fetch('/api/recommend/config')
 			.then((r) => r.json())
-			.then((data: RecommendConfigData) => setRecommendConfig(data))
+			.then((data: RecommendConfigData) => {
+				setRecommendConfig(data)
+				setRecConfigOrig(structuredClone(data))
+			})
 			.catch(() => {})
 			.finally(() => setRecLoading(false))
 
@@ -192,16 +207,83 @@ export function SettingsDialog() {
 
 	if (!visible) return null
 
-	const handleSaveConfig = async () => {
+	// ── Save handlers ──
+
+	const handleSaveApi = async () => {
+		setSaving(true)
+		try {
+			// 1) Save main config (API + UI + Obsidian)
+			const body: Record<string, unknown> = {}
+			if (apiKeyDirty && form.api_key.trim()) body['api_key'] = form.api_key.trim()
+			if (form.base_url !== config?.api.base_url) body['base_url'] = form.base_url
+			if (form.default_model !== config?.api.default_model) body['default_model'] = form.default_model
+			if (String(form.min_recent_rounds) !== String(config?.ui.min_recent_rounds)) body['min_recent_rounds'] = Number(form.min_recent_rounds)
+			if (String(form.max_input_tokens) !== String(config?.ui.max_input_tokens)) body['max_input_tokens'] = Number(form.max_input_tokens)
+			if (form.obsidian_vault_path !== config?.obsidian.vault_path) body['obsidian_vault_path'] = form.obsidian_vault_path
+			if (form.obsidian_export_folder !== config?.obsidian.export_folder) body['obsidian_export_folder'] = form.obsidian_export_folder
+
+			let mainChanged = Object.keys(body).length > 0
+			if (mainChanged) {
+				const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+				if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
+				setApiKeyDirty(false)
+				if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
+			}
+
+			// 2) Save scoring / translation if changed
+			if (recommendConfig && recConfigOrig) {
+				const scoringBody: Record<string, string> = {
+					base_url: recommendConfig.api.scoring?.base_url ?? '',
+					model: recommendConfig.api.scoring?.model ?? '',
+				}
+				if (recommendConfig.api.scoring?.api_key && !recommendConfig.api.scoring.api_key.startsWith('\u2022')) {
+					scoringBody.api_key = recommendConfig.api.scoring.api_key
+				}
+
+				const translation = recommendConfig.api.translation
+				let translationBody: Record<string, string> | null = null
+				if (translation) {
+					const allEmpty = !translation.base_url.trim() && !translation.model.trim()
+						&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
+					if (!allEmpty) {
+						translationBody = {
+							base_url: translation.base_url,
+							model: translation.model,
+						}
+						if (translation.api_key && !translation.api_key.startsWith('\u2022')) {
+							translationBody.api_key = translation.api_key
+						}
+					}
+				}
+
+				const scChanged = scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring)
+				const trChanged = translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation)
+
+				if (scChanged || trChanged) {
+					const apiBody: Record<string, unknown> = {}
+					if (scChanged) apiBody.scoring = scoringBody
+					if (trChanged) apiBody.translation = translationBody
+					const recRes = await fetch('/api/recommend/config', {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ api: apiBody }),
+					})
+					if (!recRes.ok) throw new Error((await recRes.json().catch(() => ({ error: '推荐 API 保存失败' })) as { error?: string }).error)
+					mainChanged = true
+					setRecConfigOrig(structuredClone(recommendConfig))
+				}
+			}
+
+			if (!mainChanged) { toast('没有需要保存的更改'); setSaving(false); close(); return }
+			toast.success('配置已保存')
+			close()
+		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+		finally { setSaving(false) }
+	}
+
+	const handleSaveFeishu = async () => {
 		setSaving(true)
 		const body: Record<string, unknown> = {}
-		if (apiKeyDirty && form.api_key.trim()) body['api_key'] = form.api_key.trim()
-		if (form.base_url !== config?.api.base_url) body['base_url'] = form.base_url
-		if (form.default_model !== config?.api.default_model) body['default_model'] = form.default_model
-		if (String(form.min_recent_rounds) !== String(config?.ui.min_recent_rounds)) body['min_recent_rounds'] = Number(form.min_recent_rounds)
-		if (String(form.max_input_tokens) !== String(config?.ui.max_input_tokens)) body['max_input_tokens'] = Number(form.max_input_tokens)
-		if (form.obsidian_vault_path !== config?.obsidian.vault_path) body['obsidian_vault_path'] = form.obsidian_vault_path
-		if (form.obsidian_export_folder !== config?.obsidian.export_folder) body['obsidian_export_folder'] = form.obsidian_export_folder
 		if (form.feishu_enabled !== (config?.feishu?.enabled ?? false)) body['feishu_enabled'] = form.feishu_enabled
 		if (form.feishu_app_id && form.feishu_app_id !== '••••••' && form.feishu_app_id !== config?.feishu?.app_id) body['feishu_app_id'] = form.feishu_app_id
 		if (form.feishu_app_secret && form.feishu_app_secret !== '••••••' && form.feishu_app_secret !== config?.feishu?.app_secret) body['feishu_app_secret'] = form.feishu_app_secret
@@ -210,9 +292,7 @@ export function SettingsDialog() {
 		try {
 			const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
-			toast.success('配置已保存')
-			setApiKeyDirty(false)
-			if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
+			toast.success('飞书配置已保存')
 			close()
 		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
 		finally { setSaving(false) }
@@ -237,44 +317,10 @@ export function SettingsDialog() {
 		if (!recommendConfig) return
 		setRecSaving(true)
 		try {
-			const body: Record<string, unknown> = {}
-			const scoring = recommendConfig.api.scoring
-			const translation = recommendConfig.api.translation
-			const apiBody: Record<string, unknown> = {}
-
-			if (scoring) {
-				const scoringBody: Record<string, string> = {
-					base_url: scoring.base_url,
-					model: scoring.model,
-				}
-				if (scoring.api_key && !scoring.api_key.startsWith('\u2022')) {
-					scoringBody.api_key = scoring.api_key
-				}
-				apiBody.scoring = scoringBody
+			const body: Record<string, unknown> = {
+				recommend: recommendConfig.recommend,
+				arxiv_categories: recommendConfig.arxiv_categories,
 			}
-
-			if (translation) {
-				const allEmpty = !translation.base_url.trim() && !translation.model.trim()
-					&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
-				if (allEmpty) {
-					apiBody.translation = null
-				} else {
-					const translationBody: Record<string, string> = {
-						base_url: translation.base_url,
-						model: translation.model,
-					}
-					if (translation.api_key && !translation.api_key.startsWith('\u2022')) {
-						translationBody.api_key = translation.api_key
-					}
-					apiBody.translation = translationBody
-				}
-			} else {
-				apiBody.translation = null
-			}
-
-			body.api = apiBody
-			body.recommend = recommendConfig.recommend
-			body.arxiv_categories = recommendConfig.arxiv_categories
 			const res = await fetch('/api/recommend/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
 			toast.success('推荐配置已保存')
@@ -304,30 +350,20 @@ export function SettingsDialog() {
 			toast.success('偏好已保存')
 			setPreferencesOriginal(preferencesContent)
 			close()
-		} catch (err) {
-			toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误'))
-		} finally {
-			setPreferencesSaving(false)
-		}
+		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+		finally { setPreferencesSaving(false) }
 	}
 
 	const updateForm = (key: keyof ConfigForm, value: string) => { setForm((f) => ({ ...f, [key]: value })); if (key === 'api_key') setApiKeyDirty(true) }
 
-	const updateTranslation = (field: 'base_url' | 'api_key' | 'model', value: string) => {
-		setRecommendConfig(prev => {
-			if (!prev) return prev
-			const current = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-			return { ...prev, api: { ...prev.api, translation: { ...current, [field]: value } } }
-		})
-	}
-
 	// ── Panel renders ──
 
-	const renderConfig = () => (
+	const renderApi = () => (
 		<div className="space-y-4">
-			{/* API */}
+			{/* 1. 主 API — 论文对话系统 */}
 			<fieldset className="space-y-3">
-				<legend className={legendCls}>API 配置</legend>
+				<legend className={legendCls}>主 API · 论文对话</legend>
+				<p className={hintCls}>论文解析、摘要生成、多轮问答使用的 LLM API。</p>
 				<div>
 					<label className={labelCls}>
 						API Key{config && <span className="ml-1 text-[var(--color-text-muted)]">({config.api.api_key_source === 'config' ? '文件配置' : '环境变量'}: {config.api.api_key})</span>}
@@ -337,20 +373,67 @@ export function SettingsDialog() {
 				</div>
 				<div><label className={labelCls}>Base URL</label><input type="text" value={form.base_url} onChange={(e) => updateForm('base_url', e.target.value)} className={inputCls} /></div>
 				<div><label className={labelCls}>Default Model</label><input type="text" value={form.default_model} onChange={(e) => updateForm('default_model', e.target.value)} className={inputCls} /></div>
+			</fieldset>
+
+			<hr className={dividerCls} />
+
+			{/* 2. 评分 API — 推荐论文打分 & 偏好分析 */}
+			<fieldset className="space-y-3">
+				<legend className={legendCls}>评分 API · 推荐打分 & 偏好分析</legend>
+				<p className={hintCls}>每日推荐管线中，对 arXiv 论文打分和用户偏好分析的 LLM API。留空则复用主 API。</p>
+				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, api_key: e.target.value } } } : prev)} className={inputCls} /></div>
+				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
+				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputCls} placeholder="gpt-4o-mini" /></div>
+			</fieldset>
+
+			<hr className={dividerCls} />
+
+			{/* 3. 翻译 API — 推荐摘要翻译 */}
+			<fieldset className="space-y-3">
+				<legend className={legendCls}>翻译 API · 推荐摘要翻译</legend>
+				<p className={hintCls}>将推荐论文的标题/摘要翻译为中文。留空则不翻译，保留原始英文。</p>
+				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => {
+					if (!prev) return prev
+					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+					return { ...prev, api: { ...prev.api, translation: { ...t, api_key: e.target.value } } }
+				})} className={inputCls} /></div>
+				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => {
+					if (!prev) return prev
+					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+					return { ...prev, api: { ...prev.api, translation: { ...t, base_url: e.target.value } } }
+				})} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
+				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.translation?.model ?? ''} onChange={(e) => setRecommendConfig(prev => {
+					if (!prev) return prev
+					const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
+					return { ...prev, api: { ...prev.api, translation: { ...t, model: e.target.value } } }
+				})} className={inputCls} placeholder="gpt-4o-mini" /></div>
+			</fieldset>
+
+			<hr className={dividerCls} />
+
+			{/* 4. 上下文控制 */}
+			<fieldset className="space-y-3">
+				<legend className={legendCls}>上下文控制</legend>
 				<div><label className={labelCls}>最小保留轮数</label><input type="number" value={form.min_recent_rounds} onChange={(e) => updateForm('min_recent_rounds', e.target.value)} min={1} max={50} className={inputCls} /><p className={hintCls}>当输入 token 接近上限时，至少保留此轮数的最近上下文</p></div>
 				<div><label className={labelCls}>最大输入 Token</label><input type="number" value={form.max_input_tokens} onChange={(e) => updateForm('max_input_tokens', e.target.value)} min={1000} max={200000} step={1000} className={inputCls} /><p className={hintCls}>输入超过此值时自动截断上下文到最小轮数（默认 30000）</p></div>
 			</fieldset>
+
 			<hr className={dividerCls} />
-			{/* Obsidian */}
+
+			{/* 5. Obsidian 导出 */}
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>Obsidian 导出</legend>
 				<div><label className={labelCls}>Vault 路径</label><input type="text" value={form.obsidian_vault_path} onChange={(e) => updateForm('obsidian_vault_path', e.target.value)} placeholder="~/Documents/Obsidian/MyVault" className={inputCls} /></div>
 				<div><label className={labelCls}>导出文件夹</label><input type="text" value={form.obsidian_export_folder} onChange={(e) => updateForm('obsidian_export_folder', e.target.value)} placeholder="Papers" className={inputCls} /></div>
 			</fieldset>
-			<hr className={dividerCls} />
-			{/* Feishu */}
+		</div>
+	)
+
+	const renderFeishu = () => (
+		<div className="space-y-4">
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>飞书 Bot 配置</legend>
+				<p className={hintCls}>启用后在飞书中与论文对话，或推送每日推荐。需在飞书开放平台开启机器人能力并订阅「消息和群组」事件。</p>
 				<div className="flex items-center gap-2">
 					<input type="checkbox" id="feishu-enabled" checked={form.feishu_enabled} onChange={(e) => setForm((f) => ({ ...f, feishu_enabled: e.target.checked }))} className="w-4 h-4 rounded border-[var(--color-border)]" />
 					<label htmlFor="feishu-enabled" className={labelCls}>启用飞书 Bot</label>
@@ -369,7 +452,7 @@ export function SettingsDialog() {
 				<div><label className={labelCls}>App ID {config?.feishu?.app_id && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.app_id})</span>}</label><input type="text" value={form.feishu_app_id} onChange={(e) => updateForm('feishu_app_id', e.target.value)} placeholder="cli_xxxxx" className={inputCls} /></div>
 				<div><label className={labelCls}>App Secret {config?.feishu?.app_secret && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.app_secret})</span>}</label><input type="password" value={form.feishu_app_secret} onChange={(e) => updateForm('feishu_app_secret', e.target.value)} placeholder={config?.feishu?.app_secret ? '输入新 Secret 以替换...' : '飞书应用 Secret'} className={inputCls} /></div>
 				<div><label className={labelCls}>每日推荐 Chat ID {config?.feishu?.daily_recommend_chat_id && <span className="ml-1 text-[var(--color-text-muted)]">(当前: {config.feishu.daily_recommend_chat_id})</span>}</label><input type="text" value={form.feishu_daily_recommend_chat_id} onChange={(e) => updateForm('feishu_daily_recommend_chat_id', e.target.value)} placeholder="oc_xxxxxxxxx" className={inputCls} /></div>
-				<p className={hintCls}>保存后自动重连飞书。请在飞书开放平台开启机器人能力并订阅「消息和群组」事件。</p>
+				<p className={hintCls}>保存后自动重连飞书 WebSocket。</p>
 			</fieldset>
 		</div>
 	)
@@ -400,30 +483,16 @@ export function SettingsDialog() {
 			)}
 
 			<fieldset className="space-y-3">
-				<legend className={legendCls}>推荐 API (评分用)</legend>
-				<p className={hintCls}>用于论文评分和用户偏好分析的 LLM API。留空则使用主 API 配置。</p>
-				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, api_key: e.target.value } } } : prev)} className={inputCls} /></div>
-				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputCls} placeholder="gpt-4o" /></div>
-			</fieldset>
-			<hr className={dividerCls} />
-			<fieldset className="space-y-3">
-				<legend className={legendCls}>翻译 API (推荐摘要翻译用)</legend>
-				<p className={hintCls}>用于把推荐论文的标题/摘要翻译为中文。留空则不进行翻译，原始英文保留。</p>
-				<div><label className={labelCls}>API Key</label><input type="password" value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(e) => updateTranslation('api_key', e.target.value)} className={inputCls} /></div>
-				<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => updateTranslation('base_url', e.target.value)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-				<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.translation?.model ?? ''} onChange={(e) => updateTranslation('model', e.target.value)} className={inputCls} placeholder="gpt-4o" /></div>
-			</fieldset>
-			<hr className={dividerCls} />
-			<fieldset className="space-y-3">
 				<legend className={legendCls}>arXiv 订阅分类</legend>
+				<p className={hintCls}>每天从这些 arXiv 分类中拉取最新论文。</p>
 				<div><label className={labelCls}>分类列表（用逗号分隔，如 cs.LG, cs.CV, cs.AI）</label><input type="text" value={recommendConfig?.arxiv_categories?.join(', ') ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, arxiv_categories: e.target.value.split(',').map(s => s.trim()).filter(Boolean) } : prev)} className={inputCls} placeholder="cs.LG, cs.CV, cs.AI" /></div>
 			</fieldset>
 			<hr className={dividerCls} />
 			<fieldset className="space-y-3">
-				<legend className={legendCls}>推荐参数与通知</legend>
+				<legend className={legendCls}>推荐参数</legend>
 				<div><label className={labelCls}>每日推荐数量</label><input type="number" value={recommendConfig?.recommend.daily_papers ?? 20} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, daily_papers: parseInt(e.target.value) || 20 } } : prev)} min={1} max={100} className={inputCls} /></div>
 				<div><label className={labelCls}>评分批次大小</label><input type="number" value={recommendConfig?.recommend.scoring_batch_size ?? 10} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scoring_batch_size: parseInt(e.target.value) || 10 } } : prev)} min={1} max={50} className={inputCls} /><p className={hintCls}>每次 LLM 调用评分多少篇论文</p></div>
+				<div><label className={labelCls}>探索比例 (diversity_ratio)</label><input type="number" value={recommendConfig?.recommend.diversity_ratio ?? 0.3} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, diversity_ratio: parseFloat(e.target.value) || 0 } } : prev)} min={0} max={1} step={0.05} className={inputCls} /><p className={hintCls}>0 = 纯按评分排序，1 = 完全随机探索。推荐值 0.2–0.3</p></div>
 				<div><label className={labelCls}>每日定时推荐时间</label><input type="time" value={recommendConfig?.recommend.scheduled_time ?? '08:00'} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, scheduled_time: e.target.value } } : prev)} className={inputCls} /></div>
 				<div className="flex items-center gap-2">
 					<input type="checkbox" id="push-to-feishu" checked={recommendConfig?.recommend.push_to_feishu ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, push_to_feishu: e.target.checked } } : prev)} className="w-4 h-4 rounded border-[var(--color-border)]" />
@@ -469,6 +538,35 @@ export function SettingsDialog() {
 		</div>
 	)
 
+	const footerHint = () => {
+		switch (tab) {
+			case 'api': return '主 API 保存在 ~/.config/paperagent/config.yaml；评分/翻译 API 同文件 recommend 段'
+			case 'prompts': return '提示词保存后立即生效'
+			case 'feishu': return '飞书配置保存在 ~/.config/paperagent/config.yaml'
+			case 'recommend': return '推荐配置保存在 ~/.config/paperagent/config.yaml'
+			case 'preferences': return '偏好保存在 ~/.config/paperagent/preferences.md'
+		}
+	}
+
+	const saveHandler = () => {
+		switch (tab) {
+			case 'api': return handleSaveApi
+			case 'prompts': return handleSavePrompts
+			case 'feishu': return handleSaveFeishu
+			case 'recommend': return handleSaveRecommend
+			case 'preferences': return handleSavePreferences
+		}
+	}
+
+	const isTabSaving = () => {
+		switch (tab) {
+			case 'api': case 'feishu': return saving
+			case 'prompts': return promptsSaving
+			case 'recommend': return recSaving
+			case 'preferences': return preferencesSaving
+		}
+	}
+
 	return (
 		<div
 			className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 ${closing ? 'animate-fade-out' : 'animate-fade-in'}`}
@@ -487,8 +585,9 @@ export function SettingsDialog() {
 
 				{/* Tab bar */}
 				<div className="flex gap-1 px-4 py-2 bg-[var(--color-bg-elevated)] overflow-x-auto border-b border-[var(--color-border-light)]">
-					<button onClick={() => setTab('config')} className={tabCls(tab === 'config')}>API 配置</button>
+					<button onClick={() => setTab('api')} className={tabCls(tab === 'api')}>API 与凭据</button>
 					<button onClick={() => setTab('prompts')} className={tabCls(tab === 'prompts')}>提示词模板</button>
+					<button onClick={() => setTab('feishu')} className={tabCls(tab === 'feishu')}>飞书机器人</button>
 					<button onClick={() => setTab('recommend')} className={tabCls(tab === 'recommend')}>推荐系统</button>
 					<button onClick={() => setTab('preferences')} className={tabCls(tab === 'preferences')}>推荐偏好</button>
 				</div>
@@ -497,41 +596,27 @@ export function SettingsDialog() {
 				<div className="flex-1 overflow-y-auto p-4">
 					{loading ? (
 						<div className="flex items-center justify-center py-8"><Loader2 size={24} className="animate-spin text-[var(--color-text-muted)]" /></div>
-					) : tab === 'config' ? renderConfig()
+					) : tab === 'api' ? renderApi()
+					: tab === 'prompts' ? renderPrompts()
+					: tab === 'feishu' ? renderFeishu()
 					: tab === 'recommend' ? renderRecommend()
-					: tab === 'preferences' ? renderPreferences()
-					: renderPrompts()}
+					: renderPreferences()}
 				</div>
 
 				{/* Footer */}
 				{!loading && (
 					<div className="px-4 py-3 border-t border-[var(--color-border)] flex justify-between gap-2">
-						<p className="text-xs text-[var(--color-text-muted)] self-center">
-							{tab === 'prompts' ? '提示词保存后立即生效'
-								: tab === 'recommend' ? '推荐配置保存在 ~/.config/paperagent/config.yaml'
-								: tab === 'preferences' ? '偏好保存在 ~/.config/paperagent/preferences.md'
-								: '配置保存在 ~/.config/paperagent/config.yaml'}
-						</p>
+						<p className="text-xs text-[var(--color-text-muted)] self-center">{footerHint()}</p>
 						<div className="flex gap-2">
 							<button onClick={() => close()} className="px-4 py-2 text-sm rounded-lg border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-elevated)] transition-colors">
 								关闭
 							</button>
 							<button
-								onClick={
-									tab === 'prompts' ? handleSavePrompts
-									: tab === 'recommend' ? handleSaveRecommend
-									: tab === 'preferences' ? handleSavePreferences
-									: handleSaveConfig
-								}
-								disabled={
-									tab === 'prompts' ? promptsSaving
-									: tab === 'recommend' ? recSaving
-									: tab === 'preferences' ? preferencesSaving
-									: saving
-								}
+								onClick={saveHandler()}
+								disabled={isTabSaving()}
 								className="px-4 py-2 text-sm rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 disabled:bg-[var(--color-text-muted)] text-white flex items-center gap-1.5 transition-colors"
 							>
-								{(tab === 'prompts' ? promptsSaving : tab === 'recommend' ? recSaving : tab === 'preferences' ? preferencesSaving : saving) && <Loader2 size={14} className="animate-spin" />}
+								{isTabSaving() && <Loader2 size={14} className="animate-spin" />}
 								<Save size={14} />保存
 							</button>
 						</div>
