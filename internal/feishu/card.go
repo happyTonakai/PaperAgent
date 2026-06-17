@@ -677,7 +677,34 @@ type RecommendCardItem struct {
 	Title      string  // translated (if available) or original
 	Abstract   string  // translated (if available) or original, full text
 	Score      float64
+	// Status mirrors articles.status: 0=unread, 1=activated, 2=liked,
+	// -1=disliked, 3=read. The card builder uses it to render buttons in
+	// their post-action state so the user gets visual feedback after a click.
+	Status     int
 	AXNetVotes *int
+}
+
+// renderRecommendButton builds one of the like / dislike / activate buttons
+// on the daily recommendation card. When active is true the button is shown
+// in its post-action state by changing its `type` to activeType (e.g.
+// "primary" → blue background, "danger" → red background). The text is
+// kept identical so the icon stays clean; the color change is the only
+// visual cue. We intentionally do NOT set disabled: true, because in
+// Feishu's renderer disabled overrides the type and forces the button
+// back to the default grey, which defeats the purpose.
+func renderRecommendButton(emoji, articleID, action string, active bool, activeType string) map[string]any {
+	val := map[string]string{"action": action + ":" + articleID, "paper_id": articleID}
+	btnType := "default"
+	if active {
+		btnType = activeType
+	}
+	return map[string]any{
+		"tag":   "button",
+		"text":  plainText(emoji),
+		"type":  btnType,
+		"value": val,
+		"width": "default",
+	}
 }
 
 // recommendPageSize is the number of articles per card when the daily
@@ -768,23 +795,12 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 			}
 		}
 
-		// Like/Dislike/Activate buttons
-		valLike := map[string]string{"action": "recommend:like:" + item.ID, "paper_id": item.ID}
-		valDislike := map[string]string{"action": "recommend:dislike:" + item.ID, "paper_id": item.ID}
-		valActivate := map[string]string{"action": "recommend:activate:" + item.ID, "paper_id": item.ID}
-
-		btnLike := map[string]any{
-			"tag": "button", "text": plainText("👍"), "type": "default",
-			"value": valLike, "width": "default",
-		}
-		btnDislike := map[string]any{
-			"tag": "button", "text": plainText("👎"), "type": "default",
-			"value": valDislike, "width": "default",
-		}
-		btnActivate := map[string]any{
-			"tag": "button", "text": plainText("🤖"), "type": "default",
-			"value": valActivate, "width": "default",
-		}
+		// Like/Dislike/Activate buttons. Status-driven so a previous click
+		// (from this card or the WebUI) is reflected as a highlighted +
+		// disabled button instead of looking like a fresh unclicked button.
+		btnLike := renderRecommendButton("👍", item.ID, "recommend:like", item.Status == 2, "primary")
+		btnDislike := renderRecommendButton("👎", item.ID, "recommend:dislike", item.Status == -1, "danger")
+		btnActivate := renderRecommendButton("🤖", item.ID, "recommend:activate", item.Status == 1, "primary")
 
 		// Layout: title, then score+votes, then abstract, then 3 horizontal buttons
 		// stacked as their own row. Putting the buttons on the same row as the score
@@ -830,6 +846,11 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 
 	// "Mark all as read" button — bulk-marks every article in this page.
 	// (Hover-to-read is the WebUI affordance; this is the Feishu equivalent.)
+	// When every article on the page is already read (status==3) we render
+	// the button in primary (blue) + change the label to "已标记" so the user
+	// can tell the click took. We do NOT set disabled: true because the
+	// Feishu renderer turns disabled buttons grey regardless of type, which
+	// would hide the blue.
 	markReadBtn := map[string]any{
 		"tag":  "button",
 		"text": plainText(fmt.Sprintf("✅ 一键已阅本页 %d 篇", len(pageIDs))),
@@ -839,6 +860,17 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 			"paper_ids": pageIDs,
 		},
 		"width": "default",
+	}
+	allRead := len(items) > 0
+	for _, it := range items {
+		if it.Status != 3 {
+			allRead = false
+			break
+		}
+	}
+	if allRead {
+		markReadBtn["text"] = plainText(fmt.Sprintf("✅ 已标记本页 %d 篇", len(pageIDs)))
+		markReadBtn["type"] = "primary"
 	}
 	elements = append(elements, markReadBtn)
 

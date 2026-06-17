@@ -490,3 +490,324 @@ func TestFitMarkdownContent_NoMidTableSplit(t *testing.T) {
 
 	t.Logf("✅ no tables split across cards")
 }
+
+// TestRenderRecommendButton covers the visual states a daily-recommendation
+// action button can be in: default (white/grey) vs colored (post-click).
+// The button text is kept identical to the inactive state; the type change
+// (primary/danger) is the only visual cue. We deliberately avoid
+// disabled: true because the Feishu renderer turns disabled buttons grey
+// regardless of type, which would hide the colored background.
+func TestRenderRecommendButton(t *testing.T) {
+	tests := []struct {
+		name       string
+		emoji      string
+		articleID  string
+		action     string
+		active     bool
+		activeType string
+		wantText   string
+		wantType   string
+	}{
+		{
+			name: "inactive like", emoji: "👍", articleID: "2401.00001", action: "recommend:like",
+			wantText: "👍", wantType: "default",
+		},
+		{
+			name: "active like (primary)", emoji: "👍", articleID: "2401.00001", action: "recommend:like",
+			active: true, activeType: "primary",
+			wantText: "👍", wantType: "primary",
+		},
+		{
+			name: "active dislike (danger)", emoji: "👎", articleID: "2401.00002", action: "recommend:dislike",
+			active: true, activeType: "danger",
+			wantText: "👎", wantType: "danger",
+		},
+		{
+			name: "active activate (primary)", emoji: "🤖", articleID: "2401.00003", action: "recommend:activate",
+			active: true, activeType: "primary",
+			wantText: "🤖", wantType: "primary",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			btn := renderRecommendButton(tt.emoji, tt.articleID, tt.action, tt.active, tt.activeType)
+			if got := btn["text"].(map[string]any)["content"]; got != tt.wantText {
+				t.Errorf("text = %q, want %q (text must NOT include ✓/✗ suffixes)", got, tt.wantText)
+			}
+			if got := btn["type"]; got != tt.wantType {
+				t.Errorf("type = %q, want %q", got, tt.wantType)
+			}
+			// Ensure we never set disabled — the Feishu renderer turns disabled
+			// buttons grey and would mask the type's color.
+			if d, ok := btn["disabled"]; ok {
+				t.Errorf("disabled must not be set, got %v", d)
+			}
+			val, ok := btn["value"].(map[string]string)
+			if !ok {
+				t.Fatalf("value is not map[string]string: %T", btn["value"])
+			}
+			wantAction := tt.action + ":" + tt.articleID
+			if val["action"] != wantAction {
+				t.Errorf("action = %q, want %q", val["action"], wantAction)
+			}
+			if val["paper_id"] != tt.articleID {
+				t.Errorf("paper_id = %q, want %q", val["paper_id"], tt.articleID)
+			}
+		})
+	}
+}
+
+// findButtonByAction walks the card body elements and returns the first
+// button element whose value.action matches the given prefix. Used by the
+// recommend-card tests to assert button state after building the card.
+func findButtonByAction(t *testing.T, cardJSON, actionPrefix string) map[string]any {
+	t.Helper()
+	var card map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		t.Fatalf("unmarshal card: %v", err)
+	}
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+	for _, e := range elements {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if em["tag"] != "column_set" {
+			continue
+		}
+		cols, _ := em["columns"].([]any)
+		for _, c := range cols {
+			cm, _ := c.(map[string]any)
+			celems, _ := cm["elements"].([]any)
+			for _, ce := range celems {
+				cb, ok := ce.(map[string]any)
+				if !ok {
+					continue
+				}
+				if cb["tag"] != "button" {
+					continue
+				}
+				val, _ := cb["value"].(map[string]any)
+				act, _ := val["action"].(string)
+				if strings.HasPrefix(act, actionPrefix) {
+					return cb
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// TestBuildDailyRecommendCard_StatusHighlight verifies that the card builder
+// reflects the per-article status in the per-article buttons. This is the
+// regression test for the "user clicks 👍 but button doesn't highlight" bug.
+// Visual state is conveyed by the button type (primary / danger / default)
+// only — the emoji text stays unchanged.
+func TestBuildDailyRecommendCard_StatusHighlight(t *testing.T) {
+	votes := 42
+	items := []RecommendCardItem{
+		{ID: "2401.00001", Title: "A Liked Paper", Abstract: "abs A", Score: 0.9, Status: 2, AXNetVotes: &votes},
+		{ID: "2401.00002", Title: "B Disliked Paper", Abstract: "abs B", Score: 0.8, Status: -1},
+		{ID: "2401.00003", Title: "C Activated Paper", Abstract: "abs C", Score: 0.7, Status: 1},
+		{ID: "2401.00004", Title: "D Fresh Paper", Abstract: "abs D", Score: 0.6, Status: 0},
+	}
+	cardJSON := buildDailyRecommendCard(items, 1, 1)
+
+	// A: liked — 👍 should be primary. Text is still "👍" (no ✓/✗ suffix).
+	btn := findButtonByAction(t, cardJSON, "recommend:like:2401.00001")
+	if btn == nil {
+		t.Fatal("like button for A not found")
+	}
+	if btn["type"] != "primary" {
+		t.Errorf("A like type = %v, want primary", btn["type"])
+	}
+	if d, ok := btn["disabled"]; ok {
+		t.Errorf("A like should not set disabled (would mask the color), got %v", d)
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "👍" {
+		t.Errorf("A like text = %v, want \"👍\" (no suffix)", text)
+	}
+
+	// A: 👎 and 🤖 stay default
+	for _, prefix := range []string{"recommend:dislike:2401.00001", "recommend:activate:2401.00001"} {
+		b := findButtonByAction(t, cardJSON, prefix)
+		if b == nil {
+			t.Fatalf("%s not found", prefix)
+		}
+		if b["type"] != "default" {
+			t.Errorf("%s type = %v, want default", prefix, b["type"])
+		}
+	}
+
+	// B: disliked — 👎 should be danger
+	btn = findButtonByAction(t, cardJSON, "recommend:dislike:2401.00002")
+	if btn == nil {
+		t.Fatal("dislike button for B not found")
+	}
+	if btn["type"] != "danger" {
+		t.Errorf("B dislike type = %v, want danger", btn["type"])
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "👎" {
+		t.Errorf("B dislike text = %v, want \"👎\" (no suffix)", text)
+	}
+
+	// C: activated — 🤖 should be primary
+	btn = findButtonByAction(t, cardJSON, "recommend:activate:2401.00003")
+	if btn == nil {
+		t.Fatal("activate button for C not found")
+	}
+	if btn["type"] != "primary" {
+		t.Errorf("C activate type = %v, want primary", btn["type"])
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "🤖" {
+		t.Errorf("C activate text = %v, want \"🤖\" (no suffix)", text)
+	}
+
+	// D: fresh — all three buttons are default type, no disabled
+	for _, prefix := range []string{"recommend:like:2401.00004", "recommend:dislike:2401.00004", "recommend:activate:2401.00004"} {
+		btn := findButtonByAction(t, cardJSON, prefix)
+		if btn == nil {
+			t.Fatalf("button %s not found", prefix)
+		}
+		if btn["type"] != "default" {
+			t.Errorf("%s type = %v, want default", prefix, btn["type"])
+		}
+		if _, ok := btn["disabled"]; ok {
+			t.Errorf("%s should not set disabled", prefix)
+		}
+	}
+
+	// Mutual exclusion: among the three per-article buttons for a given
+	// article, at most one is non-default. (Status is a single int, so this
+	// is true by construction — but we assert it explicitly because the
+	// question keeps coming up.)
+	for _, id := range []string{"2401.00001", "2401.00002", "2401.00003", "2401.00004"} {
+		like := findButtonByAction(t, cardJSON, "recommend:like:"+id)
+		dislike := findButtonByAction(t, cardJSON, "recommend:dislike:"+id)
+		activate := findButtonByAction(t, cardJSON, "recommend:activate:"+id)
+		highlighted := 0
+		for _, b := range []map[string]any{like, dislike, activate} {
+			if b["type"] != "default" {
+				highlighted++
+			}
+		}
+		if highlighted > 1 {
+			t.Errorf("article %s: expected at most 1 highlighted button, got %d", id, highlighted)
+		}
+	}
+
+	t.Logf("✅ button states correctly reflect per-article status; mutual exclusion holds")
+}
+
+// TestBuildDailyRecommendCard_MarkReadPageFooter verifies the bulk
+// "mark all as read" button reflects the all-read state in the footer.
+// Visual state is conveyed by the button type (primary when all read) and
+// the label change ("一键已阅" → "已标记"). We do NOT set disabled.
+func TestBuildDailyRecommendCard_MarkReadPageFooter(t *testing.T) {
+	// Case 1: nothing read — button is default type, "一键已阅本页 N 篇".
+	items := []RecommendCardItem{
+		{ID: "2401.00001", Title: "A", Abstract: "a", Status: 0},
+		{ID: "2401.00002", Title: "B", Abstract: "b", Status: 0},
+	}
+	cardJSON := buildDailyRecommendCard(items, 1, 1)
+	btn := findFooterMarkReadBtn(t, cardJSON)
+	if btn == nil {
+		t.Fatal("mark-read-page footer button not found")
+	}
+	if btn["type"] != "default" {
+		t.Errorf("mark-read-page type = %v, want default", btn["type"])
+	}
+	if d, ok := btn["disabled"]; ok {
+		t.Errorf("mark-read-page should not set disabled, got %v", d)
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "✅ 一键已阅本页 2 篇" {
+		t.Errorf("mark-read-page text = %v", text)
+	}
+
+	// Case 2: all read — button is primary, "✅ 已标记本页 N 篇".
+	items = []RecommendCardItem{
+		{ID: "2401.00001", Title: "A", Abstract: "a", Status: 3},
+		{ID: "2401.00002", Title: "B", Abstract: "b", Status: 3},
+	}
+	cardJSON = buildDailyRecommendCard(items, 1, 1)
+	btn = findFooterMarkReadBtn(t, cardJSON)
+	if btn == nil {
+		t.Fatal("mark-read-page footer button not found (all-read case)")
+	}
+	if btn["type"] != "primary" {
+		t.Errorf("mark-read-page type = %v, want primary", btn["type"])
+	}
+	if d, ok := btn["disabled"]; ok {
+		t.Errorf("mark-read-page should not set disabled (would mask color), got %v", d)
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "✅ 已标记本页 2 篇" {
+		t.Errorf("mark-read-page text = %v, text=\"✅ 已标记本页 2 篇\"", text)
+	}
+
+	// Case 3: mixed — button stays default.
+	items = []RecommendCardItem{
+		{ID: "2401.00001", Title: "A", Abstract: "a", Status: 3},
+		{ID: "2401.00002", Title: "B", Abstract: "b", Status: 0},
+	}
+	cardJSON = buildDailyRecommendCard(items, 1, 1)
+	btn = findFooterMarkReadBtn(t, cardJSON)
+	if btn == nil {
+		t.Fatal("mark-read-page footer button not found (mixed case)")
+	}
+	if btn["type"] != "default" {
+		t.Errorf("mark-read-page type = %v, want default", btn["type"])
+	}
+}
+
+// findFooterMarkReadBtn returns the bulk "mark all as read" footer button.
+// It is the only button on the card whose value.action is
+// "recommend:mark-read-page".
+func findFooterMarkReadBtn(t *testing.T, cardJSON string) map[string]any {
+	t.Helper()
+	var card map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		t.Fatalf("unmarshal card: %v", err)
+	}
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+	for _, e := range elements {
+		em, ok := e.(map[string]any)
+		if !ok || em["tag"] != "button" {
+			continue
+		}
+		val, _ := em["value"].(map[string]any)
+		if act, _ := val["action"].(string); act == "recommend:mark-read-page" {
+			return em
+		}
+	}
+	return nil
+}
+
+// TestFindRecommendPage verifies the page-number calculation that lets the
+// card-action handlers re-render only the page that contains the clicked
+// article. The article list is in batch_order, and pages are
+// recommendPageSize items each.
+func TestFindRecommendPage(t *testing.T) {
+	items := make([]RecommendCardItem, 25)
+	for i := range items {
+		items[i] = RecommendCardItem{ID: fmt.Sprintf("2401.%05d", i+1)}
+	}
+	tests := []struct {
+		id   string
+		want int
+	}{
+		{"2401.00001", 1}, // first
+		{"2401.00010", 1}, // last on page 1 (pageSize=10)
+		{"2401.00011", 2}, // first on page 2
+		{"2401.00020", 2}, // last on page 2
+		{"2401.00021", 3}, // first on page 3
+		{"2401.00025", 3}, // last on page 3
+		{"2401.99999", 1}, // not in list → fallback to page 1
+	}
+	for _, tt := range tests {
+		if got := findRecommendPage(items, tt.id); got != tt.want {
+			t.Errorf("findRecommendPage(%s) = %d, want %d", tt.id, got, tt.want)
+		}
+	}
+}

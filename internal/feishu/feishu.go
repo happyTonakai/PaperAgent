@@ -1337,8 +1337,8 @@ func maskAppID(appID string) string {
 // PushDailyRecommend sends the given recommended articles as one or more
 // interactive cards to the specified Feishu chat. Called by the scheduler
 // after the daily pipeline completes and by the Feishu /push command.
-// Reads translations from SQLite (populated by translateAndPersistArticles
-// in server.go).
+// Reads translations and statuses from SQLite (populated by
+// translateAndPersistArticles in server.go and by the card-action handlers).
 //
 // Returns an error if any card send fails. Callers should NOT mark the
 // articles as pushed_at on error, so a later push retries the entire batch.
@@ -1357,47 +1357,32 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) err
 	}
 	log.Printf("[feishu] PushDailyRecommend: sending %d articles to chat %s", len(articles), chatID)
 
-	// Re-read from DB to get persisted translations (translated_title, translated_abstract)
-	today := time.Now().Format("2006-01-02")
-	dbArticles, err := database.GetArticlesByRecommendDate(today)
-	if err != nil || len(dbArticles) == 0 {
-		dbArticles = articles // fallback
-	}
-
-	// Build a lookup by article ID
-	articleByID := make(map[string]database.Article, len(dbArticles))
-	for _, a := range dbArticles {
-		articleByID[a.ID] = a
-	}
-
-	items := make([]RecommendCardItem, 0, len(articles))
-	for _, a := range articles {
-		dbA, ok := articleByID[a.ID]
-		if !ok {
-			dbA = a
+	// Prefer the freshest data from the DB (translations + statuses). Fall
+	// back to the input articles if the DB query fails or the date changed.
+	items, err := b.loadRecommendItemsForToday()
+	if err != nil || len(items) == 0 {
+		items = make([]RecommendCardItem, 0, len(articles))
+		for _, a := range articles {
+			title := a.Title
+			abstract := ""
+			if a.Abstract != nil {
+				abstract = *a.Abstract
+			}
+			if a.TranslatedTitle != nil && *a.TranslatedTitle != "" {
+				title = *a.TranslatedTitle
+			}
+			if a.TranslatedAbstract != nil && *a.TranslatedAbstract != "" {
+				abstract = *a.TranslatedAbstract
+			}
+			items = append(items, RecommendCardItem{
+				ID:         a.ID,
+				Title:      title,
+				Abstract:   abstract,
+				Score:      a.Score,
+				Status:     a.Status,
+				AXNetVotes: a.AXNetVotes,
+			})
 		}
-
-		title := dbA.Title
-		abstract := ""
-		if dbA.Abstract != nil {
-			abstract = *dbA.Abstract
-		}
-
-		// Use translated versions from DB if available
-		if dbA.TranslatedTitle != nil && *dbA.TranslatedTitle != "" {
-			title = *dbA.TranslatedTitle
-		}
-		if dbA.TranslatedAbstract != nil && *dbA.TranslatedAbstract != "" {
-			abstract = *dbA.TranslatedAbstract
-		}
-
-		items = append(items, RecommendCardItem{
-			ID:         a.ID,
-			Title:      title,
-			Abstract:   abstract,
-			Score:      a.Score,
-			AXNetVotes: a.AXNetVotes,
-		})
 	}
 
 	// Split into pages so each card stays under Feishu's JSON/element limits
@@ -1419,7 +1404,107 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) err
 	return nil
 }
 
-// handleRecommendLike marks an article as liked (status=2).
+// loadRecommendItemsForToday returns today's recommended articles as
+// RecommendCardItems, ordered by batch_order. Translations and statuses
+// are read straight from the DB so the card reflects the latest state
+// after a like / dislike / activate / mark-read-page click. Used by both
+// the daily push and the card-action re-render path.
+func (b *Bot) loadRecommendItemsForToday() ([]RecommendCardItem, error) {
+	today := time.Now().Format("2006-01-02")
+	dbArticles, err := database.GetArticlesByRecommendDate(today)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]RecommendCardItem, 0, len(dbArticles))
+	for _, a := range dbArticles {
+		title := a.Title
+		abstract := ""
+		if a.Abstract != nil {
+			abstract = *a.Abstract
+		}
+		if a.TranslatedTitle != nil && *a.TranslatedTitle != "" {
+			title = *a.TranslatedTitle
+		}
+		if a.TranslatedAbstract != nil && *a.TranslatedAbstract != "" {
+			abstract = *a.TranslatedAbstract
+		}
+		items = append(items, RecommendCardItem{
+			ID:         a.ID,
+			Title:      title,
+			Abstract:   abstract,
+			Score:      a.Score,
+			Status:     a.Status,
+			AXNetVotes: a.AXNetVotes,
+		})
+	}
+	return items, nil
+}
+
+// findRecommendPage returns the 1-indexed page that contains the article
+// with the given ID, using recommendPageSize as the page size. Returns 1
+// if the article is not in the list (caller falls back to rendering the
+// first page).
+func findRecommendPage(items []RecommendCardItem, articleID string) int {
+	for i, item := range items {
+		if item.ID == articleID {
+			return i/recommendPageSize + 1
+		}
+	}
+	return 1
+}
+
+// buildDailyRecommendCardForArticle rebuilds the page of the daily
+// recommendation card that contains the given article, reflecting the
+// latest statuses from the DB. Returns the card as a map so it can be
+// embedded in callback.Card{Data: ...} for the card-action response. The
+// returned card includes the per-article buttons in their post-action
+// state (highlighted + disabled) when the user has already interacted.
+func (b *Bot) buildDailyRecommendCardForArticle(articleID string) (map[string]any, error) {
+	items, err := b.loadRecommendItemsForToday()
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no recommended articles for today")
+	}
+	page := findRecommendPage(items, articleID)
+	totalPages := (len(items) + recommendPageSize - 1) / recommendPageSize
+	start := (page - 1) * recommendPageSize
+	end := start + recommendPageSize
+	if end > len(items) {
+		end = len(items)
+	}
+	cardJSON := buildDailyRecommendCard(items[start:end], page, totalPages)
+	var cardMap map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &cardMap); err != nil {
+		return nil, fmt.Errorf("unmarshal card: %w", err)
+	}
+	return cardMap, nil
+}
+
+// recommendResponseWithCard returns a CardActionTriggerResponse with both
+// a toast and a refreshed card. On error (e.g. article not in today's
+// list), returns a toast-only response so the user still sees feedback
+// for their click.
+func (b *Bot) recommendResponseWithCard(articleID, toastType, content string) *callback.CardActionTriggerResponse {
+	card, err := b.buildDailyRecommendCardForArticle(articleID)
+	if err != nil {
+		log.Printf("[feishu] rebuild card for %s: %v", articleID, err)
+		return &callback.CardActionTriggerResponse{
+			Toast: &callback.Toast{Type: toastType, Content: content},
+		}
+	}
+	return &callback.CardActionTriggerResponse{
+		Toast: &callback.Toast{Type: toastType, Content: content},
+		Card: &callback.Card{
+			Type: "raw",
+			Data: card,
+		},
+	}
+}
+
+// handleRecommendLike marks an article as liked (status=2) and refreshes
+// the card so the 👍 button is highlighted + disabled.
 func (b *Bot) handleRecommendLike(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
 	if err := database.UpdateArticleStatus(articleID, 2); err != nil {
 		log.Printf("[feishu] recommend like error: %v", err)
@@ -1427,12 +1512,11 @@ func (b *Bot) handleRecommendLike(articleID, chatID string) (*callback.CardActio
 			Toast: &callback.Toast{Type: "error", Content: "操作失败"},
 		}, nil
 	}
-	return &callback.CardActionTriggerResponse{
-		Toast: &callback.Toast{Type: "success", Content: "已点赞 👍"},
-	}, nil
+	return b.recommendResponseWithCard(articleID, "success", "已点赞 👍"), nil
 }
 
-// handleRecommendDislike marks an article as disliked (status=-1).
+// handleRecommendDislike marks an article as disliked (status=-1) and
+// refreshes the card so the 👎 button is highlighted + disabled.
 func (b *Bot) handleRecommendDislike(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
 	if err := database.UpdateArticleStatus(articleID, -1); err != nil {
 		log.Printf("[feishu] recommend dislike error: %v", err)
@@ -1440,14 +1524,14 @@ func (b *Bot) handleRecommendDislike(articleID, chatID string) (*callback.CardAc
 			Toast: &callback.Toast{Type: "error", Content: "操作失败"},
 		}, nil
 	}
-	return &callback.CardActionTriggerResponse{
-		Toast: &callback.Toast{Type: "success", Content: "已点踩 👎"},
-	}, nil
+	return b.recommendResponseWithCard(articleID, "success", "已点踩 👎"), nil
 }
 
 // handleRecommendMarkReadPage bulk-marks all articles in the current Feishu
 // recommendation card page as read. Mirrors the WebUI's hover-to-read
-// affordance and the "全部已读" button.
+// affordance and the "全部已读" button. Refreshes the card so the bulk
+// button shows ✓ + disabled and the per-article buttons reflect the new
+// state.
 func (b *Bot) handleRecommendMarkReadPage(articleIDs []string, chatID string) (*callback.CardActionTriggerResponse, error) {
 	if len(articleIDs) == 0 {
 		return &callback.CardActionTriggerResponse{
@@ -1461,6 +1545,12 @@ func (b *Bot) handleRecommendMarkReadPage(articleIDs []string, chatID string) (*
 		}, nil
 	}
 	log.Printf("[feishu] mark-read-page: marked %d articles as read (chat=%s)", len(articleIDs), chatID)
+	// Re-render via the first ID (the page's items are batch_order-ordered,
+	// so the first ID identifies the page unambiguously).
+	firstID := articleIDs[0]
+	if resp := b.recommendResponseWithCard(firstID, "success", fmt.Sprintf("已标记本页 %d 篇为已读", len(articleIDs))); resp != nil {
+		return resp, nil
+	}
 	return &callback.CardActionTriggerResponse{
 		Toast: &callback.Toast{Type: "success", Content: fmt.Sprintf("已标记本页 %d 篇为已读", len(articleIDs))},
 	}, nil
@@ -1468,7 +1558,14 @@ func (b *Bot) handleRecommendMarkReadPage(articleIDs []string, chatID string) (*
 
 // handleRecommendActivate activates a recommended paper in the Q&A system.
 // It fetches the paper content from the article's URL, creates a session.Paper,
-// and starts streaming the summary asynchronously.
+// and starts streaming the summary asynchronously. The card is refreshed so
+// the 🤖 button is highlighted + disabled.
+//
+// Idempotency: if the article is already activated (status==1) the async
+// cmdNew call is skipped. cmdNew's own dedup via FindPaperByArxivID would
+// catch duplicates too, but it would still spam the chat with "正在处理"
+// or "已激活" text messages from the dedup path. Skipping here keeps the
+// chat clean and gives a clear "已激活过" toast on repeat clicks.
 func (b *Bot) handleRecommendActivate(articleID, chatID string) (*callback.CardActionTriggerResponse, error) {
 	article, err := database.GetArticleByID(articleID)
 	if err != nil {
@@ -1483,15 +1580,27 @@ func (b *Bot) handleRecommendActivate(articleID, chatID string) (*callback.CardA
 		}, nil
 	}
 
-	// Mark article as clicked (status=1)
-	_ = database.UpdateArticleStatus(articleID, 1)
+	alreadyActivated := article.Status == 1
+	if !alreadyActivated {
+		// Mark article as clicked (status=1). Failure is non-fatal: the
+		// activate button still triggers cmdNew.
+		_ = database.UpdateArticleStatus(articleID, 1)
+	}
 
-	// Launch async paper fetch + summary generation (reuses cmdNew logic)
-	go b.cmdNew(chatID, "", article.Link)
+	toastContent := "正在获取论文，请稍候..."
+	if alreadyActivated {
+		toastContent = "已激活过，可直接提问"
+	}
+	resp := b.recommendResponseWithCard(articleID, "success", toastContent)
 
-	return &callback.CardActionTriggerResponse{
-		Toast: &callback.Toast{Type: "success", Content: "正在获取论文，请稍候..."},
-	}, nil
+	if !alreadyActivated {
+		// Launch async paper fetch + summary generation (reuses cmdNew logic).
+		// cmdNew dedupes via FindPaperByArxivID, so a duplicate paper is
+		// impossible even if the click races with another path.
+		go b.cmdNew(chatID, "", article.Link)
+	}
+
+	return resp, nil
 }
 
 // ─── Message content auto-detection (markdown → card/post/text) ───
