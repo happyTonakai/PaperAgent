@@ -66,3 +66,19 @@ const schemaV5 = `
 ALTER TABLE articles ADD COLUMN pushed_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_articles_pushed_at ON articles(pushed_at);
 `
+
+// schemaV6 introduces chat_paper_abstracts: a dedicated cache table for
+// Q&A paper abstracts. The Feishu `/fetch` handler used to write Q&A
+// papers into the `articles` table (the RSS recommendation pool) so the
+// preference-update pipeline could read their abstract. That bled Q&A
+// entries into daily recommendations and Feishu pushes. Q&A abstracts
+// now live in chat_paper_abstracts and are read by
+// CollectYesterdayFeedback via UpsertChatPaperAbstract /
+// GetChatPaperAbstract, keeping `articles` strictly RSS-sourced.
+const schemaV6 = `
+CREATE TABLE IF NOT EXISTS chat_paper_abstracts (
+    arxiv_id   TEXT    PRIMARY KEY,
+    abstract   TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+`

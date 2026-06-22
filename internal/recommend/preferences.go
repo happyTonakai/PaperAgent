@@ -149,11 +149,15 @@ func CollectYesterdayFeedback() ([]FeedbackArticle, error) {
 			}
 			rating := cp.Rating
 
-			// Look up abstract from articles table (may have been inserted by Q&A system)
+			// Look up abstract from the Q&A abstract cache
+			// (chat_paper_abstracts). Previously this read from the
+			// `articles` table, which is the RSS recommendation pool —
+			// re-using it caused Q&A papers to leak into daily
+			// recommendations.
 			abstract := ""
 			if cp.ArxivID != "" {
-				if article, err := database.GetArticleByID(cp.ArxivID); err == nil && article != nil && article.Abstract != nil {
-					abstract = *article.Abstract
+				if cached, err := database.GetChatPaperAbstract(cp.ArxivID); err == nil {
+					abstract = cached
 				}
 			}
 

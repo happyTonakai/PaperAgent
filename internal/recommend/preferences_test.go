@@ -2,6 +2,7 @@ package recommend
 
 import (
 	"testing"
+	"time"
 
 	"github.com/happyTonakai/paperagent/internal/database"
 )
@@ -194,4 +195,103 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestCollectYesterdayFeedbackChatAbstract verifies that Q&A chat papers
+// pick up their abstract from chat_paper_abstracts (the dedicated cache),
+// not from the recommendation `articles` table. Regression test for the
+// bug where Q&A papers were inserted into the `articles` table and got
+// pushed to the user as daily recommendations.
+func TestCollectYesterdayFeedbackChatAbstract(t *testing.T) {
+	conn, cleanup, err := database.OpenTestDB()
+	if err != nil {
+		t.Fatalf("OpenTestDB: %v", err)
+	}
+	database.SetDB(conn)
+	defer func() {
+		cleanup()
+		database.SetDB(nil)
+	}()
+
+	const arxivID = "2401.12345"
+	const title = "Some Q&A paper"
+	const abstract = "Cached abstract for preference updates."
+
+	// Pin updated_at to mid-day yesterday so the test is robust across
+	// midnight boundaries. CollectYesterdayFeedback filters by
+	// updated_at >= yesterday's date prefix; using a deterministic
+	// timestamp avoids the "ran at 00:00" edge case.
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02") + " 12:00"
+	if err := database.UpsertChatPaper(&database.ChatPaper{
+		ID:        "session-abc",
+		ArxivID:   arxivID,
+		Title:     title,
+		Rating:    8,
+		CreatedAt: yesterday,
+		UpdatedAt: yesterday,
+	}); err != nil {
+		t.Fatalf("UpsertChatPaper: %v", err)
+	}
+	if err := database.UpsertChatPaperAbstract(arxivID, abstract); err != nil {
+		t.Fatalf("UpsertChatPaperAbstract: %v", err)
+	}
+
+	fbs, err := CollectYesterdayFeedback()
+	if err != nil {
+		t.Fatalf("CollectYesterdayFeedback: %v", err)
+	}
+	if len(fbs) != 1 {
+		t.Fatalf("expected 1 feedback entry, got %d", len(fbs))
+	}
+	if fbs[0].Title != title {
+		t.Errorf("feedback title = %q, want %q", fbs[0].Title, title)
+	}
+	if fbs[0].Abstract != abstract {
+		t.Errorf("feedback abstract = %q, want %q", fbs[0].Abstract, abstract)
+	}
+	if fbs[0].Source != "chat" {
+		t.Errorf("feedback source = %q, want \"chat\"", fbs[0].Source)
+	}
+	if fbs[0].Rating == nil || *fbs[0].Rating != 8 {
+		t.Errorf("feedback rating = %v, want 8", fbs[0].Rating)
+	}
+}
+
+// TestCollectYesterdayFeedbackNoAbstractCache verifies that chat papers
+// without an abstract cache row still surface in feedback with an empty
+// abstract — the collector must not error and must not silently fall back
+// to reading the `articles` table.
+func TestCollectYesterdayFeedbackNoAbstractCache(t *testing.T) {
+	conn, cleanup, err := database.OpenTestDB()
+	if err != nil {
+		t.Fatalf("OpenTestDB: %v", err)
+	}
+	database.SetDB(conn)
+	defer func() {
+		cleanup()
+		database.SetDB(nil)
+	}()
+
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02") + " 12:00"
+	if err := database.UpsertChatPaper(&database.ChatPaper{
+		ID:        "session-no-abs",
+		ArxivID:   "2401.99999",
+		Title:     "Paper without cached abstract",
+		Rating:    5,
+		CreatedAt: yesterday,
+		UpdatedAt: yesterday,
+	}); err != nil {
+		t.Fatalf("UpsertChatPaper: %v", err)
+	}
+
+	fbs, err := CollectYesterdayFeedback()
+	if err != nil {
+		t.Fatalf("CollectYesterdayFeedback: %v", err)
+	}
+	if len(fbs) != 1 {
+		t.Fatalf("expected 1 feedback entry, got %d", len(fbs))
+	}
+	if fbs[0].Abstract != "" {
+		t.Errorf("expected empty abstract when no cache row exists, got %q", fbs[0].Abstract)
+	}
 }

@@ -118,25 +118,54 @@ func SaveArticles(articles []NewArticle) (int, error) {
 	return inserted, nil
 }
 
-// UpsertArticleByArxivID inserts or updates an article identified by its arXiv ID.
-// Used when a paper is created via the Q&A system to ensure its abstract
-// is available for preference updates.
-func UpsertArticleByArxivID(id, title, link string, abstract *string) error {
+// UpsertChatPaperAbstract inserts or updates the cached abstract for a Q&A
+// paper identified by its arXiv ID. The cache is read by
+// CollectYesterdayFeedback when building feedback signals for the
+// preference-update LLM. Storing Q&A abstracts in a dedicated table (rather
+// than reusing the recommendation `articles` pool) ensures Q&A entries can
+// never bleed into the daily-recommendation pipeline.
+func UpsertChatPaperAbstract(arxivID, abstract string) error {
+	if arxivID == "" || abstract == "" {
+		return nil
+	}
 	db, err := GetDB()
 	if err != nil {
 		return err
 	}
 	_, err = db.Exec(
-		`INSERT INTO articles (id, title, link, abstract, created_at)
-		 VALUES (?, ?, ?, ?, datetime('now'))
-		 ON CONFLICT(id) DO UPDATE SET
-		   title = COALESCE(NULLIF(?,''), title),
-		   link  = COALESCE(NULLIF(?,''), link),
-		   abstract = COALESCE(?, abstract)`,
-		id, title, link, abstract,
-		title, link, abstract,
+		`INSERT INTO chat_paper_abstracts (arxiv_id, abstract, updated_at)
+		 VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(arxiv_id) DO UPDATE SET
+		   abstract = excluded.abstract,
+		   updated_at = excluded.updated_at`,
+		arxivID, abstract,
 	)
 	return err
+}
+
+// GetChatPaperAbstract returns the cached abstract for the given arXiv ID,
+// or an empty string when no row exists. Errors other than sql.ErrNoRows
+// are propagated.
+func GetChatPaperAbstract(arxivID string) (string, error) {
+	if arxivID == "" {
+		return "", nil
+	}
+	db, err := GetDB()
+	if err != nil {
+		return "", err
+	}
+	var abstract string
+	err = db.QueryRow(
+		`SELECT abstract FROM chat_paper_abstracts WHERE arxiv_id = ?`,
+		arxivID,
+	).Scan(&abstract)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return abstract, nil
 }
 
 // GetArticles returns articles filtered by optional status, with limit and offset.

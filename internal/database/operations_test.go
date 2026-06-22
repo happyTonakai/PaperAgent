@@ -58,43 +58,100 @@ func TestSaveAndGetArticle(t *testing.T) {
 	}
 }
 
-func TestUpsertArticleByArxivID(t *testing.T) {
+func TestUpsertChatPaperAbstract(t *testing.T) {
 	defer setupTestDB(t)()
 
-	abstract := "Abstract from Q&A paper."
+	const arxivID = "2401.00002"
+	const first = "Abstract from Q&A paper."
+	const second = "Updated abstract."
 
-	err := UpsertArticleByArxivID("2401.00002", "Q&A Paper", "https://arxiv.org/abs/2401.00002", &abstract)
+	if err := UpsertChatPaperAbstract(arxivID, first); err != nil {
+		t.Fatalf("UpsertChatPaperAbstract (insert): %v", err)
+	}
+	got, err := GetChatPaperAbstract(arxivID)
 	if err != nil {
-		t.Fatalf("UpsertArticleByArxivID: %v", err)
+		t.Fatalf("GetChatPaperAbstract: %v", err)
 	}
-
-	article, err := GetArticleByID("2401.00002")
-	if err != nil {
-		t.Fatalf("GetArticleByID: %v", err)
-	}
-	if article == nil {
-		t.Fatal("article not found after upsert")
-	}
-	if article.Title != "Q&A Paper" {
-		t.Errorf("Title = %q, want %q", article.Title, "Q&A Paper")
-	}
-	if article.Abstract == nil || *article.Abstract != abstract {
-		t.Errorf("Abstract mismatch")
+	if got != first {
+		t.Errorf("abstract after insert = %q, want %q", got, first)
 	}
 
-	// Update with new abstract
-	newAbstract := "Updated abstract."
-	err = UpsertArticleByArxivID("2401.00002", "Q&A Paper", "https://arxiv.org/abs/2401.00002", &newAbstract)
+	// Upsert with the same id should replace the abstract.
+	if err := UpsertChatPaperAbstract(arxivID, second); err != nil {
+		t.Fatalf("UpsertChatPaperAbstract (update): %v", err)
+	}
+	got, err = GetChatPaperAbstract(arxivID)
 	if err != nil {
-		t.Fatalf("UpsertArticleByArxivID (update): %v", err)
+		t.Fatalf("GetChatPaperAbstract (update): %v", err)
+	}
+	if got != second {
+		t.Errorf("abstract after update = %q, want %q", got, second)
+	}
+}
+
+// TestChatPaperAbstractStaysOutOfArticles guards against the historical bug
+// where Q&A paper upserts landed in the `articles` table and got picked up
+// by the daily-recommendation pipeline. The dedicated chat_paper_abstracts
+// table must be the only place these abstracts live.
+func TestChatPaperAbstractStaysOutOfArticles(t *testing.T) {
+	defer setupTestDB(t)()
+
+	const arxivID = "2401.00042"
+	if err := UpsertChatPaperAbstract(arxivID, "Q&A abstract that must not bleed into articles"); err != nil {
+		t.Fatalf("UpsertChatPaperAbstract: %v", err)
 	}
 
-	article, err = GetArticleByID("2401.00002")
+	exists, err := ArticleExists(arxivID)
 	if err != nil {
-		t.Fatalf("GetArticleByID after update: %v", err)
+		t.Fatalf("ArticleExists: %v", err)
 	}
-	if article.Abstract == nil || *article.Abstract != newAbstract {
-		t.Errorf("Abstract after update = %q, want %q", *article.Abstract, newAbstract)
+	if exists {
+		t.Errorf("Q&A abstract upsert leaked into articles table for %s", arxivID)
+	}
+
+	got, err := GetChatPaperAbstract(arxivID)
+	if err != nil {
+		t.Fatalf("GetChatPaperAbstract: %v", err)
+	}
+	if got == "" {
+		t.Errorf("expected cached abstract, got empty string")
+	}
+}
+
+func TestGetChatPaperAbstractMissing(t *testing.T) {
+	defer setupTestDB(t)()
+
+	got, err := GetChatPaperAbstract("0000.00000")
+	if err != nil {
+		t.Fatalf("GetChatPaperAbstract on missing id: %v", err)
+	}
+	if got != "" {
+		t.Errorf("missing id should return empty string, got %q", got)
+	}
+
+	// Empty arxiv id is a no-op and must not error.
+	got, err = GetChatPaperAbstract("")
+	if err != nil {
+		t.Fatalf("GetChatPaperAbstract on empty id: %v", err)
+	}
+	if got != "" {
+		t.Errorf("empty arxiv id should return empty string, got %q", got)
+	}
+}
+
+func TestUpsertChatPaperAbstractEmptyInput(t *testing.T) {
+	defer setupTestDB(t)()
+
+	// Empty abstract should be a no-op (not store an empty row).
+	if err := UpsertChatPaperAbstract("2401.00099", ""); err != nil {
+		t.Fatalf("UpsertChatPaperAbstract empty abstract: %v", err)
+	}
+	got, err := GetChatPaperAbstract("2401.00099")
+	if err != nil {
+		t.Fatalf("GetChatPaperAbstract: %v", err)
+	}
+	if got != "" {
+		t.Errorf("empty abstract must not be stored, got %q", got)
 	}
 }
 

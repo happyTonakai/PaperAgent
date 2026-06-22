@@ -453,16 +453,14 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 			paper.SetTitle(title)
 			log.Printf("[feishu] title from HTML: %s", title)
 		}
-		// Extract abstract from arXiv and upsert into articles table
-		// so it's available for preference updates.
+		// Cache the abstract for preference updates. We deliberately do NOT
+		// write into the `articles` table: that table is the RSS-sourced
+		// recommendation pool and any entry with status=0/score=0 would be
+		// picked up by MarkDailyRecommendations and pushed to the user.
+		// chat_paper_abstracts is the dedicated cache for Q&A abstracts.
 		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil {
-			title := paper.Title
-			if title == "" {
-				title = arxivID
-			}
-			absPtr := &abstract
-			if err := database.UpsertArticleByArxivID(arxivID, title, sourceURL, absPtr); err != nil {
-				log.Printf("[feishu] upsert article for %s: %v", arxivID, err)
+			if err := database.UpsertChatPaperAbstract(arxivID, abstract); err != nil {
+				log.Printf("[feishu] cache abstract for %s: %v", arxivID, err)
 			}
 		} else {
 			log.Printf("[feishu] abstract extraction for %s: %v", arxivID, err)
