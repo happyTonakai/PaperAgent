@@ -96,6 +96,18 @@ federated learning, quantum computing, blockchain
 
 ## 安装
 
+### 🤖 让 AI Agent 帮你装
+
+如果你正在使用 Claude Code / Cursor / Aider 等 AI Coding Agent，**直接把下面这行粘给它说「帮我安装 PaperAgent」即可**：
+
+```
+请按 https://raw.githubusercontent.com/happyTonakai/PaperAgent/main/INSTALL.md 的步骤，一步步安装并配置好 PaperAgent
+```
+
+Agent 会自动探测环境、下载二进制、引导你输入 API key / 飞书凭证，完成 Q&A + 每日推荐 + 飞书推送的完整配置。详见 [`INSTALL.md`](./INSTALL.md)。
+
+### 手动安装
+
 从 [Releases](https://github.com/happyTonakai/PaperAgent/releases) 下载对应平台二进制：
 
 ```bash
