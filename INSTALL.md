@@ -36,9 +36,6 @@ for p in 8686 8785; do
   (echo > /dev/tcp/127.0.0.1/$p) 2>/dev/null && echo "port $p=OCCUPIED" || echo "port $p=FREE"
 done
 
-# sudo 可用性
-sudo -n true 2>/dev/null && echo "sudo=ok" || echo "sudo=NEED_PASSWORD_OR_UNAVAILABLE"
-
 # 系统库（macOS 不需要，Linux 需要 glibc）
 ldd --version 2>/dev/null | head -1 || echo "linux-only"
 ```
@@ -53,7 +50,6 @@ ldd --version 2>/dev/null | head -1 || echo "linux-only"
 | `OS=Linux ARCH=aarch64` | 下载 `paperagent_linux_arm64` |
 | `OS=Windows*` | 提示用户改用 PowerShell 或 WSL，本指南不覆盖 |
 | `port 8686~8785=OCCUPIED` | 提示用户关闭占用进程，或设 `PAPER_ADDR` 改端口 |
-| `sudo=NEED_PASSWORD_OR_UNAVAILABLE` | 安装到 `~/.local/bin/` 而非 `/usr/local/bin/` |
 | `curl=MISSING` | 提示用户先装 curl 再继续 |
 
 ---
@@ -62,10 +58,13 @@ ldd --version 2>/dev/null | head -1 || echo "linux-only"
 
 ### 1.1 选择安装路径
 
-**默认**：放 `/usr/local/bin/paperagent`（需要 sudo）。
-**回退**：`~/.local/bin/paperagent`（无需 sudo，但需把 `~/.local/bin` 加进 `PATH`）。
+**默认**：`~/.local/bin/paperagent`（**无需 sudo**）。装完后如果 `which paperagent` 找不到，把下面加进 `~/.zshrc` / `~/.bashrc`：
 
-询问用户选择哪个，确认后记下 `INSTALL_DIR`。
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**如果用户明确想全局装**（让所有用户都能用）到 `/usr/local/bin/paperagent`：自己执行 `sudo mv ~/.local/bin/paperagent /usr/local/bin/`。**Agent 不要主动跑 sudo** —— 让用户自己输密码。
 
 ### 1.2 下载
 
