@@ -265,6 +265,10 @@ export function SettingsDialog() {
 			.then((data: RecommendConfigData) => {
 				setRecommendConfig(data)
 				setRecConfigOrig(structuredClone(data))
+				// Reflect backend state: scoring/translation block present
+				// (i.e. a dedicated endpoint was configured) → checkbox off.
+				setUseMainForScoring(data.api.scoring === null)
+				setUseMainForTranslation(data.api.translation === null)
 			})
 			.catch(() => {})
 			.finally(() => setRecLoading(false))
@@ -326,8 +330,10 @@ export function SettingsDialog() {
 				const translation = recommendConfig.api.translation
 				let translationBody: Record<string, string> | null = null
 				if (useMainForTranslation) {
-					// When reuse is enabled, force-send null on the wire
-					translationBody = null
+					// "复用主 API" → send empty fields. Backend copies from
+					// the main API and preserves the ${VAR} env-var reference
+					// form for api_key (via RawOnDiskAPIKey).
+					translationBody = { base_url: '', api_key: '', model: '' }
 				} else if (translation) {
 					const allEmpty = !translation.base_url.trim() && !translation.model.trim()
 						&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
@@ -342,12 +348,16 @@ export function SettingsDialog() {
 					}
 				}
 
-				const scChanged = useMainForScoring
-					? recConfigOrig.api.scoring !== null
-					: scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring)
-				const trChanged = useMainForTranslation
-					? recConfigOrig.api.translation !== null
-					: translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation)
+				// Dirtiness: a checkbox toggle counts as a change, and
+				// editing fields while a dedicated endpoint is configured
+				// also counts. The orig-checked state is reconstructed from
+				// recConfigOrig (was api.scoring/translation null at load?).
+				const scOrigChecked = recConfigOrig.api.scoring === null
+				const trOrigChecked = recConfigOrig.api.translation === null
+				const scChanged = scOrigChecked !== useMainForScoring
+					|| (!useMainForScoring && scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring))
+				const trChanged = trOrigChecked !== useMainForTranslation
+					|| (!useMainForTranslation && translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation))
 
 				if (scChanged || trChanged) {
 					const apiBody: Record<string, unknown> = {}

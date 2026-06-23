@@ -162,7 +162,7 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 | 每天推荐数量 | 整数 | `20` |
 | 探索比例 `diversity_ratio` | 0-1 | `0.3` |
 | 评分 API | 留空则复用 Q&A | 复用 |
-| 翻译 API | 留空则复用 Q&A（不填则推荐的标题/摘要不翻译） | 复用 |
+| 翻译 API | 留空则不翻译（不配置则跳过翻译）。勾选复用主 API 时后端从主 API 复制（base_url / model 复制，api_key 用 ${VAR} 引用形式保留 env-var 间接） | 不配 = 不翻译 |
 
 **记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_SCORING_*` / `$REC_TRANS_*`（后两组仅在用户填了才用）。
 
@@ -332,7 +332,7 @@ curl -sf http://localhost:8686/api/config | head -c 200 && echo " → OK"
 ```bash
 curl -sf -X POST http://localhost:8686/api/papers \
   -H "Content-Type: application/json" \
-  -d '{"source":"https://arxiv.org/abs/1706.03762"}' | head -c 300
+  -d '{"url":"https://arxiv.org/abs/1706.03762"}' | head -c 300
 ```
 
 ### 7.2 推荐验证（仅当启用）
@@ -441,7 +441,7 @@ rm -rf "$CONFIG_DIR"
 | 启动失败 / panic | `~/.config/paperagent/paperagent.log` |
 | Web UI 打不开 | `curl -v http://localhost:8686/` |
 | Q&A 无响应 | `GET /api/config` 看 api 字段 |
-| 推荐没出来 | `GET /api/recommend/status` 看 `last_run_at` / `error` |
+| 推荐没出来 | `GET /api/recommend/scheduler-status` 看 `last_run` / `last_error` / `next_run` |
 | 飞书无响应 | 启动日志搜 `feishu` |
 | API key 泄漏 | 立即到 OpenAI 控制台 revoke，然后改配置后重启 |
 
