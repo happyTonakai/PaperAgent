@@ -149,7 +149,7 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 > - 想订阅的 arXiv 分类（如 `cs.AI, cs.CL`）
 > - 推荐时间（默认 `08:00`）
 > - 每天推荐数量（默认 20）
-> - 是否单独配置评分 API（默认复用 Q&A 的 API）
+> - 是否单独配置评分 API / 翻译 API（默认都复用 Q&A 的 API）
 
 **记录状态**：选启用 → 把 `"recommend"` 加入 `ENABLED_MODULES`；选跳过 → 不加入。
 
@@ -162,8 +162,9 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 | 每天推荐数量 | 整数 | `20` |
 | 探索比例 `diversity_ratio` | 0-1 | `0.3` |
 | 评分 API | 留空则复用 Q&A | 复用 |
+| 翻译 API | 留空则复用 Q&A（不填则推荐的标题/摘要不翻译） | 复用 |
 
-**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_SCORING_*`（评分 API 字段仅在用户填了才用）。
+**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_SCORING_*` / `$REC_TRANS_*`（后两组仅在用户填了才用）。
 
 ---
 
@@ -249,17 +250,21 @@ recommend:
   push_to_feishu: <true|false>   # 如果 feishu 也启用则 true
 ```
 
-**评分 API 子段**（仅当用户单独配了）：
+**评分 / 翻译 API 子段**（仅当用户单独配了）：
 
 ```yaml
 api:
-  scoring:
+  scoring:                            # 仅当用户单独配了才写入
+    base_url: "<...>"
+    api_key: "<...>"
+    model: "<...>"
+  translation:                        # 仅当用户单独配了才写入
     base_url: "<...>"
     api_key: "<...>"
     model: "<...>"
 ```
 
-注意 YAML 缩进合并：基础 `api:` 段和 `api.scoring:` 子段需要合到同一个 `api:` 块下。
+注意 YAML 缩进合并：基础 `api:` 段和 `api.scoring:` / `api.translation:` 子段需要合到同一个 `api:` 块下。
 
 **飞书段**（仅当 `feishu` ∈ `ENABLED_MODULES`）：
 
