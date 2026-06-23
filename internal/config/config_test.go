@@ -180,6 +180,155 @@ func TestSave(t *testing.T) {
 	}
 }
 
+func TestLoadReencryptsPlaintextAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
+	os.MkdirAll(configDir, 0755)
+
+	plaintextKey := "sk-plaintext-should-be-encrypted-12345"
+	os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(`api:
+  base_url: "https://test.api.com/v1"
+  api_key: "`+plaintextKey+`"
+  default_model: "test-model"
+`), 0644)
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// In-memory key must still be the plaintext (so the app can use it).
+	if cfg.API.APIKey != plaintextKey {
+		t.Errorf("in-memory API key changed: got %q, want %q", cfg.API.APIKey, plaintextKey)
+	}
+
+	// On-disk form must now be encrypted.
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read-back error: %v", err)
+	}
+	content := string(data)
+	if !contains(content, encPrefix) {
+		t.Errorf("on-disk api_key was not re-encrypted; file content:\n%s", content)
+	}
+	if contains(content, plaintextKey) {
+		t.Errorf("on-disk config still contains plaintext key; file content:\n%s", content)
+	}
+}
+
+func TestLoadPreservesEnvVarRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
+	os.MkdirAll(configDir, 0755)
+
+	// Use a real env var so resolveAPIKey doesn't error.
+	envVar := "PAPERAGENT_TEST_KEY_RE_ENCRYPT"
+	os.Setenv(envVar, "expanded-value-for-test")
+	defer os.Unsetenv(envVar)
+
+	os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(`api:
+  base_url: "https://test.api.com/v1"
+  api_key: "${`+envVar+`}"
+  default_model: "test-model"
+`), 0644)
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.API.APIKey != "expanded-value-for-test" {
+		t.Errorf("expected expanded key, got %q", cfg.API.APIKey)
+	}
+
+	// On-disk form must STILL be the ${VAR} reference, not encrypted.
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read-back error: %v", err)
+	}
+	content := string(data)
+	if !contains(content, "${"+envVar+"}") {
+		t.Errorf("${VAR} reference was changed; expected it to be preserved. file:\n%s", content)
+	}
+	if contains(content, encPrefix) {
+		t.Errorf("on-disk config was unexpectedly encrypted; file:\n%s", content)
+	}
+}
+
+func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
+	os.MkdirAll(configDir, 0755)
+
+	// Encrypt a key manually, write that, then load — disk form must not change.
+	cfg := &Config{API: APIConfig{APIKey: "preserved-plaintext"}}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("initial save: %v", err)
+	}
+	beforeDisk, _ := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	_, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	afterDisk, _ := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if string(beforeDisk) != string(afterDisk) {
+		t.Errorf("disk content changed for already-encrypted key.\nbefore:\n%s\nafter:\n%s", beforeDisk, afterDisk)
+	}
+}
+
+func TestLoadReencryptsScoringSubkey(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir := filepath.Join(tmpDir, ".config", "paperagent")
+	os.MkdirAll(configDir, 0755)
+
+	os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(`api:
+  base_url: "https://test.api.com/v1"
+  api_key: "${PAPERAGENT_MAIN_KEY_OK}"
+  default_model: "test-model"
+  scoring:
+    base_url: "https://scoring.api.com/v1"
+    api_key: "scoring-plaintext-key-should-encrypt"
+    model: "gpt-4o-mini"
+`), 0644)
+
+	os.Setenv("PAPERAGENT_MAIN_KEY_OK", "main-expanded")
+	defer os.Unsetenv("PAPERAGENT_MAIN_KEY_OK")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	_, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read-back error: %v", err)
+	}
+	content := string(data)
+	if contains(content, "scoring-plaintext-key-should-encrypt") {
+		t.Errorf("scoring.api_key was not re-encrypted; file:\n%s", content)
+	}
+	// Main api_key is still ${...}, so it should still be there.
+	if !contains(content, "${PAPERAGENT_MAIN_KEY_OK}") {
+		t.Errorf("main api_key ${...} ref was unexpectedly changed; file:\n%s", content)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 

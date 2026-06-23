@@ -11,13 +11,27 @@ import (
 )
 
 type Config struct {
-	mu              sync.RWMutex
-	API             APIConfig        `yaml:"api"`
-	Recommend       RecommendConfig  `yaml:"recommend"`
-	ArxivCategories []string         `yaml:"arxiv_categories"`
-	Obsidian        ObsidianConfig   `yaml:"obsidian"`
-	UI              UIConfig         `yaml:"ui"`
-	Feishu          FeishuConfig     `yaml:"feishu"`
+	mu sync.RWMutex
+
+	API             APIConfig       `yaml:"api"`
+	Recommend       RecommendConfig `yaml:"recommend"`
+	ArxivCategories []string        `yaml:"arxiv_categories"`
+	Obsidian        ObsidianConfig  `yaml:"obsidian"`
+	UI              UIConfig        `yaml:"ui"`
+	Feishu          FeishuConfig    `yaml:"feishu"`
+
+	// RawOnDiskAPIKey captures the verbatim string of `api_key` as it appeared
+	// in the on-disk YAML (e.g. "${OPENAI_API_KEY}", "!!aes:...", or a
+	// plaintext key). Save() uses this to decide whether to re-encrypt, leave
+	// the ${...} reference, or pass the ciphertext through untouched — so
+	// that resolving env vars at Load time doesn't accidentally clobber a
+	// user's deliberate ${...} reference on the next Save.
+	//
+	// Set to the empty string when the on-disk key was empty (Save falls back
+	// to "encrypt plaintext" behaviour in that case for backward compat).
+	RawOnDiskAPIKey           string `yaml:"-"`
+	RawOnDiskScoringAPIKey    string `yaml:"-"`
+	RawOnDiskTranslationAPIKey string `yaml:"-"`
 }
 
 // APIConfig contains API configuration for Q&A chat.
@@ -122,6 +136,22 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	// Parse the raw on-disk form of api_key fields once, so we can both
+	// (a) decide whether to auto-re-encrypt and (b) remember each field's
+	// verbatim on-disk form for Save() to honour.
+	var rawKeys struct {
+		API struct {
+			APIKey      string `yaml:"api_key"`
+			Scoring     *struct {
+				APIKey string `yaml:"api_key"`
+			} `yaml:"scoring,omitempty"`
+			Translation *struct {
+				APIKey string `yaml:"api_key"`
+			} `yaml:"translation,omitempty"`
+		} `yaml:"api"`
+	}
+	_ = yaml.Unmarshal(data, &rawKeys)
+
 	// Migration: older configs split the export destination into
 	// vault_path + export_folder. If we read an old config (no export_path
 	// but the legacy fields present), concatenate them into export_path.
@@ -163,7 +193,65 @@ func Load() (*Config, error) {
 		cfg.Obsidian.ExportPath = expandHome(cfg.Obsidian.ExportPath)
 	}
 
+	// Record the verbatim on-disk form of each api_key so that Save() can
+	// preserve a deliberate ${...} reference (don't encrypt the resolved
+	// plaintext) and pass through existing !!aes: ciphertext untouched.
+	cfg.RawOnDiskAPIKey = rawKeys.API.APIKey
+	if rawKeys.API.Scoring != nil {
+		cfg.RawOnDiskScoringAPIKey = rawKeys.API.Scoring.APIKey
+	}
+	if rawKeys.API.Translation != nil {
+		cfg.RawOnDiskTranslationAPIKey = rawKeys.API.Translation.APIKey
+	}
+
+	// Auto-re-encrypt: if any API key on disk was stored as plaintext
+	// (legacy or hand-written), re-save so the on-disk form is always
+	// either ${VAR} reference or !!aes: ciphertext. We must inspect the
+	// raw on-disk form here — cfg's APIKey field is already resolved to
+	// plaintext, so it can't tell us what the user originally wrote.
+	if needsReencrypt(data) {
+		if err := cfg.Save(); err != nil {
+			// Non-fatal: in-memory cfg is usable; next user-triggered Save()
+			// (e.g. via Web UI) will retry re-encryption.
+			fmt.Fprintf(os.Stderr, "warning: could not re-encrypt API key on disk: %v\n", err)
+		}
+	}
+
 	return cfg, nil
+}
+
+// needsReencrypt reports whether the raw config file bytes contain any
+// api_key field whose value is plaintext (neither !!aes: ciphertext
+// nor a ${VAR} env-var reference).
+func needsReencrypt(data []byte) bool {
+	var raw struct {
+		API struct {
+			APIKey      string `yaml:"api_key"`
+			Scoring     *struct {
+				APIKey string `yaml:"api_key"`
+			} `yaml:"scoring,omitempty"`
+			Translation *struct {
+				APIKey string `yaml:"api_key"`
+			} `yaml:"translation,omitempty"`
+		} `yaml:"api"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	if isPlaintextAPIKey(raw.API.APIKey) {
+		return true
+	}
+	if raw.API.Scoring != nil && isPlaintextAPIKey(raw.API.Scoring.APIKey) {
+		return true
+	}
+	if raw.API.Translation != nil && isPlaintextAPIKey(raw.API.Translation.APIKey) {
+		return true
+	}
+	return false
+}
+
+func isPlaintextAPIKey(s string) bool {
+	return s != "" && !hasEncPrefix(s) && !strings.HasPrefix(s, "${")
 }
 
 // hasUnresolvedEnv reports whether s still contains any ${VAR} patterns
@@ -215,16 +303,38 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	// Encrypt API keys
-	encryptAPICfg := func(key string) string {
-		if key == "" || hasEncPrefix(key) || strings.HasPrefix(key, "${") {
-			return key
+	// Encrypt API keys. For each key, the decision depends on what was on
+	// disk last time (recorded in c.RawOnDisk*). This lets us preserve a
+	// user's deliberate ${...} reference (which is expanded to plaintext
+	// in memory) and pass existing !!aes: ciphertext through untouched,
+	// rather than naively encrypting whatever plaintext we hold in memory.
+	encryptAPICfg := func(resolved, rawOnDisk string) string {
+		if resolved == "" {
+			return ""
 		}
-		enc, err := encryptKey(key)
-		if err != nil {
-			return key
+		if rawOnDisk != "" {
+			// The user has a deliberate on-disk form: honour it.
+			if hasEncPrefix(rawOnDisk) {
+				return rawOnDisk // pass through ciphertext untouched
+			}
+			if strings.HasPrefix(rawOnDisk, "${") {
+				return rawOnDisk // preserve env-var reference
+			}
+			// On-disk was plaintext → re-encrypt the (possibly-updated) in-memory value.
+			if enc, err := encryptKey(resolved); err == nil {
+				return enc
+			}
+			return resolved
 		}
-		return enc
+		// No raw form recorded (first Save, or key was added in memory after Load).
+		// Fall back to the legacy behaviour: encrypt plaintext, keep ${...}/ciphertext.
+		if hasEncPrefix(resolved) || strings.HasPrefix(resolved, "${") {
+			return resolved
+		}
+		if enc, err := encryptKey(resolved); err == nil {
+			return enc
+		}
+		return resolved
 	}
 
 	saveCfg := Config{
@@ -236,10 +346,10 @@ func (c *Config) Save() error {
 		},
 		API: APIConfig{
 			BaseURL:      c.API.BaseURL,
-			APIKey:       encryptAPICfg(c.API.APIKey),
+			APIKey:       encryptAPICfg(c.API.APIKey, c.RawOnDiskAPIKey),
 			DefaultModel: c.API.DefaultModel,
-			Scoring:      encryptAPIEndpoint(c.API.Scoring, encryptAPICfg),
-			Translation:  encryptAPIEndpoint(c.API.Translation, encryptAPICfg),
+			Scoring:      encryptAPIEndpointWithRaw(c.API.Scoring, c.RawOnDiskScoringAPIKey),
+			Translation:  encryptAPIEndpointWithRaw(c.API.Translation, c.RawOnDiskTranslationAPIKey),
 		},
 		Recommend: RecommendConfig{
 			DailyPapers:      c.Recommend.DailyPapers,
@@ -282,6 +392,43 @@ func encryptAPIEndpoint(ep *APIEndpoint, encFn func(string) string) *APIEndpoint
 		return nil
 	}
 	cpy := *ep
+	cpy.APIKey = encFn(cpy.APIKey)
+	return &cpy
+}
+
+// encryptAPIEndpointWithRaw mirrors encryptAPIEndpoint but threads the
+// raw on-disk api_key string through to the encryptor so the on-disk form
+// of a sub-config's key (api.scoring.api_key, api.translation.api_key) is
+// preserved across Save() the same way the top-level api_key is.
+func encryptAPIEndpointWithRaw(ep *APIEndpoint, rawOnDisk string) *APIEndpoint {
+	if ep == nil {
+		return nil
+	}
+	cpy := *ep
+	encFn := func(resolved string) string {
+		if resolved == "" {
+			return ""
+		}
+		if rawOnDisk != "" {
+			if hasEncPrefix(rawOnDisk) {
+				return rawOnDisk
+			}
+			if strings.HasPrefix(rawOnDisk, "${") {
+				return rawOnDisk
+			}
+			if enc, err := encryptKey(resolved); err == nil {
+				return enc
+			}
+			return resolved
+		}
+		if hasEncPrefix(resolved) || strings.HasPrefix(resolved, "${") {
+			return resolved
+		}
+		if enc, err := encryptKey(resolved); err == nil {
+			return enc
+		}
+		return resolved
+	}
 	cpy.APIKey = encFn(cpy.APIKey)
 	return &cpy
 }
