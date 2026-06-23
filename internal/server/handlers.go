@@ -481,6 +481,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		SkipContext: req.SkipContext,
 	}
 	paper.AddMessage(userMsg)
+	if err := paper.Save(); err != nil {
+		unlock()
+		log.Printf("[chat] failed to save user message: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save user message"})
+		return
+	}
 
 	// Build messages for CHAT phase — dynamic token-aware truncation.
 	// New papers have paper.Content stripped of references at creation time.
