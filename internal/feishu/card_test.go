@@ -557,6 +557,169 @@ func TestRenderRecommendButton(t *testing.T) {
 	}
 }
 
+func TestArxivAbsToPDF(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"https://arxiv.org/abs/2401.12345", "https://arxiv.org/pdf/2401.12345.pdf"},
+		{"https://arxiv.org/abs/2401.12345v2", "https://arxiv.org/pdf/2401.12345v2.pdf"},
+		{"https://arxiv.org/abs/cs/9901001", "https://arxiv.org/pdf/cs/9901001.pdf"},
+		{"https://example.com/abs/2401.12345", "https://example.com/abs/2401.12345"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := arxivAbsToPDF(tt.in); got != tt.want {
+			t.Errorf("arxivAbsToPDF(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestRenderRecommendLinkButton ensures the per-article "open PDF" button
+// uses Card 2.0's `behaviors: open_url` (the modern equivalent of the
+// deprecated top-level `url` field) with all four platform URLs set so a
+// click opens the PDF in the system browser on desktop + mobile without
+// any bot round-trip.
+func TestRenderRecommendLinkButton(t *testing.T) {
+	const pdfURL = "https://arxiv.org/pdf/2401.12345.pdf"
+	btn := renderRecommendLinkButton("📑", pdfURL)
+
+	if btn["tag"] != "button" {
+		t.Errorf("tag = %v, want button", btn["tag"])
+	}
+	if text := btn["text"].(map[string]any)["content"]; text != "📑" {
+		t.Errorf("text = %v, want 📑", text)
+	}
+	// Link buttons must NOT have a value (that's for callback buttons)
+	// and must NOT be disabled.
+	if _, hasValue := btn["value"]; hasValue {
+		t.Errorf("link button must not have a value field, got %v", btn["value"])
+	}
+	if d, ok := btn["disabled"]; ok {
+		t.Errorf("link button must not be disabled, got %v", d)
+	}
+
+	behaviors, ok := btn["behaviors"].([]map[string]any)
+	if !ok || len(behaviors) != 1 {
+		t.Fatalf("behaviors = %v, want single open_url entry", btn["behaviors"])
+	}
+	b := behaviors[0]
+	if b["type"] != "open_url" {
+		t.Errorf("behavior type = %v, want open_url", b["type"])
+	}
+	for _, platform := range []string{"default_url", "android_url", "ios_url", "pc_url"} {
+		if got := b[platform]; got != pdfURL {
+			t.Errorf("%s = %v, want %s", platform, got, pdfURL)
+		}
+	}
+}
+
+// TestBuildDailyRecommendCard_ArxivLinkButton verifies the per-article
+// 📑 button is present in the button row when PDFURL is set, and uses
+// the open_url behavior with the PDF URL derived from the abs link.
+func TestBuildDailyRecommendCard_ArxivLinkButton(t *testing.T) {
+	items := []RecommendCardItem{
+		{
+			ID: "2401.00001", Title: "P", Abstract: "abs",
+			PDFURL: "https://arxiv.org/pdf/2401.00001.pdf",
+			Score:  0.9,
+		},
+	}
+	cardJSON := buildDailyRecommendCard(items, 1, 1)
+
+	var card map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		t.Fatalf("unmarshal card: %v", err)
+	}
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+
+	var linkBtn map[string]any
+	for _, e := range elements {
+		em, ok := e.(map[string]any)
+		if !ok || em["tag"] != "column_set" {
+			continue
+		}
+		cols, _ := em["columns"].([]any)
+		for _, c := range cols {
+			cm, _ := c.(map[string]any)
+			celems, _ := cm["elements"].([]any)
+			for _, ce := range celems {
+				cb, ok := ce.(map[string]any)
+				if !ok || cb["tag"] != "button" {
+					continue
+				}
+				behaviors, hasBehaviors := cb["behaviors"]
+				if !hasBehaviors {
+					continue
+				}
+				bl, ok := behaviors.([]any)
+				if !ok || len(bl) == 0 {
+					continue
+				}
+				if b0, _ := bl[0].(map[string]any); b0["type"] == "open_url" {
+					linkBtn = cb
+					break
+				}
+			}
+			if linkBtn != nil {
+				break
+			}
+		}
+		if linkBtn != nil {
+			break
+		}
+	}
+	if linkBtn == nil {
+		t.Fatal("arxiv link button not found in card")
+	}
+	if text := linkBtn["text"].(map[string]any)["content"]; text != "📑" {
+		t.Errorf("link button text = %v, want 📑", text)
+	}
+	behaviors := linkBtn["behaviors"].([]any)
+	b0 := behaviors[0].(map[string]any)
+	if b0["default_url"] != "https://arxiv.org/pdf/2401.00001.pdf" {
+		t.Errorf("default_url = %v", b0["default_url"])
+	}
+}
+
+// TestBuildDailyRecommendCard_NoArxivLinkWhenPDFURLEmpty ensures the 📑
+// button is hidden when an item has no PDFURL (defensive guard for any
+// future non-arXiv data source — today the pool is always arXiv).
+func TestBuildDailyRecommendCard_NoArxivLinkWhenPDFURLEmpty(t *testing.T) {
+	items := []RecommendCardItem{
+		{ID: "x", Title: "X", Abstract: "abs", Score: 0.5, PDFURL: ""},
+	}
+	cardJSON := buildDailyRecommendCard(items, 1, 1)
+
+	var card map[string]any
+	if err := json.Unmarshal([]byte(cardJSON), &card); err != nil {
+		t.Fatalf("unmarshal card: %v", err)
+	}
+	body, _ := card["body"].(map[string]any)
+	elements, _ := body["elements"].([]any)
+	for _, e := range elements {
+		em, ok := e.(map[string]any)
+		if !ok || em["tag"] != "column_set" {
+			continue
+		}
+		cols, _ := em["columns"].([]any)
+		for _, c := range cols {
+			cm, _ := c.(map[string]any)
+			celems, _ := cm["elements"].([]any)
+			for _, ce := range celems {
+				cb, ok := ce.(map[string]any)
+				if !ok || cb["tag"] != "button" {
+					continue
+				}
+				if _, hasBehaviors := cb["behaviors"]; hasBehaviors {
+					t.Errorf("did not expect link button when PDFURL is empty, got button with behaviors: %v", cb)
+				}
+			}
+		}
+	}
+}
+
 // findButtonByAction walks the card body elements and returns the first
 // button element whose value.action matches the given prefix. Used by the
 // recommend-card tests to assert button state after building the card.

@@ -854,6 +854,10 @@ type ChatPaper struct {
 	SourceURL string `json:"source_url"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	// GitHubURL is the primary GitHub repo extracted from the paper's abstract
+	// (schema v7). Used by the WebUI to render a GitHub icon button; preference
+	// aggregation ignores it (it's a metadata field, not a feedback signal).
+	GitHubURL string `json:"github_url,omitempty"`
 }
 
 // UpsertChatPaper inserts or updates a chat_paper record.
@@ -863,9 +867,9 @@ func UpsertChatPaper(p *ChatPaper) error {
 		return err
 	}
 	_, err = db.Exec(
-		`INSERT OR REPLACE INTO chat_papers (id, arxiv_id, title, rating, source_url, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.ArxivID, p.Title, p.Rating, p.SourceURL, p.CreatedAt, p.UpdatedAt,
+		`INSERT OR REPLACE INTO chat_papers (id, arxiv_id, title, rating, source_url, created_at, updated_at, github_url)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.ArxivID, p.Title, p.Rating, p.SourceURL, p.CreatedAt, p.UpdatedAt, p.GitHubURL,
 	)
 	return err
 }
@@ -877,7 +881,7 @@ func GetChatPapersUpdatedSince(sinceDate string) ([]ChatPaper, error) {
 		return nil, err
 	}
 	rows, err := db.Query(
-		`SELECT id, arxiv_id, title, rating, source_url, created_at, updated_at
+		`SELECT id, arxiv_id, title, rating, source_url, created_at, updated_at, github_url
 		 FROM chat_papers WHERE updated_at >= ? AND arxiv_id IS NOT NULL AND arxiv_id != ''
 		 ORDER BY updated_at DESC`,
 		sinceDate,
@@ -890,7 +894,7 @@ func GetChatPapersUpdatedSince(sinceDate string) ([]ChatPaper, error) {
 	var papers []ChatPaper
 	for rows.Next() {
 		var p ChatPaper
-		if err := rows.Scan(&p.ID, &p.ArxivID, &p.Title, &p.Rating, &p.SourceURL, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.ArxivID, &p.Title, &p.Rating, &p.SourceURL, &p.CreatedAt, &p.UpdatedAt, &p.GitHubURL); err != nil {
 			return nil, err
 		}
 		papers = append(papers, p)

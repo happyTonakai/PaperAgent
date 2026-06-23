@@ -16,6 +16,10 @@ export interface Paper {
   title: string
   source_url: string
   arxiv_id?: string
+  // Primary GitHub repo URL extracted from the paper's abstract (when present).
+  // Empty/undefined when the abstract does not mention a GitHub repo — the WebUI
+  // hides the GitHub icon button in that case.
+  github_url?: string
   initial_summary: string
   model_used: string
   total_tokens_used?: number

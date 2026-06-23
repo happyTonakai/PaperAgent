@@ -155,6 +155,49 @@ func TestUpsertChatPaperAbstractEmptyInput(t *testing.T) {
 	}
 }
 
+// TestUpsertChatPaperRoundTripGithubURL ensures the github_url field (added in
+// schema v7) survives both insert and update via UpsertChatPaper, and is
+// correctly returned by GetChatPapersUpdatedSince.
+func TestUpsertChatPaperRoundTripGithubURL(t *testing.T) {
+	defer setupTestDB(t)()
+
+	now := time.Now().Format("2006-01-02 15:04")
+	p := &ChatPaper{
+		ID:        "session-1",
+		ArxivID:   "2401.00100",
+		Title:     "Paper with GitHub repo",
+		Rating:    4,
+		SourceURL: "https://arxiv.org/abs/2401.00100",
+		CreatedAt: now,
+		UpdatedAt: now,
+		GitHubURL: "https://github.com/owner/repo",
+	}
+	if err := UpsertChatPaper(p); err != nil {
+		t.Fatalf("UpsertChatPaper: %v", err)
+	}
+
+	// Update with new github_url + rating.
+	p.Rating = 5
+	p.GitHubURL = "https://github.com/owner/repo2"
+	if err := UpsertChatPaper(p); err != nil {
+		t.Fatalf("UpsertChatPaper (update): %v", err)
+	}
+
+	got, err := GetChatPapersUpdatedSince("2000-01-01")
+	if err != nil {
+		t.Fatalf("GetChatPapersUpdatedSince: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 chat_paper, got %d", len(got))
+	}
+	if got[0].GitHubURL != "https://github.com/owner/repo2" {
+		t.Errorf("GitHubURL = %q, want %q", got[0].GitHubURL, "https://github.com/owner/repo2")
+	}
+	if got[0].Rating != 5 {
+		t.Errorf("Rating = %d, want 5", got[0].Rating)
+	}
+}
+
 func TestUpdateArticleTranslations(t *testing.T) {
 	defer setupTestDB(t)()
 

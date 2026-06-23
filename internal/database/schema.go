@@ -82,3 +82,11 @@ CREATE TABLE IF NOT EXISTS chat_paper_abstracts (
     updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 `
+
+// schemaV7 adds `github_url` to chat_papers. Extracted from the paper's
+// abstract at creation time so the WebUI can show a dedicated GitHub
+// icon button next to the existing PDF button. NULL when no GitHub URL
+// was found (the WebUI hides the button).
+const schemaV7 = `
+ALTER TABLE chat_papers ADD COLUMN github_url TEXT;
+`

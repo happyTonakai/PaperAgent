@@ -34,6 +34,61 @@ function splitLatex(input: string): { math: boolean; display: boolean; content: 
   return tokens
 }
 
+// Detect HTTP(S) URLs (and bare github.com/...) so the abstract text becomes
+// clickable. Mirrors the backend regex in internal/urlparse/github.go for the
+// github.com case; the broader URL regex catches arXiv links and any other
+// repos the translation model preserved verbatim.
+//
+// We intentionally keep the URL detection on the raw (translated) abstract
+// rather than relying on a stored field: the LLM usually preserves URLs
+// verbatim, so re-detecting on render is robust to the rare case where
+// translation rewrites a URL. Trailing punctuation is stripped so
+// "https://x.com/foo." doesn't include the period in the href.
+//
+// The negated char class for the URL body MUST include CJK ranges —
+// translated abstracts frequently embed URLs without surrounding spaces
+// (e.g. "可在https://github.com/owner/repo获取"), and without the CJK
+// stop the regex happily eats the trailing Chinese text into the URL.
+// \u3000-\u303f covers `。`, `、` (CJK Symbols & Punctuation).
+// \uff00-\uffef covers `，`, `；`, `：`, `！`, `？`, `（`, `）` (fullwidth forms).
+// \u4e00-\u9fff covers CJK Unified Ideographs (the main Chinese characters).
+const URL_RE = /\bhttps?:\/\/[^\s<>"'()\u3000-\u303f\uff00-\uffef\u4e00-\u9fff]+|(?:^|\s)github\.com\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*/gi
+const TRAILING_PUNCT_RE = /[.,;:!?)]+$/
+
+function splitUrls(text: string): { url: boolean; content: string }[] {
+  if (!text) return []
+  const tokens: { url: boolean; content: string }[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  URL_RE.lastIndex = 0
+  while ((match = URL_RE.exec(text)) !== null) {
+    // For bare github.com matches the leading whitespace is captured in
+    // match[0]; only the actual URL starts at match.index + leadingWS.
+    const fullMatch = match[0]
+    const leadingWS = fullMatch.length - fullMatch.trimStart().length
+    const urlStart = match.index + leadingWS
+    if (urlStart > lastIndex) {
+      tokens.push({ url: false, content: text.slice(lastIndex, urlStart) })
+    }
+    let url = text.slice(urlStart, match.index + fullMatch.length)
+    // Strip trailing punctuation that the regex eagerly captured.
+    url = url.replace(TRAILING_PUNCT_RE, '')
+    tokens.push({ url: true, content: url })
+    lastIndex = match.index + fullMatch.length
+  }
+  if (lastIndex < text.length) {
+    tokens.push({ url: false, content: text.slice(lastIndex) })
+  }
+  return tokens
+}
+
+// normalizeUrl returns a clickable https URL, adding the scheme to bare
+// `github.com/...` matches.
+function normalizeUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url
+  return 'https://' + url
+}
+
 function formatAuthors(author: string | null): string {
   if (!author) return ''
   const authors = author.split(',').map(a => a.trim())
@@ -73,7 +128,30 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
   const renderText = (text: string) => {
     const tokens = splitLatex(text)
     return tokens.map((t, i) => {
-      if (!t.math) return <span key={i}>{t.content}</span>
+      if (!t.math) {
+        // Further split plain-text segments into URL vs non-URL pieces so
+        // abstract URLs (arXiv, GitHub, etc.) become clickable links.
+        const parts = splitUrls(t.content)
+        return (
+          <span key={i}>
+            {parts.map((p, j) =>
+              p.url ? (
+                <a
+                  key={j}
+                  href={normalizeUrl(p.content)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="abstract-link"
+                >
+                  {p.content}
+                </a>
+              ) : (
+                <span key={j}>{p.content}</span>
+              )
+            )}
+          </span>
+        )
+      }
       return <span key={i} className="math" style={t.display ? { display: 'block', textAlign: 'center', margin: '4px 0' } : undefined}>{t.display ? `$$${t.content}$$` : `$${t.content}$`}</span>
     })
   }

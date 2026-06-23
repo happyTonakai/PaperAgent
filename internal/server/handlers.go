@@ -14,6 +14,7 @@ import (
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/export"
 	"github.com/happyTonakai/paperagent/internal/prompt"
 	"github.com/happyTonakai/paperagent/internal/session"
@@ -39,6 +40,7 @@ type paperResponse struct {
 	Title                string            `json:"title"`
 	SourceURL            string            `json:"source_url"`
 	ArxivID              string            `json:"arxiv_id,omitempty"`
+	GitHubURL            string            `json:"github_url,omitempty"`
 	InitialSummary       string            `json:"initial_summary"`
 	ModelUsed            string            `json:"model_used"`
 	TotalTokens          int               `json:"total_tokens_used,omitempty"`
@@ -136,6 +138,23 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[new-paper] title from HTML: %s", title)
 		} else {
 			log.Printf("[new-paper] HTML title extraction failed for %s: %v", arxivID, err)
+		}
+
+		// Fetch the arXiv abstract page to extract a GitHub repo URL. Done
+		// best-effort (same as FetchArxivTitle): failure does not block paper
+		// creation. The abstract is also cached in chat_paper_abstracts so the
+		// preference-update pipeline can read it (this fills a pre-existing
+		// gap where the cache was never populated for Q&A papers).
+		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil && abstract != "" {
+			if gh := urlparse.ExtractGitHubURL(abstract); gh != "" {
+				paper.GitHubURL = gh
+				log.Printf("[new-paper] github url from abstract: %s", gh)
+			}
+			if err := database.UpsertChatPaperAbstract(arxivID, abstract); err != nil {
+				log.Printf("[new-paper] cache abstract: %v", err)
+			}
+		} else {
+			log.Printf("[new-paper] abstract extraction failed for %s: %v", arxivID, err)
 		}
 	}
 
@@ -1521,6 +1540,7 @@ func paperToResponse(p *session.Paper) paperResponse {
 		Title:                  p.Title,
 		SourceURL:              p.SourceURL,
 		ArxivID:                p.ArxivID,
+		GitHubURL:              p.GitHubURL,
 		InitialSummary:         p.InitialSummary,
 		ModelUsed:              p.ModelUsed,
 		TotalTokens:            p.TotalTokens,

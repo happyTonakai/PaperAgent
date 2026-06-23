@@ -53,6 +53,12 @@ type Paper struct {
 	// References holds the extracted reference section of the paper.
 	// It is NOT sent to the LLM by default; available via get_references tool.
 	References string `json:"references,omitempty"`
+	// GitHubURL is the primary GitHub repo URL extracted from the paper's
+	// abstract (e.g. "https://github.com/owner/repo"). Stored so the WebUI
+	// can show a dedicated "open GitHub" icon next to the PDF button. Empty
+	// when no GitHub URL is found in the abstract; the WebUI hides the
+	// button in that case.
+	GitHubURL string `json:"github_url,omitempty"`
 	ModelUsed      string    `json:"model_used"`
 	TotalTokens    int       `json:"total_tokens_used"`
 	TotalPromptTokens        int       `json:"total_prompt_tokens,omitempty"`
@@ -458,6 +464,7 @@ func SavePaper(p *Paper) error {
 			SourceURL: p.SourceURL,
 			CreatedAt: p.CreatedAt.Format("2006-01-02 15:04"),
 			UpdatedAt: p.UpdatedAt.Format("2006-01-02 15:04"),
+			GitHubURL: p.GitHubURL,
 		}
 		if err := database.UpsertChatPaper(cp); err != nil {
 			log.Printf("[session] sync to chat_papers: %v", err)

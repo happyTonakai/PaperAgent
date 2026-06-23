@@ -673,10 +673,14 @@ func buildCardMarkdown(content string) string {
 
 // RecommendCardItem holds the display data for one article in the daily recommendation card.
 type RecommendCardItem struct {
-	ID         string
-	Title      string  // translated (if available) or original
-	Abstract   string  // translated (if available) or original, full text
-	Score      float64
+	ID       string
+	Title    string // translated (if available) or original
+	Abstract string // translated (if available) or original, full text
+	// PDFURL is the URL the per-article arXiv icon button opens. Derived
+	// from the abs URL at construction time (abs → pdf). Empty for non-arXiv
+	// sources; the card builder hides the button in that case.
+	PDFURL    string
+	Score     float64
 	// Status mirrors articles.status: 0=unread, 1=activated, 2=liked,
 	// -1=disliked, 3=read. The card builder uses it to render buttons in
 	// their post-action state so the user gets visual feedback after a click.
@@ -705,6 +709,44 @@ func renderRecommendButton(emoji, articleID, action string, active bool, activeT
 		"value": val,
 		"width": "default",
 	}
+}
+
+// renderRecommendLinkButton builds the per-article arXiv "open PDF" button.
+// It uses Card 2.0's `behaviors: open_url` (the modern way; the older
+// top-level `url` field is deprecated per Feishu docs) so a click opens
+// the PDF in the system browser on both desktop and mobile without any
+// bot round-trip. The four platform URL fields are all set to the same
+// arXiv URL — Feishu falls back to default_url when a platform-specific
+// one is omitted, but being explicit is clearer.
+func renderRecommendLinkButton(emoji, pdfURL string) map[string]any {
+	return map[string]any{
+		"tag":  "button",
+		"text": plainText(emoji),
+		"type": "default",
+		"behaviors": []map[string]any{
+			{
+				"type":        "open_url",
+				"default_url": pdfURL,
+				"android_url": pdfURL,
+				"ios_url":     pdfURL,
+				"pc_url":      pdfURL,
+			},
+		},
+		"width": "default",
+	}
+}
+
+// arxivAbsToPDF converts `https://arxiv.org/abs/<id>` to
+// `https://arxiv.org/pdf/<id>` (with `.pdf` suffix on the id). Returns
+// the original URL unchanged when it's not an arXiv abs link, so
+// non-arXiv RSS sources (defensive, doesn't happen today) keep their
+// original link target.
+func arxivAbsToPDF(absURL string) string {
+	const prefix = "https://arxiv.org/abs/"
+	if !strings.HasPrefix(absURL, prefix) {
+		return absURL
+	}
+	return "https://arxiv.org/pdf/" + strings.TrimPrefix(absURL, prefix) + ".pdf"
 }
 
 // recommendPageSize is the number of articles per card when the daily
@@ -802,33 +844,51 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 		btnDislike := renderRecommendButton("👎", item.ID, "recommend:dislike", item.Status == -1, "danger")
 		btnActivate := renderRecommendButton("🤖", item.ID, "recommend:activate", item.Status == 1, "primary")
 
-		// Layout: title, then score+votes, then abstract, then 3 horizontal buttons
+		// arXiv link button — opens the PDF in the system browser. Renders
+		// only when we have a PDF URL (we always do for arXiv RSS items; the
+		// guard is defensive in case the pool is ever seeded from non-arXiv
+		// sources).
+		var btnArxiv map[string]any
+		if item.PDFURL != "" {
+			btnArxiv = renderRecommendLinkButton("📑", item.PDFURL)
+		}
+
+		// Layout: title, then score+votes, then abstract, then 4 horizontal buttons
 		// stacked as their own row. Putting the buttons on the same row as the score
 		// forced a wrap on narrow phone screens; giving them their own row keeps
 		// each row single-purpose and easy to scan.
+		columns := []map[string]any{
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnLike},
+			},
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnDislike},
+			},
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnActivate},
+			},
+		}
+		if btnArxiv != nil {
+			columns = append(columns, map[string]any{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnArxiv},
+			})
+		}
 		btnRow := map[string]any{
 			"tag":       "column_set",
 			"flex_mode": "none",
-			"columns": []map[string]any{
-				{
-					"tag":            "column",
-					"width":          "auto",
-					"vertical_align": "center",
-					"elements":       []map[string]any{btnLike},
-				},
-				{
-					"tag":            "column",
-					"width":          "auto",
-					"vertical_align": "center",
-					"elements":       []map[string]any{btnDislike},
-				},
-				{
-					"tag":            "column",
-					"width":          "auto",
-					"vertical_align": "center",
-					"elements":       []map[string]any{btnActivate},
-				},
-			},
+			"columns":   columns,
 		}
 		elements = append(elements, titleEl, scoreEl)
 		if abstractEl != nil {
@@ -876,7 +936,7 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 
 	// Footer
 	elements = append(elements, hrElement())
-	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 总结后直接对话"))
+	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 总结后对话 · 📑 打开 PDF"))
 
 	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)
