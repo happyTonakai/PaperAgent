@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
@@ -468,7 +469,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[chat] question: %s", req.Question)
+	q := req.Question
+	if utf8.RuneCountInString(q) > 20 {
+		q = strings.ToValidUTF8(string([]rune(q)[:20]), "") + "…"
+	}
+	log.Printf("[chat] question: %s", q)
 
 	round := paper.CurrentRound() + 1
 

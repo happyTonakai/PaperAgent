@@ -332,8 +332,10 @@ func (s *Server) Start(addr string) error {
 
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip noisy polling endpoints
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/logs" {
+		// Skip noisy endpoints: health/logs/scheduler-status polling and Vite-bundled static assets.
+		path := r.URL.Path
+		if path == "/api/health" || path == "/api/logs" || path == "/api/recommend/scheduler-status" ||
+			path == "/favicon.ico" || strings.HasPrefix(path, "/assets/") {
 			next.ServeHTTP(w, r)
 			return
 		}
