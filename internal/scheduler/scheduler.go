@@ -1,9 +1,10 @@
 // Package scheduler manages background tasks for the recommendation system.
-// Currently runs daily arXiv RSS fetch + recommendation generation at a
-// configurable time (ScheduledTime, HH:MM format).
+// Runs arXiv RSS fetch 3 times a day (scheduled_time -1h, +7h, +15h) and
+// daily recommendation generation + push at the configured scheduled_time.
 package scheduler
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -21,13 +22,14 @@ type AfterRecommendFunc func(articles []database.Article, force bool)
 
 // SchedulerStatus exposes current scheduler state for the UI.
 type SchedulerStatus struct {
-	IsRunning    bool   `json:"is_running"`
-	LastRun      string `json:"last_run"`    // "2006-01-02 15:04" or empty
-	LastError    string `json:"last_error"`  // last error message or empty
-	NextRun      string `json:"next_run"`    // estimated "2006-01-02 15:04" or empty
-	Scheduled    string `json:"scheduled"`   // configured time "HH:MM"
-	DailyCount   int    `json:"daily_count"` // how many papers the last run recommended
-	PushToFeishu bool   `json:"push_to_feishu"`
+	IsRunning      bool   `json:"is_running"`
+	LastRun        string `json:"last_run"`         // "2006-01-02 15:04" or empty
+	LastError      string `json:"last_error"`       // last pipeline error message or empty
+	LastFetchError string `json:"last_fetch_error"` // last RSS fetch error message or empty
+	NextRun        string `json:"next_run"`         // estimated "2006-01-02 15:04" or empty
+	Scheduled      string `json:"scheduled"`        // configured time "HH:MM"
+	DailyCount     int    `json:"daily_count"`      // how many papers the last run recommended
+	PushToFeishu   bool   `json:"push_to_feishu"`
 	// PendingPushCount is the size of the push backlog (articles with
 	// pushed_at IS NULL AND recommend_date IS NOT NULL). Populated by the
 	// server, not the scheduler itself. When this is non-zero and today
@@ -36,39 +38,52 @@ type SchedulerStatus struct {
 	// LastPushAt is the timestamp of the most recent successful push, or
 	// empty if nothing has been pushed yet. Populated by the server.
 	LastPushAt string `json:"last_push_at"`
+	// RSSTimes lists the 3 configured RSS fetch times derived from
+	// scheduled_time (-1h, +7h, +15h).
+	RSSTimes []string `json:"rss_times"`
+	// LastFetchAt is the timestamp of the most recent successful RSS fetch.
+	LastFetchAt string `json:"last_fetch_at"`
 }
+
+// rssOffsets are the hour offsets from scheduledTime for RSS fetches.
+var rssOffsets = []int{-1, 7, 15}
 
 // Scheduler manages periodic background tasks.
 type Scheduler struct {
-	mu            sync.Mutex
-	categories    []string
-	scoring       *recommend.ScoringClient
-	dailyPapers   int
-	batchSize     int
+	mu             sync.Mutex
+	categories     []string
+	scoring        *recommend.ScoringClient
+	dailyPapers    int
+	batchSize      int
 	diversityRatio float64
-	scheduledTime string // "HH:MM"
-	stopCh        chan struct{}
-	lastRunStr    string // "2006-01-02 15:04" or empty
-	lastRunDate   string // YYYY-MM-DD, to avoid running twice on same day
-	lastError     string
-	isRunning     bool
-	dailyCount    int
-	onComplete    AfterRecommendFunc
+	scheduledTime  string // "HH:MM"
+	stopCh         chan struct{}
+	lastRunStr     string // "2006-01-02 15:04" or empty
+	lastRunDate    string // YYYY-MM-DD, to avoid running twice on same day
+	lastError      string
+	lastFetchError string
+	isRunning      bool
+	dailyCount     int
+	onComplete     AfterRecommendFunc
+	lastFetchDate  string // YYYY-MM-DD of last RSS fetch
+	lastFetchHour  int    // hour of last RSS fetch, -1 = none
+	lastFetchAt    string // "2006-01-02 15:04" or empty
 }
 
 // New creates a Scheduler.
 func New(categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string) *Scheduler {
 	return &Scheduler{
-		categories:    categories,
+		categories: categories,
 		scoring: &recommend.ScoringClient{
 			Client: scoringClient,
 			Model:  scoringModel,
 		},
-		dailyPapers:   dailyPapers,
-		batchSize:     batchSize,
+		dailyPapers:    dailyPapers,
+		batchSize:      batchSize,
 		diversityRatio: diversityRatio,
-		scheduledTime: scheduledTime,
-		stopCh:        make(chan struct{}),
+		scheduledTime:  scheduledTime,
+		stopCh:         make(chan struct{}),
+		lastFetchHour:  -1,
 	}
 }
 
@@ -90,17 +105,21 @@ func (s *Scheduler) UpdateConfig(scheduledTime string, dailyPapers, batchSize in
 }
 
 // Start begins the scheduler loop in a background goroutine.
-// Checks every minute if it should run the daily pipeline at the scheduled time.
+// Checks every minute for both RSS fetch and daily pipeline triggers.
 func (s *Scheduler) Start() {
-	go func() {
-		log.Printf("[scheduler] started, scheduled time: %s", s.scheduledTime)
+	rssTimes := s.rssFetchTimes()
+	log.Printf("[scheduler] started, scheduled time: %s, RSS fetch times: %v", s.scheduledTime, rssTimes)
 
+	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ticker.C:
+				if ok, hour := s.shouldFetchRSS(); ok {
+					s.runRSSFetch(hour)
+				}
 				if s.shouldRun() {
 					s.runOnce(false)
 				}
@@ -134,13 +153,18 @@ func (s *Scheduler) Status() SchedulerStatus {
 		}
 	}
 
+	rssTimes := s.rssFetchTimesLocked()
+
 	return SchedulerStatus{
-		IsRunning:  s.isRunning,
-		LastRun:    s.lastRunStr,
-		LastError:  s.lastError,
-		NextRun:    nextRun,
-		Scheduled:  s.scheduledTime,
-		DailyCount: s.dailyCount,
+		IsRunning:      s.isRunning,
+		LastRun:        s.lastRunStr,
+		LastError:      s.lastError,
+		LastFetchError: s.lastFetchError,
+		NextRun:        nextRun,
+		Scheduled:      s.scheduledTime,
+		DailyCount:     s.dailyCount,
+		RSSTimes:       rssTimes,
+		LastFetchAt:    s.lastFetchAt,
 	}
 }
 
@@ -150,6 +174,101 @@ func (s *Scheduler) Status() SchedulerStatus {
 // by the Feishu /push command path.
 func (s *Scheduler) ManualTrigger() {
 	s.runOnce(true)
+}
+
+// rssFetchTimes returns the 3 RSS fetch times (HH:MM strings) derived from
+// scheduledTime. Caller must hold s.mu or call rssFetchTimesLocked.
+func (s *Scheduler) rssFetchTimes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rssFetchTimesLocked()
+}
+
+func (s *Scheduler) rssFetchTimesLocked() []string {
+	h, m, ok := parseTimeOfDay(s.scheduledTime)
+	if !ok {
+		return nil
+	}
+	times := make([]string, len(rssOffsets))
+	for i, offset := range rssOffsets {
+		fh := (h + offset + 24) % 24
+		times[i] = fmt.Sprintf("%02d:%02d", fh, m)
+	}
+	return times
+}
+
+// shouldFetchRSS checks if the current time matches any of the 3 RSS fetch
+// windows and the fetch hasn't already run in this window.
+func (s *Scheduler) shouldFetchRSS() (bool, int) {
+	return s.shouldFetchRSSAt(time.Now())
+}
+
+// shouldFetchRSSAt is the testable core of shouldFetchRSS, accepting an
+// explicit "now" time.
+func (s *Scheduler) shouldFetchRSSAt(now time.Time) (bool, int) {
+	s.mu.Lock()
+	scheduled := s.scheduledTime
+	lastDate := s.lastFetchDate
+	lastHour := s.lastFetchHour
+	s.mu.Unlock()
+
+	if scheduled == "" {
+		return false, -1
+	}
+
+	h, m, ok := parseTimeOfDay(scheduled)
+	if !ok {
+		return false, -1
+	}
+
+	if now.Minute() != m {
+		return false, -1
+	}
+
+	today := now.Format("2006-01-02")
+	for _, offset := range rssOffsets {
+		targetHour := (h + offset + 24) % 24
+		if now.Hour() == targetHour {
+			// Skip if already fetched in this hour today
+			if today == lastDate && targetHour == lastHour {
+				return false, -1
+			}
+			return true, targetHour
+		}
+	}
+	return false, -1
+}
+
+// runRSSFetch performs a standalone RSS fetch and stores results in the database.
+func (s *Scheduler) runRSSFetch(hour int) {
+	s.mu.Lock()
+	if s.isRunning {
+		s.mu.Unlock()
+		log.Printf("[scheduler] pipeline running, deferring RSS fetch (hour=%02d, will retry at next window)", hour)
+		return
+	}
+	categories := s.categories
+	s.mu.Unlock()
+
+	log.Printf("[scheduler] starting RSS fetch (hour=%02d)", hour)
+
+	inserted, err := recommend.FetchAndStoreRSS(categories)
+
+	s.mu.Lock()
+	if err != nil {
+		s.lastFetchError = err.Error()
+		s.mu.Unlock()
+		log.Printf("[scheduler] RSS fetch error: %v", err)
+		return
+	}
+
+	s.lastFetchDate = time.Now().Format("2006-01-02")
+	s.lastFetchHour = hour
+	s.lastFetchAt = time.Now().Format("2006-01-02 15:04")
+	s.lastFetchError = ""
+	s.mu.Unlock()
+
+	log.Printf("[scheduler] RSS fetch done: %d new articles", inserted)
 }
 
 // shouldRun checks if the current time matches the scheduled time

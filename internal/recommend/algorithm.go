@@ -107,6 +107,44 @@ func GenerateDailyRecommendations(scoring *ScoringClient, dailyPapers, batchSize
 	return recs, nil
 }
 
+// FetchAndStoreRSS fetches articles from arXiv RSS, filters by excluded
+// keywords, and saves to the database. Returns the number of newly inserted
+// articles. This is a standalone entry point for the scheduler's periodic RSS
+// fetch jobs (separate from the daily recommendation pipeline).
+func FetchAndStoreRSS(categories []string) (int, error) {
+	if len(categories) == 0 {
+		return 0, nil
+	}
+
+	prefs, err := ReadPreferences()
+	if err != nil {
+		log.Printf("[recommend] read preferences for keyword filter: %v (continuing without exclusions)", err)
+	}
+
+	articles, err := FetchArxivRSS(categories, 100)
+	if err != nil {
+		return 0, fmt.Errorf("fetch RSS: %w", err)
+	}
+	if len(articles) > 0 {
+		excluded := ParseExcludedKeywords(prefs)
+		before := len(articles)
+		articles = FilterArticlesByKeywords(articles, excluded)
+		if dropped := before - len(articles); dropped > 0 {
+			log.Printf("[recommend] filtered out %d RSS articles by excluded keywords (%d kept)", dropped, len(articles))
+		}
+	}
+	if len(articles) > 0 {
+		inserted, err := database.SaveArticles(articles)
+		if err != nil {
+			return 0, fmt.Errorf("save articles: %w", err)
+		}
+		log.Printf("[recommend] fetched %d new articles from RSS", inserted)
+		return inserted, nil
+	}
+	log.Println("[recommend] no new articles from RSS")
+	return 0, nil
+}
+
 // FetchAndRecommend runs preference update → RSS fetch → generate daily recommendations.
 // This is the main entry point called by the scheduler or manual trigger.
 func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers, batchSize int, diversityRatio float64) ([]database.Article, error) {
@@ -136,39 +174,8 @@ func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers,
 	}
 
 	// Step 1: Fetch RSS
-	if len(categories) > 0 {
-		// Re-read preferences in case Step 0 wrote a new file (the
-		// in-memory `prefs` from above is still the old version). The
-		// "## 排除关键词" section may have been updated by the LLM.
-		freshPrefs, _ := ReadPreferences()
-		if freshPrefs == "" {
-			freshPrefs = prefs
-		}
-
-		articles, err := FetchArxivRSS(categories, 100)
-		if err != nil {
-			return nil, fmt.Errorf("fetch RSS: %w", err)
-		}
-		if len(articles) > 0 {
-			// Drop RSS articles that match the user's "excluded keywords"
-			// (parsed from the up-to-date preferences). The skipped ones
-			// never reach the database, scoring, or recommendation pool.
-			excluded := ParseExcludedKeywords(freshPrefs)
-			before := len(articles)
-			articles = FilterArticlesByKeywords(articles, excluded)
-			if dropped := before - len(articles); dropped > 0 {
-				log.Printf("[recommend] filtered out %d RSS articles by excluded keywords (%d kept)", dropped, len(articles))
-			}
-		}
-		if len(articles) > 0 {
-			inserted, err := database.SaveArticles(articles)
-			if err != nil {
-				return nil, fmt.Errorf("save articles: %w", err)
-			}
-			log.Printf("[recommend] fetched %d new articles from RSS", inserted)
-		} else {
-			log.Println("[recommend] no new articles from RSS")
-		}
+	if _, err := FetchAndStoreRSS(categories); err != nil {
+		return nil, err
 	}
 
 	// Step 2: Generate daily recommendations
