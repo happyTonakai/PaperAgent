@@ -456,7 +456,7 @@ func MarkDailyRecommendations(date string, count int, diversityRatio float64) (i
 		// tiebreaker for all-zero scores — newest unread first.
 		rows, err := tx.Query(
 			`SELECT id FROM articles
-			 WHERE status = 0 AND score >= 0
+			 WHERE status = 0 AND score >= 0 AND recommend_date IS NULL
 			 ORDER BY score DESC, created_at DESC LIMIT ?`,
 			scoreCount,
 		)
@@ -738,6 +738,53 @@ func GetArticleByID(id string) (*Article, error) {
 		return nil, err
 	}
 	return &a, nil
+}
+
+// GetArticlesByIDs returns articles matching the given IDs, preserving the
+// input order. Missing IDs are silently skipped (the caller can compare
+// lengths to detect this).
+func GetArticlesByIDs(ids []string) ([]Article, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	db, err := GetDB()
+	if err != nil {
+		return nil, err
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT ` + articleCols + ` FROM articles WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	// Index by ID so we can return in input order.
+	byID := make(map[string]Article, len(ids))
+	for rows.Next() {
+		a, err := scanArticle(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[a.ID] = a
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	articles := make([]Article, 0, len(ids))
+	for _, id := range ids {
+		if a, ok := byID[id]; ok {
+			articles = append(articles, a)
+		}
+	}
+	return articles, nil
 }
 
 // ArticleExists checks if an article with the given ID already exists.

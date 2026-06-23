@@ -1356,31 +1356,36 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) err
 	log.Printf("[feishu] PushDailyRecommend: sending %d articles to chat %s", len(articles), chatID)
 
 	// Prefer the freshest data from the DB (translations + statuses). Fall
-	// back to the input articles if the DB query fails or the date changed.
-	items, err := b.loadRecommendItemsForToday()
-	if err != nil || len(items) == 0 {
-		items = make([]RecommendCardItem, 0, len(articles))
-		for _, a := range articles {
-			title := a.Title
-			abstract := ""
-			if a.Abstract != nil {
-				abstract = *a.Abstract
-			}
-			if a.TranslatedTitle != nil && *a.TranslatedTitle != "" {
-				title = *a.TranslatedTitle
-			}
-			if a.TranslatedAbstract != nil && *a.TranslatedAbstract != "" {
-				abstract = *a.TranslatedAbstract
-			}
-			items = append(items, RecommendCardItem{
-				ID:         a.ID,
-				Title:      title,
-				Abstract:   abstract,
-				Score:      a.Score,
-				Status:     a.Status,
-				AXNetVotes: a.AXNetVotes,
-			})
+	// back to the input articles if the DB query fails.
+	ids := make([]string, len(articles))
+	for i, a := range articles {
+		ids[i] = a.ID
+	}
+	dbArticles, err := database.GetArticlesByIDs(ids)
+	if err != nil || len(dbArticles) == 0 {
+		dbArticles = articles
+	}
+	items := make([]RecommendCardItem, 0, len(dbArticles))
+	for _, a := range dbArticles {
+		title := a.Title
+		abstract := ""
+		if a.Abstract != nil {
+			abstract = *a.Abstract
 		}
+		if a.TranslatedTitle != nil && *a.TranslatedTitle != "" {
+			title = *a.TranslatedTitle
+		}
+		if a.TranslatedAbstract != nil && *a.TranslatedAbstract != "" {
+			abstract = *a.TranslatedAbstract
+		}
+		items = append(items, RecommendCardItem{
+			ID:         a.ID,
+			Title:      title,
+			Abstract:   abstract,
+			Score:      a.Score,
+			Status:     a.Status,
+			AXNetVotes: a.AXNetVotes,
+		})
 	}
 
 	// Split into pages so each card stays under Feishu's JSON/element limits
