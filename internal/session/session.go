@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/urlparse"
@@ -36,6 +37,16 @@ type Message struct {
 	CachedTokens     int       `json:"cached_tokens,omitempty"`
 	SkipContext      bool      `json:"skip_context,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+	// ToolCalls is set on assistant messages that triggered a tool call.
+	// When non-empty, the assistant message has no Content — the tool
+	// call IS the round's "content". Persisted so that subsequent rounds
+	// can replay the tool-call sequence (which prevents re-invoking
+	// expensive tools and preserves the LLM's chain of reasoning).
+	ToolCalls []api.ToolCallCompleted `json:"tool_calls,omitempty"`
+	// ToolCallID is set on tool result messages (Role == "tool") and
+	// references the ID of the tool call being answered. Required by the
+	// OpenAI chat-completions API to associate the result with its call.
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 type Paper struct {
