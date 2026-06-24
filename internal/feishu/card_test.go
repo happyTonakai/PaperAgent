@@ -960,13 +960,14 @@ func TestFindRecommendPage(t *testing.T) {
 		id   string
 		want int
 	}{
-		{"2401.00001", 1}, // first
-		{"2401.00010", 1}, // last on page 1 (pageSize=10)
-		{"2401.00011", 2}, // first on page 2
-		{"2401.00020", 2}, // last on page 2
-		{"2401.00021", 3}, // first on page 3
-		{"2401.00025", 3}, // last on page 3
-		{"2401.99999", 1}, // not in list → fallback to page 1
+		{"2401.00001", 1},  // first
+		{"2401.00008", 1},  // last on page 1 (pageSize=8)
+		{"2401.00009", 2},  // first on page 2
+		{"2401.00016", 2},  // last on page 2
+		{"2401.00017", 3},  // first on page 3
+		{"2401.00024", 3},  // last on page 3
+		{"2401.00025", 4},  // item 25 → page 4
+		{"2401.99999", 1},  // not in list → fallback to page 1
 	}
 	for _, tt := range tests {
 		if got := findRecommendPage(items, tt.id); got != tt.want {

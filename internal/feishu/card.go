@@ -180,6 +180,43 @@ func countMdTables(s string) int {
 	return count
 }
 
+// stripMdTables removes every markdown-table line from s and replaces
+// each contiguous table block with a single "(table omitted)" placeholder,
+// so callers can stay under Feishu's 5-table hard limit without losing
+// the surrounding prose. Used as a fallback by buildDailyRecommendCard
+// when an abstract contains a table but is short enough that the normal
+// rune-truncation fallback would not help.
+func stripMdTables(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	inTable := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isTable := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+		if isTable {
+			if !inTable {
+				out = append(out, "_(table omitted)_")
+				inTable = true
+			}
+			continue
+		}
+		inTable = false
+		out = append(out, line)
+	}
+	// Collapse runs of blank lines created by the removal.
+	collapsed := make([]string, 0, len(out))
+	prevBlank := false
+	for _, line := range out {
+		blank := strings.TrimSpace(line) == ""
+		if blank && prevBlank {
+			continue
+		}
+		collapsed = append(collapsed, line)
+		prevBlank = blank
+	}
+	return strings.TrimSpace(strings.Join(collapsed, "\n"))
+}
+
 // cardFits checks whether markdown content fits in a Feishu card, considering
 // the JSON byte size limit, the 200-element limit, and the table count limit (5).
 func cardFits(content string, builder func(content string) string) bool {
@@ -752,7 +789,11 @@ func arxivAbsToPDF(absURL string) string {
 // recommendPageSize is the number of articles per card when the daily
 // recommendation is split into multiple cards. Keeps each card well under
 // Feishu's ~30KB JSON / 200-element limits while showing full abstracts.
-const recommendPageSize = 10
+//
+// At 8 articles the tree-element count (divs, columns, buttons, texts,
+// hrs, footer) stays at ~166 which leaves ~34 headroom for any
+// table-expanded elements or longer abstracts.
+const recommendPageSize = 8
 
 // ─── Daily Recommendation Card ───
 
@@ -763,25 +804,88 @@ const recommendAbstractFallbackLen = 500
 
 // buildDailyRecommendCard renders one page of the daily recommendation.
 // page is 1-indexed; totalPages is the number of cards that will be sent.
-// If the full-abstract card would exceed maxCardJSONBytes, abstracts are
-// truncated to recommendAbstractFallbackLen runes and a warning is logged.
+// If the full-abstract card would exceed ANY of Feishu's hard limits
+// (~30KB JSON, 200 elements, 5 markdown tables), abstracts are first
+// stripped of any markdown tables (replaced with "_(table omitted)_")
+// and then truncated to recommendAbstractFallbackLen runes. A warning
+// is logged. Without the table-count check, a single LaTeX tabular
+// rendered as a markdown table in the abstract of >5 articles makes
+// Feishu reject the card with error 11310 (card table number over limit).
 func buildDailyRecommendCard(items []RecommendCardItem, page, totalPages int) string {
 	cardJSON := buildDailyRecommendCardRaw(items, page, totalPages)
-	if len(cardJSON) <= maxCardJSONBytes {
+	if dailyCardFitsAllLimits(items, cardJSON) {
 		return cardJSON
 	}
 
-	// Fallback: truncate abstracts so the card fits.
-	log.Printf("[feishu] daily card %d/%d JSON %dB > %dB, truncating abstracts to %d runes",
-		page, totalPages, len(cardJSON), maxCardJSONBytes, recommendAbstractFallbackLen)
+	// Fallback: strip tables and truncate abstracts so the card fits.
+	log.Printf("[feishu] daily card %d/%d exceeds limit (json=%dB tables=%d elems≈%d), stripping tables + truncating abstracts to %d runes",
+		page, totalPages, len(cardJSON),
+		countCardMdTables(items), estimateCardElements(items),
+		recommendAbstractFallbackLen)
 	truncated := make([]RecommendCardItem, len(items))
 	copy(truncated, items)
 	for i := range truncated {
+		if countMdTables(truncated[i].Abstract) > 0 {
+			truncated[i].Abstract = stripMdTables(truncated[i].Abstract)
+		}
 		if runes := []rune(truncated[i].Abstract); len(runes) > recommendAbstractFallbackLen {
 			truncated[i].Abstract = string(runes[:recommendAbstractFallbackLen]) + "..."
 		}
 	}
 	return buildDailyRecommendCardRaw(truncated, page, totalPages)
+}
+
+// dailyCardFitsAllLimits returns true when the rendered card respects all
+// three Feishu hard limits: JSON byte size, 200-element count, and 5-table
+// count. See buildDailyRecommendCard for why we must check all three.
+func dailyCardFitsAllLimits(items []RecommendCardItem, cardJSON string) bool {
+	if len(cardJSON) > maxCardJSONBytes {
+		return false
+	}
+	if countCardMdTables(items) > maxCardMdTables {
+		return false
+	}
+	if estimateCardElements(items) > maxCardElements {
+		return false
+	}
+	return true
+}
+
+// countCardMdTables sums the markdown table count across every abstract in
+// the card. Feishu caps a single card at 5 tables total (error 11310).
+func countCardMdTables(items []RecommendCardItem) int {
+	n := 0
+	for _, it := range items {
+		n += countMdTables(it.Abstract)
+	}
+	return n
+}
+
+// estimateCardElements counts the number of tree-level elements (nodes
+// with a "tag" field) that Feishu will see in a daily-recommend card.
+// Every div, lark_md text, column_set, column, button, plain_text,
+// hr, and the header title all count toward the 200-element hard limit.
+// Per article with all 4 buttons: 3 divs + 3 lark_md texts + 1 column_set
+// + 4 columns + 4 buttons + 4 plain_texts = 19 tree elements. With 3
+// buttons (no PDFURL) it's 16. Between articles we add 1 hr.
+func estimateCardElements(items []RecommendCardItem) int {
+	perArticle := 19 // 3 divs + 3 lark_md + 1 column_set + 4 cols + 4 btns + 4 plain_texts
+	// Defensive: if anyone adjusts the button count later, don't crash.
+	if len(items) > 0 && items[0].PDFURL == "" {
+		perArticle = 16 // 3 divs + 3 lark_md + 1 column_set + 3 cols + 3 btns + 3 plain_texts
+	}
+	n := len(items) * perArticle
+	if n > 0 {
+		n += len(items) - 1 // hr between items
+	}
+	n += 1 // card header title (plain_text)
+	n += 1 // hr before mark-read button
+	n += 1 // mark-read button
+	n += 1 // mark-read button text (plain_text)
+	n += 1 // hr after mark-read
+	n += 1 // footer note (div)
+	n += 1 // footer note text (plain_text)
+	return n
 }
 
 // buildDailyRecommendCardRaw is the inner builder that actually constructs

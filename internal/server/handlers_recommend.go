@@ -535,6 +535,12 @@ func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Requ
 
 	n, err := s.RunPush(true)
 	if err != nil {
+		// RunPush already logs the inner failure (push/feishu layer),
+		// but the handler-level breadcrumb (which endpoint, which user
+		// action) is what an operator scanning the Web UI log panel
+		// needs to identify the request. Log it here so the failure
+		// is grep-able from the buffer as well as visible in the 500 body.
+		log.Printf("[recommend] push-to-feishu: failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

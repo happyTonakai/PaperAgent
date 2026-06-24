@@ -513,6 +513,16 @@ func (b *Bot) sendInteractiveCard(chatID, cardJSON string) (string, error) {
 			return fmt.Errorf("send card: %w", e)
 		}
 		if !resp.Success() {
+			// Log the full Feishu error here too, not just return it:
+			// doFeishuCall only logs on retry/recovery, not on the final
+			// failure, so without this the cause of a push failure would
+			// only surface in the HTTP 500 body the caller sees — invisible
+			// to the in-memory log buffer that the Web UI's log panel
+			// reads. resp.Msg often embeds the ext=ErrCode/ErrMsg detail
+			// (e.g. "Failed to create card content, ext=ErrCode: 11310;
+			// ErrMsg: element exceeds the limit") so logging it is
+			// enough to root-cause the failure.
+			log.Printf("[feishu] send card: FAIL code=%d msg=%s", resp.Code, resp.Msg)
 			return fmt.Errorf("send card: code=%d msg=%s", resp.Code, resp.Msg)
 		}
 		if resp.Data != nil && resp.Data.MessageId != nil {
@@ -1400,6 +1410,12 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) err
 		}
 		cardJSON := buildDailyRecommendCard(items[start:end], page, totalPages)
 		if _, err := b.sendInteractiveCard(chatID, cardJSON); err != nil {
+			// Log with page context so the in-memory log buffer (the
+			// Web UI's log panel) shows WHICH page of how many failed
+			// and the size it was. sendInteractiveCard already logs the
+			// Feishu code/msg; this adds the page-level breadcrumb.
+			log.Printf("[feishu] PushDailyRecommend: page %d/%d send failed (card=%dB, articles=%d): %v",
+				page, totalPages, len(cardJSON), end-start, err)
 			return fmt.Errorf("send daily recommend card %d/%d: %w", page, totalPages, err)
 		}
 		log.Printf("[feishu] sent daily recommend card %d/%d (%d articles) to chat %s",
