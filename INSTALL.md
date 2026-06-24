@@ -149,7 +149,7 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 > - 想订阅的 arXiv 分类（如 `cs.AI, cs.CL`）
 > - 推荐时间（默认 `08:00`）
 > - 每天推荐数量（默认 20）
-> - 是否单独配置评分 API / 翻译 API（默认都复用 Q&A 的 API）
+> 
 
 **记录状态**：选启用 → 把 `"recommend"` 加入 `ENABLED_MODULES`；选跳过 → 不加入。
 
@@ -161,10 +161,9 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 | 推荐时间 | `HH:MM` | `08:00` |
 | 每天推荐数量 | 整数 | `20` |
 | 探索比例 `diversity_ratio` | 0-1 | `0.3` |
-| 评分 API | 留空则复用 Q&A | 复用 |
-| 翻译 API | 留空则不翻译（不配置则跳过翻译）。勾选复用主 API 时后端从主 API 复制（base_url / model 复制，api_key 用 ${VAR} 引用形式保留 env-var 间接） | 不配 = 不翻译 |
+| 翻译推荐论文 | 是否用主 API 翻译标题/摘要（推荐 tab 里的复选框） | 不勾选 = 不翻译 |
 
-**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_SCORING_*` / `$REC_TRANS_*`（后两组仅在用户填了才用）。
+**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_TRANSLATE`。
 
 ---
 
@@ -248,23 +247,8 @@ recommend:
   diversity_ratio: 0.3
   scheduled_time: "08:00"
   push_to_feishu: <true|false>   # 如果 feishu 也启用则 true
+  enable_translation: <true|false>  # 是否翻译推荐论文标题/摘要
 ```
-
-**评分 / 翻译 API 子段**（仅当用户单独配了）：
-
-```yaml
-api:
-  scoring:                            # 仅当用户单独配了才写入
-    base_url: "<...>"
-    api_key: "<...>"
-    model: "<...>"
-  translation:                        # 仅当用户单独配了才写入
-    base_url: "<...>"
-    api_key: "<...>"
-    model: "<...>"
-```
-
-注意 YAML 缩进合并：基础 `api:` 段和 `api.scoring:` / `api.translation:` 子段需要合到同一个 `api:` 块下。
 
 **飞书段**（仅当 `feishu` ∈ `ENABLED_MODULES`）：
 
@@ -350,7 +334,7 @@ curl -sf -X POST http://localhost:8686/api/recommend/trigger | head -c 300
 | 现象 | 排查 |
 |---|---|
 | `RSS fetch failed` | 网络问题 → 提示用户检查防火墙 |
-| `scoring API error` | scoring 配置错 → 修 §5.2 |
+
 | `no categories configured` | `arxiv_categories` 为空 → 修 §5.2 |
 
 ### 7.3 飞书验证（仅当启用）

@@ -5,11 +5,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/api"
-	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/recommend"
 	"github.com/happyTonakai/paperagent/internal/scheduler"
@@ -25,43 +23,27 @@ func resolveAPIKeyInput(v string) string {
 	return v
 }
 
-// --- Scoring client helper ---
-
-// buildScoringClient creates an API client from the current scoring config.
-func buildScoringClient(cfg *config.Config) *api.Client {
-	ep := cfg.API.Scoring
-	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
-		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
-	}
-	return api.NewClientFromEndpoint(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.DefaultModel)
-}
-
-// buildTranslationClient creates an API client from the current translation config.
-// Returns nil when no dedicated translation config is set — translation is then
-// skipped (translateAndPersistArticles no-ops on a nil client), so users who
-// don't need translation can opt out entirely.
-func buildTranslationClient(cfg *config.Config) *api.Client {
-	ep := cfg.API.Translation
-	if ep != nil && ep.BaseURL != "" && ep.APIKey != "" {
-		return api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model)
-	}
-	return nil
-}
+// --- Scoring and translation always reuse the main API ---
 
 func (s *Server) scoringClient() *api.Client {
-	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-	return s.scoringAPI
+	return s.api
 }
 
 func (s *Server) scoringModel() string {
 	s.cfg.RLock()
 	defer s.cfg.RUnlock()
-
-	if s.cfg.API.Scoring != nil && s.cfg.API.Scoring.Model != "" {
-		return s.cfg.API.Scoring.Model
-	}
 	return s.cfg.API.DefaultModel
+}
+
+// translationClient returns the main API client when translation is enabled,
+// or nil when the user has not opted in.
+func (s *Server) translationClient() *api.Client {
+	s.cfg.RLock()
+	defer s.cfg.RUnlock()
+	if s.cfg.Recommend.EnableTranslation {
+		return s.api
+	}
+	return nil
 }
 
 // --- Config ---
@@ -69,6 +51,7 @@ func (s *Server) scoringModel() string {
 func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
 	defer s.cfg.RUnlock()
+
 	resp := map[string]interface{}{
 		"recommend": map[string]interface{}{
 			"daily_papers":        s.cfg.Recommend.DailyPapers,
@@ -76,12 +59,9 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 			"diversity_ratio":     s.cfg.Recommend.DiversityRatio,
 			"scheduled_time":      s.cfg.Recommend.ScheduledTime,
 			"push_to_feishu":      s.cfg.Recommend.PushToFeishu,
+			"enable_translation":  s.cfg.Recommend.EnableTranslation,
 		},
 		"arxiv_categories": s.cfg.ArxivCategories,
-		"api": map[string]interface{}{
-			"scoring":     apiEndpointToMap(s.cfg.API.Scoring),
-			"translation": apiEndpointToMap(s.cfg.API.Translation),
-		},
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -111,6 +91,9 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		if v, ok := rc["push_to_feishu"].(bool); ok {
 			s.cfg.Recommend.PushToFeishu = v
 		}
+		if v, ok := rc["enable_translation"].(bool); ok {
+			s.cfg.Recommend.EnableTranslation = v
+		}
 	}
 
 	if cats, ok := updates["arxiv_categories"].([]interface{}); ok {
@@ -122,83 +105,6 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		}
 		s.cfg.ArxivCategories = strCats
 	}
-
-	if apiCfg, ok := updates["api"].(map[string]interface{}); ok {
-		if sc, ok := apiCfg["scoring"].(map[string]interface{}); ok {
-			if s.cfg.API.Scoring == nil {
-				s.cfg.API.Scoring = &config.APIEndpoint{}
-			}
-			if v, ok := sc["base_url"].(string); ok && v != "" {
-				s.cfg.API.Scoring.BaseURL = v
-			}
-			if v, ok := sc["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
-				s.cfg.API.Scoring.APIKey = resolveAPIKeyInput(v)
-				// Mirror the on-disk form for Save() — without this the
-				// stale RawOnDiskScoringAPIKey (e.g. "${OPENAI_API_KEY}")
-				// would cause the next Save() to write the old reference
-				// back and silently drop the user's newly entered key.
-				// resolveAPIKeyInput also wraps a bare env-var name like
-				// "OPENAI_API_KEY" into "${OPENAI_API_KEY}" so Save()
-				// preserves the env-var indirection instead of encrypting
-				// the literal.
-				s.cfg.RawOnDiskScoringAPIKey = resolveAPIKeyInput(v)
-			}
-			if v, ok := sc["model"].(string); ok && v != "" {
-				s.cfg.API.Scoring.Model = v
-			}
-		}
-		if t, exists := apiCfg["translation"]; exists {
-			if t == nil {
-				// Explicit null: disable translation
-				s.cfg.API.Translation = nil
-			} else if tc, ok := t.(map[string]interface{}); ok {
-				if s.cfg.API.Translation == nil {
-					s.cfg.API.Translation = &config.APIEndpoint{}
-				}
-				// Empty string for a field = "reuse main API" (sent by the
-				// Web UI's "复用主 API 配置" checkbox). We copy from the
-				// main API; for api_key we use the resolved plaintext in
-				// memory (s.cfg.API.APIKey) so the runtime client can
-				// authenticate, and we also record the on-disk reference
-				// form (RawOnDiskAPIKey) into RawOnDiskTranslationAPIKey
-				// so Save() preserves the ${VAR} env-var indirection on
-				// the next write instead of encrypting the resolved key.
-				// This branch ALWAYS overwrites — without the unconditional
-				// else, switching from a dedicated endpoint to "reuse main"
-				// would be a silent no-op.
-				if v, ok := tc["base_url"].(string); ok {
-					if v != "" {
-						s.cfg.API.Translation.BaseURL = v
-					} else {
-						s.cfg.API.Translation.BaseURL = s.cfg.API.BaseURL
-					}
-				}
-				if v, ok := tc["api_key"].(string); ok {
-					if v != "" && !strings.Contains(v, "••••") {
-						s.cfg.API.Translation.APIKey = resolveAPIKeyInput(v)
-						// Mirror the wrapped form so Save() preserves the
-						// ${VAR} env-var reference (or ciphertext pass-through)
-						// on disk instead of encrypting whatever the user
-						// typed verbatim — same pattern as scoring above.
-						s.cfg.RawOnDiskTranslationAPIKey = resolveAPIKeyInput(v)
-					} else {
-						s.cfg.API.Translation.APIKey = s.cfg.API.APIKey
-						s.cfg.RawOnDiskTranslationAPIKey = s.cfg.RawOnDiskAPIKey
-					}
-				}
-				if v, ok := tc["model"].(string); ok {
-					if v != "" {
-						s.cfg.API.Translation.Model = v
-					} else {
-						s.cfg.API.Translation.Model = s.cfg.API.DefaultModel
-					}
-				}
-			}
-		}
-	}
-	// Refresh cached API clients (while still holding the lock for consistency)
-	s.scoringAPI = buildScoringClient(s.cfg)
-	s.translationAPI = buildTranslationClient(s.cfg)
 
 	s.cfg.Unlock()
 
@@ -622,28 +528,17 @@ func (s *Server) handleRecommendStats(w http.ResponseWriter, r *http.Request) {
 
 // ─── Translation helpers ───
 
-func (s *Server) translationClient() *api.Client {
-	s.cfg.RLock()
-	defer s.cfg.RUnlock()
-	return s.translationAPI
-}
-
 // translateAndPersistArticles translates articles' titles and abstracts (if translation
 // API is configured) and persists the translations to the SQLite database.
 // Called once after each daily recommendation run.
 func (s *Server) translateAndPersistArticles(articles []database.Article) {
 	transClient := s.translationClient()
 	if transClient == nil {
-		return // no translation API configured
+		return // translation not enabled
 	}
 
 	s.cfg.RLock()
-	model := ""
-	if s.cfg.API.Translation != nil && s.cfg.API.Translation.Model != "" {
-		model = s.cfg.API.Translation.Model
-	} else {
-		model = s.cfg.API.DefaultModel
-	}
+	model := s.cfg.API.DefaultModel
 	s.cfg.RUnlock()
 
 	// Skip articles that already have translations
@@ -715,17 +610,3 @@ func articlesToResponse(articles []database.Article) []map[string]interface{} {
 
 // --- Helpers ---
 
-func apiEndpointToMap(ep *config.APIEndpoint) map[string]interface{} {
-	if ep == nil {
-		return nil
-	}
-	maskedKey := "••••••••"
-	if len(ep.APIKey) > 8 {
-		maskedKey = ep.APIKey[:4] + "••••" + ep.APIKey[len(ep.APIKey)-4:]
-	}
-	return map[string]interface{}{
-		"base_url": ep.BaseURL,
-		"api_key":  maskedKey,
-		"model":    ep.Model,
-	}
-}

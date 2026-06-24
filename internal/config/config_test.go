@@ -288,46 +288,6 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 	}
 }
 
-func TestLoadReencryptsScoringSubkey(t *testing.T) {
-	tmpDir := t.TempDir()
-	configDir := filepath.Join(tmpDir, ".config", "paperagent")
-	os.MkdirAll(configDir, 0755)
-
-	os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(`api:
-  base_url: "https://test.api.com/v1"
-  api_key: "${PAPERAGENT_MAIN_KEY_OK}"
-  default_model: "test-model"
-  scoring:
-    base_url: "https://scoring.api.com/v1"
-    api_key: "scoring-plaintext-key-should-encrypt"
-    model: "gpt-4o-mini"
-`), 0644)
-
-	os.Setenv("PAPERAGENT_MAIN_KEY_OK", "main-expanded")
-	defer os.Unsetenv("PAPERAGENT_MAIN_KEY_OK")
-
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
-
-	_, err := Load()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(configDir, "config.yaml"))
-	if err != nil {
-		t.Fatalf("read-back error: %v", err)
-	}
-	content := string(data)
-	if contains(content, "scoring-plaintext-key-should-encrypt") {
-		t.Errorf("scoring.api_key was not re-encrypted; file:\n%s", content)
-	}
-	// Main api_key is still ${...}, so it should still be there.
-	if !contains(content, "${PAPERAGENT_MAIN_KEY_OK}") {
-		t.Errorf("main api_key ${...} ref was unexpectedly changed; file:\n%s", content)
-	}
-}
 
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()

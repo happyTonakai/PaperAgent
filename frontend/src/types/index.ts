@@ -96,14 +96,3 @@ export interface RecommendStats {
   total: number
 }
 
-export interface RecommendConfig {
-  recommend: {
-    daily_papers: number
-    scoring_batch_size: number
-    auto_refresh: boolean
-  }
-  arxiv_categories: string[]
-  api: {
-    scoring: { base_url: string; api_key: string; model: string } | null
-  }
-}

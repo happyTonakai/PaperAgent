@@ -51,15 +51,13 @@ func getHolidayChecker() *holiday.Checker {
 }
 
 type Server struct {
-	cfg             *config.Config
-	api             *api.Client
-	scoringAPI      *api.Client
-	translationAPI  *api.Client
-	mux             *http.ServeMux
-	paperLocks      sync.Map
-	logBuf          *logBuffer
-	feishuBot       *feishu.Bot
-	sched           *scheduler.Scheduler
+	cfg        *config.Config
+	api        *api.Client
+	mux        *http.ServeMux
+	paperLocks sync.Map
+	logBuf     *logBuffer
+	feishuBot  *feishu.Bot
+	sched      *scheduler.Scheduler
 }
 
 // SetFeishuBot sets the feishu bot reference for hot-reload support.
@@ -78,12 +76,10 @@ func New(cfg *config.Config) *Server {
 	lb := newLogBuffer()
 	initLogCapture(lb)
 	s := &Server{
-		cfg:            cfg,
-		api:            api.NewClient(cfg),
-		scoringAPI:     buildScoringClient(cfg),
-		translationAPI: buildTranslationClient(cfg),
-		mux:            http.NewServeMux(),
-		logBuf:         lb,
+		cfg:    cfg,
+		api:    api.NewClient(cfg),
+		mux:    http.NewServeMux(),
+		logBuf: lb,
 	}
 	s.registerRoutes()
 	s.startScheduler()

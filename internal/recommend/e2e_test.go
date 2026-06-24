@@ -82,30 +82,19 @@ func TestE2E_RealFetchAndRecommend(t *testing.T) {
 	t.Logf("using DB: %s", database.DBPath())
 
 	// --- 3. Build the real scoring client from config.yaml ---
-	// Mirrors server.scoringClient() (handlers_recommend.go): prefer the
-	// dedicated scoring endpoint, fall back to the main API only if the
-	// scoring block is missing/incomplete.
+	// Scoring always reuses the main API.
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
-	ep := cfg.API.Scoring
-	if ep == nil || ep.BaseURL == "" || ep.APIKey == "" || ep.Model == "" {
-		t.Logf("no dedicated scoring endpoint in config.yaml, falling back to main API")
-		ep = &config.APIEndpoint{
-			BaseURL: cfg.API.BaseURL,
-			APIKey:  cfg.API.APIKey,
-			Model:   cfg.API.DefaultModel,
-		}
-	}
-	if ep.BaseURL == "" || ep.APIKey == "" || ep.Model == "" {
+	if cfg.API.BaseURL == "" || cfg.API.APIKey == "" || cfg.API.DefaultModel == "" {
 		t.Fatal("config.yaml has no usable API endpoint — e2e test needs a real LLM")
 	}
 	scoring := &ScoringClient{
-		Client: api.NewClientFromEndpoint(ep.BaseURL, ep.APIKey, ep.Model),
-		Model:  ep.Model,
+		Client: api.NewClientFromEndpoint(cfg.API.BaseURL, cfg.API.APIKey, cfg.API.DefaultModel),
+		Model:  cfg.API.DefaultModel,
 	}
-	t.Logf("scoring endpoint: %s model=%s", ep.BaseURL, ep.Model)
+	t.Logf("scoring endpoint: %s model=%s", cfg.API.BaseURL, cfg.API.DefaultModel)
 
 	// --- 4. Run the real FetchAndRecommend pipeline ---
 	categories := []string{"cs.SD"}

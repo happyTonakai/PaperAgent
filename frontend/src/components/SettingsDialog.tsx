@@ -33,12 +33,8 @@ interface SchedulerStatus {
 }
 
 interface RecommendConfigData {
-	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number }
+	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number; enable_translation: boolean }
 	arxiv_categories: string[]
-	api: {
-		scoring: { base_url: string; api_key: string; model: string } | null
-		translation: { base_url: string; api_key: string; model: string } | null
-	}
 }
 
 const promptLabels: Record<string, string> = {
@@ -141,17 +137,6 @@ function usePropagateWheel<T extends HTMLElement>(): React.RefObject<T | null> {
 	return ref
 }
 
-// ── helper: compare recommend API sections for dirtiness ──
-function scoringChanged(a: RecommendConfigData['api']['scoring'], b: RecommendConfigData['api']['scoring']) {
-	if (!a && !b) return false
-	if (!a || !b) return true
-	return a.base_url !== b.base_url || a.model !== b.model || (a.api_key && !a.api_key.startsWith('\u2022') && a.api_key !== (b.api_key ?? ''))
-}
-function translationChanged(a: RecommendConfigData['api']['translation'], b: RecommendConfigData['api']['translation']) {
-	if (!a && !b) return false
-	if (!a || !b) return true
-	return a.base_url !== b.base_url || a.model !== b.model || (a.api_key && !a.api_key.startsWith('\u2022') && a.api_key !== (b.api_key ?? ''))
-}
 
 export function SettingsDialog() {
 	const { isSettingsOpen, setSettingsOpen } = useAppStore()
@@ -195,11 +180,9 @@ export function SettingsDialog() {
 
 	// ── Recommend settings (scoring API, translation API, recommend params, arxiv) ──
 	const [recommendConfig, setRecommendConfig] = useState<RecommendConfigData | null>(null)
-	const [recConfigOrig, setRecConfigOrig] = useState<RecommendConfigData | null>(null) // snapshot for dirtiness
 	const [recLoading, setRecLoading] = useState(false)
 	const [recSaving, setRecSaving] = useState(false)
-	const [useMainForScoring, setUseMainForScoring] = useState(true)
-	const [useMainForTranslation, setUseMainForTranslation] = useState(true)
+
 
 	// ── Prompts accordion state ──
 	const [expandedPrompts, setExpandedPrompts] = useState<Record<string, boolean>>({})
@@ -264,11 +247,6 @@ export function SettingsDialog() {
 			.then((r) => r.json())
 			.then((data: RecommendConfigData) => {
 				setRecommendConfig(data)
-				setRecConfigOrig(structuredClone(data))
-				// Reflect backend state: scoring/translation block present
-				// (i.e. a dedicated endpoint was configured) → checkbox off.
-				setUseMainForScoring(data.api.scoring === null)
-				setUseMainForTranslation(data.api.translation === null)
 			})
 			.catch(() => {})
 			.finally(() => setRecLoading(false))
@@ -307,73 +285,12 @@ export function SettingsDialog() {
 			if (form.obsidian_export_path !== config?.obsidian.export_path) body['obsidian_export_path'] = form.obsidian_export_path
 
 			let mainChanged = Object.keys(body).length > 0
-			if (mainChanged) {
-				const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-				if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
-				setApiKeyDirty(false)
-				if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
-			}
-
-			// 2) Save scoring / translation if changed
-			if (recommendConfig && recConfigOrig) {
-				let scoringBody: Record<string, string> | null = null
-				if (!useMainForScoring) {
-					scoringBody = {
-						base_url: recommendConfig.api.scoring?.base_url ?? '',
-						model: recommendConfig.api.scoring?.model ?? '',
-					}
-					if (recommendConfig.api.scoring?.api_key && !recommendConfig.api.scoring.api_key.startsWith('\u2022')) {
-						scoringBody.api_key = recommendConfig.api.scoring.api_key
-					}
-				}
-
-				const translation = recommendConfig.api.translation
-				let translationBody: Record<string, string> | null = null
-				if (useMainForTranslation) {
-					// "复用主 API" → send null to clear the dedicated
-					// translation config, matching scoring's behaviour.
-					translationBody = null
-				} else if (translation) {
-					const allEmpty = !translation.base_url.trim() && !translation.model.trim()
-						&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
-					if (!allEmpty) {
-						translationBody = {
-							base_url: translation.base_url,
-							model: translation.model,
-						}
-						if (translation.api_key && !translation.api_key.startsWith('\u2022')) {
-							translationBody.api_key = translation.api_key
-						}
-					}
-				}
-
-				// Dirtiness: a checkbox toggle counts as a change, and
-				// editing fields while a dedicated endpoint is configured
-				// also counts. The orig-checked state is reconstructed from
-				// recConfigOrig (was api.scoring/translation null at load?).
-				const scOrigChecked = recConfigOrig.api.scoring === null
-				const trOrigChecked = recConfigOrig.api.translation === null
-				const scChanged = scOrigChecked !== useMainForScoring
-					|| (!useMainForScoring && scoringChanged(recommendConfig.api.scoring, recConfigOrig.api.scoring))
-				const trChanged = trOrigChecked !== useMainForTranslation
-					|| (!useMainForTranslation && translationChanged(recommendConfig.api.translation, recConfigOrig.api.translation))
-
-				if (scChanged || trChanged) {
-					const apiBody: Record<string, unknown> = {}
-					if (scChanged) apiBody.scoring = scoringBody
-					if (trChanged) apiBody.translation = translationBody
-					const recRes = await fetch('/api/recommend/config', {
-						method: 'PUT',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ api: apiBody }),
-					})
-					if (!recRes.ok) throw new Error((await recRes.json().catch(() => ({ error: '推荐 API 保存失败' })) as { error?: string }).error)
-					mainChanged = true
-					setRecConfigOrig(structuredClone(recommendConfig))
-				}
-			}
-
 			if (!mainChanged) { toast('没有需要保存的更改'); setSaving(false); close(); return }
+
+			const res = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
+			setApiKeyDirty(false)
+			if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
 			toast.success('配置已保存')
 			close()
 		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
@@ -476,67 +393,7 @@ export function SettingsDialog() {
 
 			<hr className={dividerCls} />
 
-			{/* 2. 评分 API — 推荐论文打分 & 偏好分析 */}
-			<fieldset className="space-y-3">
-				<legend className={legendCls}>评分 API · 推荐打分 & 偏好分析</legend>
-				<p className={hintCls}>每日推荐管线中，对 arXiv 论文打分和用户偏好分析的 LLM API。</p>
-				<div className="flex items-center gap-2">
-					<input
-						type="checkbox"
-						id="use-main-for-scoring"
-						checked={useMainForScoring}
-						onChange={(e) => setUseMainForScoring(e.target.checked)}
-						className="w-4 h-4 rounded border-[var(--color-border)]"
-					/>
-					<label htmlFor="use-main-for-scoring" className={labelCls}>复用主 API 配置</label>
-				</div>
-				{!useMainForScoring && (
-					<>
-						<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.scoring?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, api_key: v } } } : prev)} className={inputCls} /></div>
-						<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.scoring?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, base_url: e.target.value } } } : prev)} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-						<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.scoring?.model ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, api: { ...prev.api, scoring: { ...prev.api.scoring!, model: e.target.value } } } : prev)} className={inputCls} placeholder="gpt-4o-mini" /></div>
-					</>
-				)}
-			</fieldset>
-
-			<hr className={dividerCls} />
-
-			{/* 3. 翻译 API — 推荐摘要翻译 */}
-			<fieldset className="space-y-3">
-				<legend className={legendCls}>翻译 API · 推荐摘要翻译</legend>
-				<p className={hintCls}>将推荐论文的标题/摘要翻译为中文。</p>
-				<div className="flex items-center gap-2">
-					<input
-						type="checkbox"
-						id="use-main-for-translation"
-						checked={useMainForTranslation}
-						onChange={(e) => setUseMainForTranslation(e.target.checked)}
-						className="w-4 h-4 rounded border-[var(--color-border)]"
-					/>
-					<label htmlFor="use-main-for-translation" className={labelCls}>复用主 API 配置</label>
-				</div>
-				{!useMainForTranslation && (
-					<>
-						<div><label className={labelCls}>API Key</label><SecretInput value={recommendConfig?.api.translation?.api_key ?? ''} onChange={(v) => setRecommendConfig(prev => {
-							if (!prev) return prev
-							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-							return { ...prev, api: { ...prev.api, translation: { ...t, api_key: v } } }
-						})} className={inputCls} /></div>
-						<div><label className={labelCls}>Base URL</label><input type="text" value={recommendConfig?.api.translation?.base_url ?? ''} onChange={(e) => setRecommendConfig(prev => {
-							if (!prev) return prev
-							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-							return { ...prev, api: { ...prev.api, translation: { ...t, base_url: e.target.value } } }
-						})} className={inputCls} placeholder="https://api.openai.com/v1" /></div>
-						<div><label className={labelCls}>Model</label><input type="text" value={recommendConfig?.api.translation?.model ?? ''} onChange={(e) => setRecommendConfig(prev => {
-							if (!prev) return prev
-							const t = prev.api.translation ?? { base_url: '', api_key: '', model: '' }
-							return { ...prev, api: { ...prev.api, translation: { ...t, model: e.target.value } } }
-						})} className={inputCls} placeholder="gpt-4o-mini" /></div>
-					</>
-				)}
-			</fieldset>
-
-			<hr className={dividerCls} />
+	
 
 			{/* 4. 上下文控制 */}
 			<fieldset className="space-y-3">
@@ -623,6 +480,10 @@ export function SettingsDialog() {
 				<div className="flex items-center gap-2">
 					<input type="checkbox" id="push-to-feishu" checked={recommendConfig?.recommend.push_to_feishu ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, push_to_feishu: e.target.checked } } : prev)} className="w-4 h-4 rounded border-[var(--color-border)]" />
 					<label htmlFor="push-to-feishu" className={labelCls}>推荐完成后推送飞书</label>
+				</div>
+				<div className="flex items-center gap-2">
+					<input type="checkbox" id="enable-translation" checked={recommendConfig?.recommend.enable_translation ?? false} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, enable_translation: e.target.checked } } : prev)} className="w-4 h-4 rounded border-[var(--color-border)]" />
+					<label htmlFor="enable-translation" className={labelCls}>翻译推荐论文标题/摘要（使用主 API）</label>
 				</div>
 			</fieldset>
 		</div>

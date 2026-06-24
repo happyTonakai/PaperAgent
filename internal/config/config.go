@@ -29,35 +29,26 @@ type Config struct {
 	//
 	// Set to the empty string when the on-disk key was empty (Save falls back
 	// to "encrypt plaintext" behaviour in that case for backward compat).
-	RawOnDiskAPIKey           string `yaml:"-"`
-	RawOnDiskScoringAPIKey    string `yaml:"-"`
-	RawOnDiskTranslationAPIKey string `yaml:"-"`
+	RawOnDiskAPIKey string `yaml:"-"`
 }
 
 // APIConfig contains API configuration for Q&A chat.
-// Scoring and translation have their own sub-configs.
+// Scoring and translation reuse the main API; see RecommendConfig
+// for the translation toggle.
 type APIConfig struct {
-	BaseURL      string        `yaml:"base_url"`
-	APIKey       string        `yaml:"api_key"`
-	DefaultModel string        `yaml:"default_model"`
-	Scoring      *APIEndpoint  `yaml:"scoring,omitempty"`
-	Translation  *APIEndpoint  `yaml:"translation,omitempty"`
-}
-
-// APIEndpoint represents an OpenAI-compatible API endpoint configuration.
-type APIEndpoint struct {
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
-	Model   string `yaml:"model"`
+	BaseURL      string `yaml:"base_url"`
+	APIKey       string `yaml:"api_key"`
+	DefaultModel string `yaml:"default_model"`
 }
 
 // RecommendConfig controls the daily recommendation pipeline.
 type RecommendConfig struct {
-	DailyPapers      int     `yaml:"daily_papers"`
-	ScoringBatchSize int     `yaml:"scoring_batch_size"`
-	DiversityRatio    float64 `yaml:"diversity_ratio"` // 0-1: proportion of random exploration articles
-	ScheduledTime    string  `yaml:"scheduled_time"`  // HH:MM format, e.g. "08:00"
-	PushToFeishu     bool    `yaml:"push_to_feishu"`  // push recommendations to feishu
+	DailyPapers       int     `yaml:"daily_papers"`
+	ScoringBatchSize  int     `yaml:"scoring_batch_size"`
+	DiversityRatio    float64 `yaml:"diversity_ratio"`     // 0-1: proportion of random exploration articles
+	ScheduledTime     string  `yaml:"scheduled_time"`      // HH:MM format, e.g. "08:00"
+	PushToFeishu      bool    `yaml:"push_to_feishu"`      // push recommendations to feishu
+	EnableTranslation bool    `yaml:"enable_translation"`  // translate titles/abstracts via main API
 }
 
 type ObsidianConfig struct {
@@ -136,21 +127,29 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	// Parse the raw on-disk form of api_key fields once, so we can both
-	// (a) decide whether to auto-re-encrypt and (b) remember each field's
-	// verbatim on-disk form for Save() to honour.
+	// Parse the raw on-disk form of api_key so Save() can preserve
+	// the verbatim ${VAR} reference or !!aes: ciphertext.
 	var rawKeys struct {
 		API struct {
-			APIKey      string `yaml:"api_key"`
-			Scoring     *struct {
-				APIKey string `yaml:"api_key"`
-			} `yaml:"scoring,omitempty"`
-			Translation *struct {
-				APIKey string `yaml:"api_key"`
-			} `yaml:"translation,omitempty"`
+			APIKey string `yaml:"api_key"`
 		} `yaml:"api"`
 	}
 	_ = yaml.Unmarshal(data, &rawKeys)
+
+	// Warn about deprecated api.scoring / api.translation keys from older configs.
+	var oldAPI struct {
+		API struct {
+			Scoring     *struct{} `yaml:"scoring"`
+			Translation *struct{} `yaml:"translation"`
+		} `yaml:"api"`
+	}
+	_ = yaml.Unmarshal(data, &oldAPI)
+	if oldAPI.API.Scoring != nil {
+		fmt.Fprintf(os.Stderr, "warning: config.yaml has deprecated api.scoring section — scoring now always reuses the main API; this section will be removed on next save\n")
+	}
+	if oldAPI.API.Translation != nil {
+		fmt.Fprintf(os.Stderr, "warning: config.yaml has deprecated api.translation section — translation is now controlled by recommend.enable_translation; this section will be removed on next save\n")
+	}
 
 	// Migration: older configs split the export destination into
 	// vault_path + export_folder. If we read an old config (no export_path
@@ -169,40 +168,18 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Resolve all API keys: expand env vars + decrypt
-	var resolveErrors []string
+	// Resolve API key: expand env vars + decrypt
 	cfg.API.APIKey, _ = resolveAPIKey(cfg.API.APIKey)
-	if cfg.API.Scoring != nil {
-		if _, err := resolveAPIKey(cfg.API.Scoring.APIKey); err != nil {
-			resolveErrors = append(resolveErrors, "scoring: "+err.Error())
-		}
-		cfg.API.Scoring.APIKey, _ = resolveAPIKey(cfg.API.Scoring.APIKey)
-	}
-	if cfg.API.Translation != nil {
-		if _, err := resolveAPIKey(cfg.API.Translation.APIKey); err != nil {
-			resolveErrors = append(resolveErrors, "translation: "+err.Error())
-		}
-		cfg.API.Translation.APIKey, _ = resolveAPIKey(cfg.API.Translation.APIKey)
-	}
-	if len(resolveErrors) > 0 {
-		return cfg, fmt.Errorf("unresolved env vars: %s", strings.Join(resolveErrors, "; "))
-	}
 
 	// Expand ~ in paths
 	if cfg.Obsidian.ExportPath != "" {
 		cfg.Obsidian.ExportPath = expandHome(cfg.Obsidian.ExportPath)
 	}
 
-	// Record the verbatim on-disk form of each api_key so that Save() can
+	// Record the verbatim on-disk form of api_key so that Save() can
 	// preserve a deliberate ${...} reference (don't encrypt the resolved
 	// plaintext) and pass through existing !!aes: ciphertext untouched.
 	cfg.RawOnDiskAPIKey = rawKeys.API.APIKey
-	if rawKeys.API.Scoring != nil {
-		cfg.RawOnDiskScoringAPIKey = rawKeys.API.Scoring.APIKey
-	}
-	if rawKeys.API.Translation != nil {
-		cfg.RawOnDiskTranslationAPIKey = rawKeys.API.Translation.APIKey
-	}
 
 	// Auto-re-encrypt: if any API key on disk was stored as plaintext
 	// (legacy or hand-written), re-save so the on-disk form is always
@@ -226,28 +203,13 @@ func Load() (*Config, error) {
 func needsReencrypt(data []byte) bool {
 	var raw struct {
 		API struct {
-			APIKey      string `yaml:"api_key"`
-			Scoring     *struct {
-				APIKey string `yaml:"api_key"`
-			} `yaml:"scoring,omitempty"`
-			Translation *struct {
-				APIKey string `yaml:"api_key"`
-			} `yaml:"translation,omitempty"`
+			APIKey string `yaml:"api_key"`
 		} `yaml:"api"`
 	}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return false
 	}
-	if isPlaintextAPIKey(raw.API.APIKey) {
-		return true
-	}
-	if raw.API.Scoring != nil && isPlaintextAPIKey(raw.API.Scoring.APIKey) {
-		return true
-	}
-	if raw.API.Translation != nil && isPlaintextAPIKey(raw.API.Translation.APIKey) {
-		return true
-	}
-	return false
+	return isPlaintextAPIKey(raw.API.APIKey)
 }
 
 func isPlaintextAPIKey(s string) bool {
@@ -268,11 +230,12 @@ func defaultConfig() *Config {
 			DefaultModel: "gpt-4o",
 		},
 		Recommend: RecommendConfig{
-			DailyPapers:      20,
-			ScoringBatchSize: 10,
-			DiversityRatio:   0.3,
-			ScheduledTime:    "08:00",
-			PushToFeishu:     true,
+			DailyPapers:       20,
+			ScoringBatchSize:  10,
+			DiversityRatio:    0.3,
+			ScheduledTime:     "08:00",
+			PushToFeishu:      true,
+			EnableTranslation: false,
 		},
 		Obsidian: ObsidianConfig{
 			ExportPath: "~/Papers",
@@ -348,15 +311,14 @@ func (c *Config) Save() error {
 			BaseURL:      c.API.BaseURL,
 			APIKey:       encryptAPICfg(c.API.APIKey, c.RawOnDiskAPIKey),
 			DefaultModel: c.API.DefaultModel,
-			Scoring:      encryptAPIEndpointWithRaw(c.API.Scoring, c.RawOnDiskScoringAPIKey),
-			Translation:  encryptAPIEndpointWithRaw(c.API.Translation, c.RawOnDiskTranslationAPIKey),
 		},
 		Recommend: RecommendConfig{
-			DailyPapers:      c.Recommend.DailyPapers,
-			ScoringBatchSize: c.Recommend.ScoringBatchSize,
-			DiversityRatio:   c.Recommend.DiversityRatio,
-			ScheduledTime:    c.Recommend.ScheduledTime,
-			PushToFeishu:     c.Recommend.PushToFeishu,
+			DailyPapers:       c.Recommend.DailyPapers,
+			ScoringBatchSize:  c.Recommend.ScoringBatchSize,
+			DiversityRatio:    c.Recommend.DiversityRatio,
+			ScheduledTime:     c.Recommend.ScheduledTime,
+			PushToFeishu:      c.Recommend.PushToFeishu,
+			EnableTranslation: c.Recommend.EnableTranslation,
 		},
 		ArxivCategories: c.ArxivCategories,
 		Obsidian: ObsidianConfig{
@@ -385,52 +347,6 @@ func (c *Config) Save() error {
 	}
 
 	return nil
-}
-
-func encryptAPIEndpoint(ep *APIEndpoint, encFn func(string) string) *APIEndpoint {
-	if ep == nil {
-		return nil
-	}
-	cpy := *ep
-	cpy.APIKey = encFn(cpy.APIKey)
-	return &cpy
-}
-
-// encryptAPIEndpointWithRaw mirrors encryptAPIEndpoint but threads the
-// raw on-disk api_key string through to the encryptor so the on-disk form
-// of a sub-config's key (api.scoring.api_key, api.translation.api_key) is
-// preserved across Save() the same way the top-level api_key is.
-func encryptAPIEndpointWithRaw(ep *APIEndpoint, rawOnDisk string) *APIEndpoint {
-	if ep == nil {
-		return nil
-	}
-	cpy := *ep
-	encFn := func(resolved string) string {
-		if resolved == "" {
-			return ""
-		}
-		if rawOnDisk != "" {
-			if hasEncPrefix(rawOnDisk) {
-				return rawOnDisk
-			}
-			if strings.HasPrefix(rawOnDisk, "${") {
-				return rawOnDisk
-			}
-			if enc, err := encryptKey(resolved); err == nil {
-				return enc
-			}
-			return resolved
-		}
-		if hasEncPrefix(resolved) || strings.HasPrefix(resolved, "${") {
-			return resolved
-		}
-		if enc, err := encryptKey(resolved); err == nil {
-			return enc
-		}
-		return resolved
-	}
-	cpy.APIKey = encFn(cpy.APIKey)
-	return &cpy
 }
 
 func expandHome(path string) string {
