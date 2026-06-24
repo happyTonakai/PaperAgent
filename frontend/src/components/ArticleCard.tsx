@@ -184,6 +184,20 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
     }, HOVER_READ_DELAY_MS)
   }
 
+  const handleTitleClick = () => {
+    window.open(toPdfUrl(article.link), '_blank', 'noopener,noreferrer')
+    // Track PDF click as status=1 (clicked), but only if not already liked (2) or disliked (-1).
+    // A PDF click means the user is interested — but a like/dislike is a stronger signal
+    // and should not be downgraded.
+    if (displayStatus !== 2 && displayStatus !== -1) {
+      const newStatus = 1
+      setDisplayStatus(newStatus)
+      updateArticleStatus(article.id, newStatus)
+        .then(() => onStatusChange?.(article.id, newStatus))
+        .catch(() => {})
+    }
+  }
+
   const handleMouseLeave = () => {
     if (hoverTimer.current) {
       clearTimeout(hoverTimer.current)
@@ -204,7 +218,7 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
         {article.category && <span className="article-category">{article.category}</span>}
       </div>
 
-      <h3 className="article-title" onClick={() => window.open(toPdfUrl(article.link), '_blank', 'noopener,noreferrer')}>{renderText(article.translated_title || article.title)}</h3>
+      <h3 className="article-title" onClick={handleTitleClick}>{renderText(article.translated_title || article.title)}</h3>
 
       {article.author && (
         <p className="article-author">{formatAuthors(article.author)}</p>
