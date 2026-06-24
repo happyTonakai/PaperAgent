@@ -163,7 +163,46 @@ ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo 
 | 探索比例 `diversity_ratio` | 0-1 | `0.3` |
 | 翻译推荐论文 | 是否用主 API 翻译标题/摘要（推荐 tab 里的复选框） | 不勾选 = 不翻译 |
 
-**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_TRANSLATE`。
+**记录配置**：暂存到 `$REC_CATEGORIES` / `$REC_TIME` / `$REC_DAILY` / `$REC_DIVERSITY` / `$REC_TRANSLATE`。<br>排除关键词在 §3.3 收集偏好时一起提取，暂存到 `$REC_EXCLUDED_KEYWORDS`。
+
+### 3.3 收集研究偏好
+
+用 `AskUserQuestion`（长文本输入）询问：
+
+> **说说你的研究方向。**
+>
+> 随便聊聊你关注什么领域、方法、技术，以及对什么不感兴趣。不限格式。
+> 例如：
+> ```
+> 我做 LLM 推理优化和 KV cache 压缩，对 MoE 和 speculative decoding 也感兴趣。
+> 不太想看联邦学习和区块链相关的论文。
+> ```
+
+用户输入后，用 `AskUserQuestion`（是/否）确认：
+
+> **已记录你的描述：**
+> ```
+> {用户输入}
+> ```
+> **以上描述是否准确？**
+> - 是 → 继续
+> - 否 → 回到上一步重新输入
+
+确认后，做两件事：
+
+1. **写入 `preferences.md`** — 把用户输入写成 Markdown 暂存到 `$PREFERENCES_CONTENT`：
+
+   ```markdown
+   ## 感兴趣的主题
+   - {用户输入}
+
+   ## 备注
+   - 安装时首次配置
+   ```
+
+2. **提取排除关键词** — 从用户输入中人工挑出方向性技术词（用户说不感兴趣的部分），**关键词必须用英文**，暂存到 `$REC_EXCLUDED_KEYWORDS`（逗号分隔，可选）。<br>例如用户说「不太想看联邦学习和区块链」，则 `$REC_EXCLUDED_KEYWORDS="federated learning, blockchain"`。
+
+> 如果用户跳过（空输入），则 `$PREFERENCES_CONTENT` 和 `$REC_EXCLUDED_KEYWORDS` 都留空。系统使用空偏好启动（推荐退化为按时间倒序选未读论文）。
 
 ---
 
@@ -246,6 +285,9 @@ recommend:
   scoring_batch_size: 10
   diversity_ratio: 0.3
   scheduled_time: "08:00"
+  excluded_keywords:
+    # 关键词必须用英文
+    # 拼接时：如果 $REC_EXCLUDED_KEYWORDS 非空，每行 - kw；否则留空或注释
   push_to_feishu: <true|false>   # 如果 feishu 也启用则 true
   enable_translation: <true|false>  # 是否翻译推荐论文标题/摘要
 ```
@@ -260,13 +302,26 @@ feishu:
   daily_recommend_chat_id: "<FEISHU_CHAT_ID>"
 ```
 
-**写入命令**（把上面的所有段按 `ENABLED_MODULES` 拼接成一个 heredoc 写盘）：
+**写入命令**（把上面的所有段按 `ENABLED_MODULES` 拼接成一个 heredoc 写盘，**用 `<<EOF` 不要用 `<<'EOF'`**，确保 shell 变量能展开）：
 
 ```bash
-cat > "$CONFIG_DIR/config.yaml" <<'EOF'
-<拼接后的完整 yaml>
+cat > "$CONFIG_DIR/config.yaml" <<EOF
+<拼接后的完整 yaml，变量已展开>
 EOF
 chmod 600 "$CONFIG_DIR/config.yaml"
+```
+
+### 5.3 写入研究偏好（仅当 `recommend` ∈ `ENABLED_MODULES` 且用户填了偏好）
+
+如果 `$PREFERENCES_CONTENT` 非空，写入 `preferences.md`：
+
+```bash
+if [ -n "$PREFERENCES_CONTENT" ]; then
+  cat > "$CONFIG_DIR/preferences.md" <<EOF
+$PREFERENCES_CONTENT
+EOF
+  echo "→ 研究偏好已写入 $CONFIG_DIR/preferences.md"
+fi
 ```
 
 **验证**：
@@ -274,6 +329,7 @@ chmod 600 "$CONFIG_DIR/config.yaml"
 ```bash
 ls -la "$CONFIG_DIR/config.yaml"   # 权限应为 -rw------
 cat "$CONFIG_DIR/config.yaml"      # 人工 spot-check，确认 api_key / app_secret 都在
+[ -f "$CONFIG_DIR/preferences.md" ] && echo "preferences.md exists" || echo "preferences.md not created (user skipped)"
 ```
 
 ---
