@@ -330,10 +330,9 @@ export function SettingsDialog() {
 				const translation = recommendConfig.api.translation
 				let translationBody: Record<string, string> | null = null
 				if (useMainForTranslation) {
-					// "复用主 API" → send empty fields. Backend copies from
-					// the main API and preserves the ${VAR} env-var reference
-					// form for api_key (via RawOnDiskAPIKey).
-					translationBody = { base_url: '', api_key: '', model: '' }
+					// "复用主 API" → send null to clear the dedicated
+					// translation config, matching scoring's behaviour.
+					translationBody = null
 				} else if (translation) {
 					const allEmpty = !translation.base_url.trim() && !translation.model.trim()
 						&& (!translation.api_key || translation.api_key.startsWith('\u2022'))
@@ -703,7 +702,7 @@ export function SettingsDialog() {
 
 	const footerHint = () => {
 		switch (tab) {
-			case 'api': return '主 API 保存在 ~/.config/paperagent/config.yaml；评分/翻译 API 同文件 recommend 段'
+			case 'api': return '配置文件位置: ~/.config/paperagent/config.yaml'
 			case 'prompts': return '提示词保存后立即生效'
 			case 'feishu': return '飞书配置保存在 ~/.config/paperagent/config.yaml'
 			case 'recommend': return '推荐配置保存在 ~/.config/paperagent/config.yaml'
