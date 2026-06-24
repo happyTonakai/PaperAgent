@@ -33,7 +33,7 @@ interface SchedulerStatus {
 }
 
 interface RecommendConfigData {
-	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number; enable_translation: boolean }
+	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number; enable_translation: boolean; excluded_keywords: string[] }
 	arxiv_categories: string[]
 }
 
@@ -194,6 +194,14 @@ export function SettingsDialog() {
 	}
 	const collapseAllPrompts = () => setExpandedPrompts({})
 
+	// ── Excluded keywords raw input (comma-separated) ──
+	const [excludedKeywordsInput, setExcludedKeywordsInput] = useState('')
+	useEffect(() => {
+		if (recommendConfig) {
+			setExcludedKeywordsInput(recommendConfig.recommend.excluded_keywords?.join(', ') ?? '')
+		}
+	}, [recommendConfig])
+
 	// ── Preferences ──
 	const [preferencesContent, setPreferencesContent] = useState('')
 	const [preferencesOriginal, setPreferencesOriginal] = useState('')
@@ -350,21 +358,39 @@ export function SettingsDialog() {
 	}
 
 	const handleSavePreferences = async () => {
-		if (preferencesContent === preferencesOriginal) {
+		const prefsChanged = preferencesContent !== preferencesOriginal
+		if (!prefsChanged && !recommendConfig) {
 			toast('没有需要保存的更改')
 			close()
 			return
 		}
 		setPreferencesSaving(true)
 		try {
-			const res = await fetch('/api/recommend/preferences', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content: preferencesContent }),
-			})
-			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
+			// Always persist excluded keywords (and other recommend config) — even if prefs didn't change
+			if (recommendConfig) {
+				// Parse the raw comma-separated input into an array
+				const parsedKeywords = excludedKeywordsInput.split(',').map(s => s.trim()).filter(Boolean)
+				const cfgRes = await fetch('/api/recommend/config', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						recommend: { ...recommendConfig.recommend, excluded_keywords: parsedKeywords },
+						arxiv_categories: recommendConfig.arxiv_categories,
+					}),
+				})
+				if (!cfgRes.ok) throw new Error('排除关键词保存失败')
+			}
+			// Save preferences if changed
+			if (prefsChanged) {
+				const res = await fetch('/api/recommend/preferences', {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ content: preferencesContent }),
+				})
+				if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
+				setPreferencesOriginal(preferencesContent)
+			}
 			toast.success('偏好已保存')
-			setPreferencesOriginal(preferencesContent)
 			close()
 		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
 		finally { setPreferencesSaving(false) }
@@ -501,6 +527,16 @@ export function SettingsDialog() {
 				placeholder={'## 感兴趣的主题\n- ...\n\n## 偏好的研究方法/技术\n- ...\n\n## 备注\n- ...'}
 				className={`${inputCls} font-mono resize-y`}
 				rows={18}
+			/>
+			<hr className={dividerCls} />
+			<label className={labelCls}>排除关键词（预过滤）</label>
+			<p className={hintCls}>RSS 抓取后对标题和摘要做不区分大小写的子串匹配，命中直接丢弃不入库。多个关键词用逗号分隔。</p>
+			<textarea
+				value={excludedKeywordsInput}
+				onChange={(e) => setExcludedKeywordsInput(e.target.value)}
+				className={`${inputCls} font-mono resize-y`}
+				rows={4}
+				placeholder={'federated learning, blockchain, knowledge distillation'}
 			/>
 		</div>
 	)
