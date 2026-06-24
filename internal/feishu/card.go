@@ -180,6 +180,43 @@ func countMdTables(s string) int {
 	return count
 }
 
+// stripMdTables removes every markdown-table line from s and replaces
+// each contiguous table block with a single "(table omitted)" placeholder,
+// so callers can stay under Feishu's 5-table hard limit without losing
+// the surrounding prose. Used as a fallback by buildDailyRecommendCard
+// when an abstract contains a table but is short enough that the normal
+// rune-truncation fallback would not help.
+func stripMdTables(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	inTable := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isTable := len(trimmed) > 1 && trimmed[0] == '|' && trimmed[len(trimmed)-1] == '|'
+		if isTable {
+			if !inTable {
+				out = append(out, "_(table omitted)_")
+				inTable = true
+			}
+			continue
+		}
+		inTable = false
+		out = append(out, line)
+	}
+	// Collapse runs of blank lines created by the removal.
+	collapsed := make([]string, 0, len(out))
+	prevBlank := false
+	for _, line := range out {
+		blank := strings.TrimSpace(line) == ""
+		if blank && prevBlank {
+			continue
+		}
+		collapsed = append(collapsed, line)
+		prevBlank = blank
+	}
+	return strings.TrimSpace(strings.Join(collapsed, "\n"))
+}
+
 // cardFits checks whether markdown content fits in a Feishu card, considering
 // the JSON byte size limit, the 200-element limit, and the table count limit (5).
 func cardFits(content string, builder func(content string) string) bool {
@@ -668,6 +705,344 @@ func buildCardMarkdown(content string) string {
 			mdElement(content),
 		},
 	}
+	return marshalCard(c)
+}
+
+// RecommendCardItem holds the display data for one article in the daily recommendation card.
+type RecommendCardItem struct {
+	ID       string
+	Title    string // translated (if available) or original
+	Abstract string // translated (if available) or original, full text
+	// PDFURL is the URL the per-article arXiv icon button opens. Derived
+	// from the abs URL at construction time (abs → pdf). Empty for non-arXiv
+	// sources; the card builder hides the button in that case.
+	PDFURL    string
+	Score     float64
+	// Status mirrors articles.status: 0=unread, 1=activated, 2=liked,
+	// -1=disliked, 3=read. The card builder uses it to render buttons in
+	// their post-action state so the user gets visual feedback after a click.
+	Status     int
+	AXNetVotes *int
+}
+
+// renderRecommendButton builds one of the like / dislike / activate buttons
+// on the daily recommendation card. When active is true the button is shown
+// in its post-action state by changing its `type` to activeType (e.g.
+// "primary" → blue background, "danger" → red background). The text is
+// kept identical so the icon stays clean; the color change is the only
+// visual cue. We intentionally do NOT set disabled: true, because in
+// Feishu's renderer disabled overrides the type and forces the button
+// back to the default grey, which defeats the purpose.
+func renderRecommendButton(emoji, articleID, action string, active bool, activeType string) map[string]any {
+	val := map[string]string{"action": action + ":" + articleID, "paper_id": articleID}
+	btnType := "default"
+	if active {
+		btnType = activeType
+	}
+	return map[string]any{
+		"tag":   "button",
+		"text":  plainText(emoji),
+		"type":  btnType,
+		"value": val,
+		"width": "default",
+	}
+}
+
+// renderRecommendLinkButton builds the per-article arXiv "open PDF" button.
+// It uses Card 2.0's `behaviors: open_url` (the modern way; the older
+// top-level `url` field is deprecated per Feishu docs) so a click opens
+// the PDF in the system browser on both desktop and mobile without any
+// bot round-trip. The four platform URL fields are all set to the same
+// arXiv URL — Feishu falls back to default_url when a platform-specific
+// one is omitted, but being explicit is clearer.
+func renderRecommendLinkButton(emoji, pdfURL string) map[string]any {
+	return map[string]any{
+		"tag":  "button",
+		"text": plainText(emoji),
+		"type": "default",
+		"behaviors": []map[string]any{
+			{
+				"type":        "open_url",
+				"default_url": pdfURL,
+				"android_url": pdfURL,
+				"ios_url":     pdfURL,
+				"pc_url":      pdfURL,
+			},
+		},
+		"width": "default",
+	}
+}
+
+// arxivAbsToPDF converts `https://arxiv.org/abs/<id>` to
+// `https://arxiv.org/pdf/<id>` (with `.pdf` suffix on the id). Returns
+// the original URL unchanged when it's not an arXiv abs link, so
+// non-arXiv RSS sources (defensive, doesn't happen today) keep their
+// original link target.
+func arxivAbsToPDF(absURL string) string {
+	const prefix = "https://arxiv.org/abs/"
+	if !strings.HasPrefix(absURL, prefix) {
+		return absURL
+	}
+	return "https://arxiv.org/pdf/" + strings.TrimPrefix(absURL, prefix) + ".pdf"
+}
+
+// recommendPageSize is the number of articles per card when the daily
+// recommendation is split into multiple cards. Keeps each card well under
+// Feishu's ~30KB JSON / 200-element limits while showing full abstracts.
+//
+// At 8 articles the tree-element count (divs, columns, buttons, texts,
+// hrs, footer) stays at ~166 which leaves ~34 headroom for any
+// table-expanded elements or longer abstracts.
+const recommendPageSize = 8
+
+// ─── Daily Recommendation Card ───
+
+// recommendAbstractFallbackLen is the per-abstract truncation length used
+// when a page of full abstracts would push the card JSON over maxCardJSONBytes.
+// Full abstracts are the default; this only kicks in for unusually long abstracts.
+const recommendAbstractFallbackLen = 500
+
+// buildDailyRecommendCard renders one page of the daily recommendation.
+// page is 1-indexed; totalPages is the number of cards that will be sent.
+// If the full-abstract card would exceed ANY of Feishu's hard limits
+// (~30KB JSON, 200 elements, 5 markdown tables), abstracts are first
+// stripped of any markdown tables (replaced with "_(table omitted)_")
+// and then truncated to recommendAbstractFallbackLen runes. A warning
+// is logged. Without the table-count check, a single LaTeX tabular
+// rendered as a markdown table in the abstract of >5 articles makes
+// Feishu reject the card with error 11310 (card table number over limit).
+func buildDailyRecommendCard(items []RecommendCardItem, page, totalPages int) string {
+	cardJSON := buildDailyRecommendCardRaw(items, page, totalPages)
+	if dailyCardFitsAllLimits(items, cardJSON) {
+		return cardJSON
+	}
+
+	// Fallback: strip tables and truncate abstracts so the card fits.
+	log.Printf("[feishu] daily card %d/%d exceeds limit (json=%dB tables=%d elems≈%d), stripping tables + truncating abstracts to %d runes",
+		page, totalPages, len(cardJSON),
+		countCardMdTables(items), estimateCardElements(items),
+		recommendAbstractFallbackLen)
+	truncated := make([]RecommendCardItem, len(items))
+	copy(truncated, items)
+	for i := range truncated {
+		if countMdTables(truncated[i].Abstract) > 0 {
+			truncated[i].Abstract = stripMdTables(truncated[i].Abstract)
+		}
+		if runes := []rune(truncated[i].Abstract); len(runes) > recommendAbstractFallbackLen {
+			truncated[i].Abstract = string(runes[:recommendAbstractFallbackLen]) + "..."
+		}
+	}
+	return buildDailyRecommendCardRaw(truncated, page, totalPages)
+}
+
+// dailyCardFitsAllLimits returns true when the rendered card respects all
+// three Feishu hard limits: JSON byte size, 200-element count, and 5-table
+// count. See buildDailyRecommendCard for why we must check all three.
+func dailyCardFitsAllLimits(items []RecommendCardItem, cardJSON string) bool {
+	if len(cardJSON) > maxCardJSONBytes {
+		return false
+	}
+	if countCardMdTables(items) > maxCardMdTables {
+		return false
+	}
+	if estimateCardElements(items) > maxCardElements {
+		return false
+	}
+	return true
+}
+
+// countCardMdTables sums the markdown table count across every abstract in
+// the card. Feishu caps a single card at 5 tables total (error 11310).
+func countCardMdTables(items []RecommendCardItem) int {
+	n := 0
+	for _, it := range items {
+		n += countMdTables(it.Abstract)
+	}
+	return n
+}
+
+// estimateCardElements counts the number of tree-level elements (nodes
+// with a "tag" field) that Feishu will see in a daily-recommend card.
+// Every div, lark_md text, column_set, column, button, plain_text,
+// hr, and the header title all count toward the 200-element hard limit.
+// Per article with all 4 buttons: 3 divs + 3 lark_md texts + 1 column_set
+// + 4 columns + 4 buttons + 4 plain_texts = 19 tree elements. With 3
+// buttons (no PDFURL) it's 16. Between articles we add 1 hr.
+func estimateCardElements(items []RecommendCardItem) int {
+	perArticle := 19 // 3 divs + 3 lark_md + 1 column_set + 4 cols + 4 btns + 4 plain_texts
+	// Defensive: if anyone adjusts the button count later, don't crash.
+	if len(items) > 0 && items[0].PDFURL == "" {
+		perArticle = 16 // 3 divs + 3 lark_md + 1 column_set + 3 cols + 3 btns + 3 plain_texts
+	}
+	n := len(items) * perArticle
+	if n > 0 {
+		n += len(items) - 1 // hr between items
+	}
+	n += 1 // card header title (plain_text)
+	n += 1 // hr before mark-read button
+	n += 1 // mark-read button
+	n += 1 // mark-read button text (plain_text)
+	n += 1 // hr after mark-read
+	n += 1 // footer note (div)
+	n += 1 // footer note text (plain_text)
+	return n
+}
+
+// buildDailyRecommendCardRaw is the inner builder that actually constructs
+// the card JSON. Callers should use buildDailyRecommendCard instead, which
+// applies the size fallback.
+func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int) string {
+	c := cardBase()
+	if totalPages > 1 {
+		c["header"] = cardHeader(fmt.Sprintf("📅 今日论文推荐 (%d/%d)", page, totalPages), "blue")
+	} else {
+		c["header"] = cardHeader("📅 今日论文推荐", "blue")
+	}
+
+	elements := make([]map[string]any, 0, len(items)+4)
+	pageIDs := make([]string, 0, len(items))
+
+	for i, item := range items {
+		title := item.Title
+		pageIDs = append(pageIDs, item.ID)
+		scoreStr := fmt.Sprintf("%.2f", item.Score)
+		voteStr := ""
+		if item.AXNetVotes != nil {
+			voteStr = fmt.Sprintf(" 🔬 %d", *item.AXNetVotes)
+		}
+
+		// Title row uses heading size; score + abstract use normal size.
+		// (Markdown elements cannot change text_size, so we use div+lark_md.)
+		titleEl := map[string]any{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":       "lark_md",
+				"content":   fmt.Sprintf("**%d. %s**", i+1, title),
+				"text_size": "heading",
+			},
+		}
+		scoreEl := map[string]any{
+			"tag": "div",
+			"text": map[string]any{
+				"tag":       "lark_md",
+				"content":   fmt.Sprintf("_兴趣分: %s%s_", scoreStr, voteStr),
+				"text_size": "normal",
+			},
+		}
+		var abstractEl map[string]any
+		if item.Abstract != "" {
+			abstractEl = map[string]any{
+				"tag": "div",
+				"text": map[string]any{
+					"tag":       "lark_md",
+					"content":   item.Abstract,
+					"text_size": "normal",
+				},
+			}
+		}
+
+		// Like/Dislike/Activate buttons. Status-driven so a previous click
+		// (from this card or the WebUI) is reflected as a highlighted +
+		// disabled button instead of looking like a fresh unclicked button.
+		btnLike := renderRecommendButton("👍", item.ID, "recommend:like", item.Status == 2, "primary")
+		btnDislike := renderRecommendButton("👎", item.ID, "recommend:dislike", item.Status == -1, "danger")
+		btnActivate := renderRecommendButton("🤖", item.ID, "recommend:activate", item.Status == 1, "primary")
+
+		// arXiv link button — opens the PDF in the system browser. Renders
+		// only when we have a PDF URL (we always do for arXiv RSS items; the
+		// guard is defensive in case the pool is ever seeded from non-arXiv
+		// sources).
+		var btnArxiv map[string]any
+		if item.PDFURL != "" {
+			btnArxiv = renderRecommendLinkButton("📑", item.PDFURL)
+		}
+
+		// Layout: title, then score+votes, then abstract, then 4 horizontal buttons
+		// stacked as their own row. Putting the buttons on the same row as the score
+		// forced a wrap on narrow phone screens; giving them their own row keeps
+		// each row single-purpose and easy to scan.
+		columns := []map[string]any{
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnLike},
+			},
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnDislike},
+			},
+			{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnActivate},
+			},
+		}
+		if btnArxiv != nil {
+			columns = append(columns, map[string]any{
+				"tag":            "column",
+				"width":          "auto",
+				"vertical_align": "center",
+				"elements":       []map[string]any{btnArxiv},
+			})
+		}
+		btnRow := map[string]any{
+			"tag":       "column_set",
+			"flex_mode": "none",
+			"columns":   columns,
+		}
+		elements = append(elements, titleEl, scoreEl)
+		if abstractEl != nil {
+			elements = append(elements, abstractEl)
+		}
+		elements = append(elements, btnRow)
+		if i < len(items)-1 {
+			elements = append(elements, hrElement())
+		}
+	}
+
+	// Separator before the bulk-action button so it reads as a footer-level
+	// action, distinct from the per-article buttons above.
+	elements = append(elements, hrElement())
+
+	// "Mark all as read" button — bulk-marks every article in this page.
+	// (Hover-to-read is the WebUI affordance; this is the Feishu equivalent.)
+	// When every article on the page is already read (status==3) we render
+	// the button in primary (blue) + change the label to "已标记" so the user
+	// can tell the click took. We do NOT set disabled: true because the
+	// Feishu renderer turns disabled buttons grey regardless of type, which
+	// would hide the blue.
+	markReadBtn := map[string]any{
+		"tag":  "button",
+		"text": plainText(fmt.Sprintf("✅ 一键已阅本页 %d 篇", len(pageIDs))),
+		"type": "default",
+		"value": map[string]any{
+			"action":    "recommend:mark-read-page",
+			"paper_ids": pageIDs,
+		},
+		"width": "default",
+	}
+	allRead := len(items) > 0
+	for _, it := range items {
+		if it.Status != 3 {
+			allRead = false
+			break
+		}
+	}
+	if allRead {
+		markReadBtn["text"] = plainText(fmt.Sprintf("✅ 已标记本页 %d 篇", len(pageIDs)))
+		markReadBtn["type"] = "primary"
+	}
+	elements = append(elements, markReadBtn)
+
+	// Footer
+	elements = append(elements, hrElement())
+	elements = append(elements, noteElement("👍 点赞 · 👎 点踩 · 🤖 总结后对话 · 📑 打开 PDF"))
+
+	c["body"] = map[string]any{"elements": elements}
 	return marshalCard(c)
 }
 

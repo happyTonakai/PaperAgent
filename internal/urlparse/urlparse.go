@@ -193,7 +193,7 @@ func fetchArxivHTMLRaw(url string) (string, error) {
 		},
 	}
 
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv HTML: %w", err)
 	}
@@ -257,6 +257,9 @@ func stripHTML(html string) string {
 }
 
 var arxivTitleRe = regexp.MustCompile(`<title>\[([^\]]+)\]\s+(.*?)</title>`)
+var arxivAbstractRe = regexp.MustCompile(`<blockquote class="abstract[^"]*">\s*(.*?)</blockquote>`)
+var arxivMetaAbstractRe = regexp.MustCompile(`<meta\s+name="citation_abstract"\s+content="([^"]+)"`)
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 
 // FetchArxivTitle fetches the arXiv abstract page and extracts the paper title from the HTML <title> tag.
 // Format: "[arxivID] Paper Title" → returns "Paper Title".
@@ -264,7 +267,7 @@ func FetchArxivTitle(arxivID string) (string, error) {
 	url := "https://arxiv.org/abs/" + arxivID
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv page: %w", err)
 	}
@@ -289,6 +292,49 @@ func FetchArxivTitle(arxivID string) (string, error) {
 	return string(matches[2]), nil
 }
 
+// FetchArxivAbstract fetches the arXiv abstract page and extracts the paper abstract.
+// Returns the plain-text abstract (stripped of HTML tags).
+func FetchArxivAbstract(arxivID string) (string, error) {
+	url := "https://arxiv.org/abs/" + arxivID
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := doGet(client, url)
+	if err != nil {
+		return "", fmt.Errorf("fetching arxiv page: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("arxiv HTTP %d", resp.StatusCode)
+	}
+
+	// Read full body (abstract pages are small, typically <50KB)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading arxiv page: %w", err)
+	}
+
+	// Try meta tag first (citation_abstract)
+	if matches := arxivMetaAbstractRe.FindSubmatch(body); len(matches) >= 2 {
+		return strings.TrimSpace(string(matches[1])), nil
+	}
+
+	// Fallback: blockquote.abstract
+	if matches := arxivAbstractRe.FindSubmatch(body); len(matches) >= 2 {
+		raw := string(matches[1])
+		// Strip HTML tags inside the blockquote
+		raw = htmlTagRe.ReplaceAllString(raw, "")
+		// Decode common entities
+		raw = strings.NewReplacer(
+			"&amp;", "&", "&lt;", "<", "&gt;", ">",
+			"&quot;", "\"", "&#39;", "'",
+		).Replace(raw)
+		return strings.TrimSpace(raw), nil
+	}
+
+	return "", fmt.Errorf("abstract not found in arxiv page")
+}
+
 func tryArxiv2Text(url string) (string, error) {
 	// Check if arxiv2text is available
 	path, err := exec.LookPath("arxiv2text")
@@ -307,7 +353,7 @@ func tryArxiv2Text(url string) (string, error) {
 
 func httpFetch(url string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := doGet(client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching URL: %w", err)
 	}
@@ -323,6 +369,16 @@ func httpFetch(url string) (string, error) {
 	}
 
 	return string(body), nil
+}
+
+// doGet sends a GET request with a User-Agent header set (arXiv requires it).
+func doGet(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "PaperAgent/1.0")
+	return client.Do(req)
 }
 
 // LoadFile loads content from a file path.

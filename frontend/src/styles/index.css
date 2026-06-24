@@ -312,3 +312,336 @@ pre code.hljs {
   top: 1rem !important;
   right: 1rem !important;
 }
+
+/* ===== Recommend Tab ===== */
+.recommend-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.recommend-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border-light);
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.recommend-toolbar .filter-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.recommend-toolbar .filter-tabs button {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82em;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+}
+
+.recommend-toolbar .filter-tabs button.active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+}
+
+.recommend-toolbar .filter-tabs button:hover:not(.active) {
+  color: var(--color-text);
+  background: var(--color-bg-elevated);
+}
+
+.recommend-toolbar .toolbar-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.recommend-toolbar .toolbar-actions button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78em;
+  border-radius: 0.5rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+  white-space: nowrap;
+}
+
+.recommend-toolbar .toolbar-actions button:hover:not(:disabled) {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.recommend-toolbar .toolbar-actions button.active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  border-color: var(--color-accent-border);
+}
+
+.recommend-toolbar .toolbar-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recommend-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+}
+
+/* Article List */
+.article-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.recommend-loading,
+.recommend-error,
+.recommend-empty {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.92em;
+}
+
+.article-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+.article-load-more button {
+  padding: 0.5rem 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.article-load-more button:hover:not(:disabled) {
+  border-color: var(--color-accent-border);
+  color: var(--color-accent);
+}
+
+.article-load-more button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Article Card */
+.article-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  transition: box-shadow 200ms ease, border-color 200ms ease, opacity 200ms ease;
+}
+
+.article-card:hover {
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Status accents use inset box-shadow instead of border-left so the
+   content doesn't shift ~2px when the accent turns on (which was visible
+   as a "卡顿" / jiggle on the read-state transition). */
+.article-card[data-status="2"] {
+  box-shadow: inset 3px 0 0 0 #22c55e;
+}
+
+.article-card[data-status="-1"] {
+  box-shadow: inset 3px 0 0 0 var(--color-danger);
+}
+
+.article-card[data-status="3"] {
+  opacity: 0.55;
+  box-shadow: inset 3px 0 0 0 var(--color-text-muted);
+}
+
+.article-card[data-status="3"]:hover {
+  opacity: 0.9;
+}
+
+.article-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.75em;
+}
+
+.article-score {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.article-category {
+  color: var(--color-text-muted);
+  font-size: 0.72em;
+  background: var(--color-bg-elevated);
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+}
+
+.article-title {
+  font-family: var(--font-display);
+  font-size: 1.1em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 0 0 0.3rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.article-title:hover {
+  color: var(--color-accent);
+}
+
+.article-author {
+  font-size: 0.82em;
+  color: var(--color-text-secondary);
+  margin: 0 0 0.4rem;
+}
+
+.article-abstract {
+  font-size: 0.92em;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  margin: 0 0 0.6rem;
+  white-space: pre-wrap;
+}
+
+/* Clickable URL rendered inside the article abstract. Stays subdued so
+   it doesn't fight the surrounding prose, but underlines on hover so the
+   affordance is discoverable without making the whole paragraph look
+   like a wall of links. Uses currentColor so dark-mode / theme swaps
+   follow the surrounding text without a separate rule. */
+.article-abstract .abstract-link {
+  color: var(--color-accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 150ms ease;
+}
+
+.article-abstract .abstract-link:hover {
+  border-bottom-color: var(--color-accent);
+}
+
+.article-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.article-votes {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.75em;
+  color: var(--color-text-muted);
+}
+
+.article-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.btn-action {
+  padding: 0.2rem 0.4rem;
+  font-size: 0.88em;
+  border: none;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-action:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+}
+
+.btn-action.active {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.btn-action.has-comment {
+  color: var(--color-accent);
+}
+
+.btn-action.btn-chat {
+  color: var(--color-accent);
+}
+
+.article-comment-box {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.article-comment-box textarea {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82em;
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: none;
+  outline: none;
+}
+
+.article-comment-box .comment-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.article-comment-box .comment-actions button {
+  padding: 0.2rem 0.6rem;
+  font-size: 0.78em;
+  border-radius: 0.35rem;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.article-comment-box .comment-actions button:first-child {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+/* ===== Accordion (settings prompts) ===== */
+.accordion-item {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.accordion-item.open {
+  grid-template-rows: 1fr;
+}
+.accordion-item > .accordion-content {
+  overflow: hidden;
+  min-height: 0;
+}

@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/config"
+	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/export"
 	"github.com/happyTonakai/paperagent/internal/prompt"
 	"github.com/happyTonakai/paperagent/internal/session"
@@ -38,6 +40,7 @@ type paperResponse struct {
 	Title                string            `json:"title"`
 	SourceURL            string            `json:"source_url"`
 	ArxivID              string            `json:"arxiv_id,omitempty"`
+	GitHubURL            string            `json:"github_url,omitempty"`
 	InitialSummary       string            `json:"initial_summary"`
 	ModelUsed            string            `json:"model_used"`
 	TotalTokens          int               `json:"total_tokens_used,omitempty"`
@@ -135,6 +138,23 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[new-paper] title from HTML: %s", title)
 		} else {
 			log.Printf("[new-paper] HTML title extraction failed for %s: %v", arxivID, err)
+		}
+
+		// Fetch the arXiv abstract page to extract a GitHub repo URL. Done
+		// best-effort (same as FetchArxivTitle): failure does not block paper
+		// creation. The abstract is also cached in chat_paper_abstracts so the
+		// preference-update pipeline can read it (this fills a pre-existing
+		// gap where the cache was never populated for Q&A papers).
+		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil && abstract != "" {
+			if gh := urlparse.ExtractGitHubURL(abstract); gh != "" {
+				paper.GitHubURL = gh
+				log.Printf("[new-paper] github url from abstract: %s", gh)
+			}
+			if err := database.UpsertChatPaperAbstract(arxivID, abstract); err != nil {
+				log.Printf("[new-paper] cache abstract: %v", err)
+			}
+		} else {
+			log.Printf("[new-paper] abstract extraction failed for %s: %v", arxivID, err)
 		}
 	}
 
@@ -468,7 +488,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[chat] question: %s", req.Question)
+	q := req.Question
+	if utf8.RuneCountInString(q) > 20 {
+		q = strings.ToValidUTF8(string([]rune(q)[:20]), "") + "…"
+	}
+	log.Printf("[chat] question: %s", q)
 
 	round := paper.CurrentRound() + 1
 
@@ -481,6 +505,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		SkipContext: req.SkipContext,
 	}
 	paper.AddMessage(userMsg)
+	if err := paper.Save(); err != nil {
+		unlock()
+		log.Printf("[chat] failed to save user message: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save user message"})
+		return
+	}
 
 	// Build messages for CHAT phase — dynamic token-aware truncation.
 	// New papers have paper.Content stripped of references at creation time.
@@ -596,6 +626,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[chat] answer complete: %d chars", len(answer))
 
 	unlock = s.lockPaper(id)
+	// Re-load to get latest state after SSE stream (another request may have
+	// modified the paper during the streaming window).
+	paper, err = session.LoadPaperByRef(id)
+	if err != nil {
+		unlock()
+		log.Printf("[chat] reload failed after stream: %v", err)
+		sw.WriteError("failed to save: paper not found")
+		return
+	}
 	// Save assistant message
 	assistantMsg := session.Message{
 		RoundNumber:      round,
@@ -1067,6 +1106,21 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
+// handleConfigStatus returns a lightweight status payload used by the Web UI
+// to detect a first-run state (config.yaml missing on disk) and auto-open
+// the settings dialog instead of showing a blank UI.
+func (s *Server) handleConfigStatus(w http.ResponseWriter, r *http.Request) {
+	s.cfg.RLock()
+	apiKey := s.cfg.API.APIKey
+	apiKeyConfigured := apiKey != "" && !strings.HasPrefix(apiKey, "${")
+	s.cfg.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"config_exists":      config.ConfigExists(),
+		"api_key_configured": apiKeyConfigured,
+	})
+}
+
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfg.RLock()
 	apiKey := s.cfg.API.APIKey
@@ -1091,17 +1145,17 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"default_model":  s.cfg.API.DefaultModel,
 		},
 		"obsidian": map[string]string{
-			"vault_path":    s.cfg.Obsidian.VaultPath,
-			"export_folder": s.cfg.Obsidian.ExportFolder,
+			"export_path": s.cfg.Obsidian.ExportPath,
 		},
 		"ui": map[string]int{
 			"min_recent_rounds": s.cfg.UI.MinRecentRounds,
 			"max_input_tokens":  s.cfg.UI.MaxInputTokens,
 		},
 		"feishu": map[string]interface{}{
-			"enabled":    s.cfg.Feishu.Enabled,
-			"app_id":     maskFeishu(s.cfg.Feishu.AppID),
-			"app_secret": maskFeishu(s.cfg.Feishu.AppSecret),
+			"enabled":                s.cfg.Feishu.Enabled,
+			"app_id":                 maskFeishu(s.cfg.Feishu.AppID),
+			"app_secret":             maskFeishu(s.cfg.Feishu.AppSecret),
+			"daily_recommend_chat_id": s.cfg.Feishu.DailyRecommendChatID,
 		},
 	}
 	if hasCustomKey {
@@ -1121,12 +1175,8 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.cfg.Lock()
-	if v, ok := updates["api_key"].(string); ok && v != "" {
-		if isEnvVarName(v) {
-			s.cfg.API.APIKey = "${" + v + "}"
-		} else {
-			s.cfg.API.APIKey = v
-		}
+	if v, ok := updates["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
+		s.cfg.API.APIKey = resolveAPIKeyInput(v)
 	}
 	if v, ok := updates["base_url"].(string); ok && v != "" {
 		s.cfg.API.BaseURL = v
@@ -1140,11 +1190,8 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if v, ok := updates["max_input_tokens"].(float64); ok {
 		s.cfg.UI.MaxInputTokens = int(v)
 	}
-	if v, ok := updates["obsidian_vault_path"].(string); ok {
-		s.cfg.Obsidian.VaultPath = v
-	}
-	if v, ok := updates["obsidian_export_folder"].(string); ok {
-		s.cfg.Obsidian.ExportFolder = v
+	if v, ok := updates["obsidian_export_path"].(string); ok {
+		s.cfg.Obsidian.ExportPath = v
 	}
 	if v, ok := updates["feishu_enabled"].(bool); ok {
 		s.cfg.Feishu.Enabled = v
@@ -1153,9 +1200,12 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Feishu.AppID = v
 	}
 	if v, ok := updates["feishu_app_secret"].(string); ok {
-		if v != "" {
+		if v != "" && !strings.Contains(v, "••••") {
 			s.cfg.Feishu.AppSecret = v
 		}
+	}
+	if v, ok := updates["feishu_daily_recommend_chat_id"].(string); ok {
+		s.cfg.Feishu.DailyRecommendChatID = v
 	}
 	s.cfg.Unlock()
 
@@ -1236,7 +1286,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build context
+	// Build context.
+	// Skip round 0: Q is the full paper text and A is the initial summary,
+	// the latter is already provided via 初始总结.
 	var context strings.Builder
 	if paper.InitialSummary != "" {
 		context.WriteString("## 初始总结\n\n")
@@ -1245,6 +1297,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 	}
 	context.WriteString("## 对话历史\n\n")
 	for _, msg := range paper.Messages {
+		if msg.RoundNumber <= 0 {
+			continue
+		}
 		if msg.Role == "user" {
 			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
 		} else {
@@ -1300,7 +1355,9 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build context for summarize
+	// Build context for summarize.
+	// Skip round 0: Q is the full paper text and A is the initial summary,
+	// the latter is already provided via 初始总结.
 	var context strings.Builder
 	if paper.InitialSummary != "" {
 		context.WriteString("## 初始总结\n\n")
@@ -1309,6 +1366,9 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 	}
 	context.WriteString("## 对话历史\n\n")
 	for _, msg := range paper.Messages {
+		if msg.RoundNumber <= 0 {
+			continue
+		}
 		if msg.Role == "user" {
 			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
 		} else {
@@ -1480,6 +1540,7 @@ func paperToResponse(p *session.Paper) paperResponse {
 		Title:                  p.Title,
 		SourceURL:              p.SourceURL,
 		ArxivID:                p.ArxivID,
+		GitHubURL:              p.GitHubURL,
 		InitialSummary:         p.InitialSummary,
 		ModelUsed:              p.ModelUsed,
 		TotalTokens:            p.TotalTokens,

@@ -70,10 +70,13 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
-	Tools    []Tool        `json:"tools,omitempty"`
+	Model         string        `json:"model"`
+	Messages      []ChatMessage `json:"messages"`
+	Stream        bool          `json:"stream"`
+	StreamOptions *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options,omitempty"`
+	Tools         []Tool        `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
@@ -108,24 +111,54 @@ type StreamChunk struct {
 	Err              error
 }
 
+// Client holds an HTTP client and API endpoint configuration for OpenAI-compatible requests.
 type Client struct {
-	cfg    *config.Config
-	client *http.Client
+	baseURL string
+	apiKey  string
+	model   string
+	http    *http.Client
 }
 
+// keyPrefix returns the first 5 chars of an API key for diagnostic logging,
+// or "***" if the key is too short. Never returns the full key.
+func keyPrefix(s string) string {
+	if len(s) < 5 {
+		return "***"
+	}
+	return s[:5]
+}
+
+// NewClient creates a Client from the global config (Q&A chat API).
 func NewClient(cfg *config.Config) *Client {
+	return &Client{
+		baseURL: cfg.API.BaseURL,
+		apiKey:  cfg.API.APIKey,
+		model:   cfg.API.DefaultModel,
+		http:    newHTTPClient(),
+	}
+}
+
+// NewClientFromEndpoint creates a Client with explicit endpoint parameters.
+// Used for scoring, translation, or any API that differs from the main chat API.
+func NewClientFromEndpoint(baseURL, apiKey, model string) *Client {
+	return &Client{
+		baseURL: baseURL,
+		apiKey:  apiKey,
+		model:   model,
+		http:    newHTTPClient(),
+	}
+}
+
+func newHTTPClient() *http.Client {
 	tr := &http.Transport{
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 10 * time.Second,
 		Proxy:                http.ProxyFromEnvironment,
 	}
-	return &Client{
-		cfg: cfg,
-		client: &http.Client{
-			Transport: tr,
-			Timeout:   5 * time.Minute,
-		},
+	return &http.Client{
+		Transport: tr,
+		Timeout:   5 * time.Minute,
 	}
 }
 
@@ -134,6 +167,7 @@ func NewClient(cfg *config.Config) *Client {
 // returns a single chunk with ToolCalls populated, then closes.
 // The caller should check chunk.ToolCalls first; if non-nil, handle the tool call
 // and issue a follow-up stream.
+// model can be empty string to use the client's default model.
 func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) <-chan StreamChunk {
 	ch := make(chan StreamChunk, 64)
 
@@ -144,7 +178,14 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 			Model:    model,
 			Messages: messages,
 			Stream:   true,
+			StreamOptions: &struct {
+				IncludeUsage bool `json:"include_usage"`
+			}{IncludeUsage: true},
 			Tools:    tools,
+		}
+
+		if model == "" {
+			req.Model = c.model
 		}
 
 		body, err := json.Marshal(req)
@@ -153,16 +194,16 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 			return
 		}
 
-		url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
+		url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
 		httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 		if err != nil {
 			ch <- StreamChunk{Err: err}
 			return
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-		resp, err := c.client.Do(httpReq)
+		resp, err := c.http.Do(httpReq)
 		if err != nil {
 			ch <- StreamChunk{Err: err}
 			return
@@ -171,7 +212,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp.Body)
-			ch <- StreamChunk{Err: fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))}
+			ch <- StreamChunk{Err: fmt.Errorf("API error %d (key=%s...): %s", resp.StatusCode, keyPrefix(c.apiKey), string(bodyBytes))}
 			return
 		}
 
@@ -293,7 +334,11 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 // definitions are included.
 // Returns (content, toolCalls, promptTokens, completionTokens, totalTokens, cachedTokens, error).
 // If the LLM responds with a tool call, content will be empty and toolCalls populated.
+// model can be empty string to use the client's default model.
 func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (string, []ToolCallCompleted, int, int, int, int, error) {
+	if model == "" {
+		model = c.model
+	}
 	req := ChatRequest{
 		Model:    model,
 		Messages: messages,
@@ -306,15 +351,15 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 		return "", nil, 0, 0, 0, 0, err
 	}
 
-	url := strings.TrimRight(c.cfg.API.BaseURL, "/") + "/chat/completions"
+	url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", nil, 0, 0, 0, 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.API.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.http.Do(httpReq)
 	if err != nil {
 		return "", nil, 0, 0, 0, 0, err
 	}
@@ -322,7 +367,7 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", nil, 0, 0, 0, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(bodyBytes))
+		return "", nil, 0, 0, 0, 0, fmt.Errorf("API error %d (key=%s...): %s", resp.StatusCode, keyPrefix(c.apiKey), string(bodyBytes))
 	}
 
 	var cr chatResponse
@@ -367,6 +412,78 @@ func (c *Client) Chat(model string, messages []ChatMessage, tools []Tool) (strin
 	}
 
 	return msg.Content, nil, promptTokens, completionTokens, totalTokens, cachedTokens, nil
+}
+
+// articleTranslation is the JSON shape returned by the translation model.
+type articleTranslation struct {
+	Title    string `json:"title"`
+	Abstract string `json:"abstract"`
+}
+
+// TranslateArticle translates a single article's title and abstract in one API call.
+// The model is asked to return JSON {"title":..., "abstract":...} so callers
+// don't have to disambiguate from a single text blob.
+func (c *Client) TranslateArticle(model, title, abstract string) (string, string, error) {
+	if title == "" && abstract == "" {
+		return "", "", nil
+	}
+	var user strings.Builder
+	user.WriteString("Title:\n")
+	user.WriteString(title)
+	if abstract != "" {
+		user.WriteString("\n\nAbstract:\n")
+		user.WriteString(abstract)
+	}
+
+	prompt := `Translate the title and abstract of an academic paper from English to Chinese.
+Return a JSON object with two fields: "title" and "abstract" containing the Chinese translations.
+Rules:
+1. Translate the WHOLE title and abstract into Chinese. Keep ONLY individual technical terms, model names, and proper nouns in their original English form (e.g. "Transformer", "BERT", "ResNet", "GAN", "Bach"). Do NOT leave an entire sentence untranslated just because it contains such words.
+2. Preserve LaTeX math expressions and code snippets exactly as-is
+3. Output ONLY the JSON object, no explanations, no markdown fences, no code blocks`
+
+	messages := []ChatMessage{
+		{Role: "system", Content: prompt},
+		{Role: "user", Content: user.String()},
+	}
+	result, _, _, _, _, _, err := c.Chat(model, messages, nil)
+	if err != nil {
+		return "", "", err
+	}
+
+	jsonStr := extractJSONObject(result)
+	var tr articleTranslation
+	if err := json.Unmarshal([]byte(jsonStr), &tr); err != nil {
+		return "", "", fmt.Errorf("parse translation JSON: %w (raw: %q)", err, truncate(result, 200))
+	}
+	return tr.Title, tr.Abstract, nil
+}
+
+// extractJSONObject pulls the first {...} JSON object from s. Handles ```json
+// fences and surrounding prose; returns the original string if no braces found.
+func extractJSONObject(s string) string {
+	if i := strings.Index(s, "```"); i >= 0 {
+		if j := strings.Index(s[i+3:], "```"); j >= 0 {
+			inner := s[i+3 : i+3+j]
+			if nl := strings.Index(inner, "\n"); nl >= 0 {
+				inner = inner[nl+1:]
+			}
+			s = inner
+		}
+	}
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start < 0 || end < 0 || end < start {
+		return s
+	}
+	return s[start : end+1]
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func (c *Client) ExtractTitle(model string, content string) (string, error) {

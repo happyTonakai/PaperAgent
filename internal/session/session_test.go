@@ -760,6 +760,62 @@ func TestStripReferences_NoRefs(t *testing.T) {
 	}
 }
 
+// TestPaperGitHubURL_RoundTrip verifies that the GitHubURL field survives
+// SavePaper → LoadPaper (i.e. the JSON file format includes the field).
+// Used by the WebUI to render the GitHub icon button next to the PDF button.
+func TestPaperGitHubURL_RoundTrip(t *testing.T) {
+	setupTestDir(t)
+
+	p := &Paper{
+		SessionID: "99999999-9999-4999-8999-999999999999",
+		Title:     "Test paper",
+		ArxivID:   "2401.12345",
+		GitHubURL: "https://github.com/owner/repo",
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "body", TokenCount: 1},
+			{RoundNumber: 0, Role: "assistant", Content: "summary", TokenCount: 2, SkipContext: true},
+		},
+	}
+	if err := SavePaper(p); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := LoadPaperByRef(p.SessionID)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.GitHubURL != "https://github.com/owner/repo" {
+		t.Errorf("GitHubURL round-trip = %q, want %q", loaded.GitHubURL, "https://github.com/owner/repo")
+	}
+}
+
+// TestPaperGitHubURL_Empty verifies that an empty GitHubURL is omitted from
+// the JSON (so old papers without a GitHub link don't carry a noisy "" field
+// on disk).
+func TestPaperGitHubURL_Empty(t *testing.T) {
+	setupTestDir(t)
+
+	p := &Paper{
+		SessionID: "88888888-8888-4888-8888-888888888888",
+		Title:     "No GitHub",
+		ArxivID:   "2401.12346",
+		Messages: []Message{
+			{RoundNumber: 0, Role: "user", Content: "body", TokenCount: 1},
+		},
+	}
+	if err := SavePaper(p); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(config.PapersDir(), p.SessionID+".json"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(raw), "github_url") {
+		t.Errorf("empty GitHubURL should be omitted from JSON, got: %s", raw)
+	}
+}
+
 // --- SetAnchorFromTokens tests ---
 
 func TestSetAnchorFromTokens_ExceedsBudget(t *testing.T) {

@@ -53,8 +53,7 @@ func TestExportToObsidian(t *testing.T) {
 
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    tmpDir,
-			ExportFolder: "Papers",
+			ExportPath: filepath.Join(tmpDir, "Papers"),
 		},
 	}
 
@@ -67,8 +66,12 @@ func TestExportToObsidian(t *testing.T) {
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Messages: []session.Message{
-			{RoundNumber: 0, Role: "user", Content: "What is this?", TokenCount: 10, CreatedAt: time.Now()},
-			{RoundNumber: 0, Role: "assistant", Content: "This is a test.", TokenCount: 20, CreatedAt: time.Now()},
+			// Round 0: paper content + initial summary. Should NOT appear in 问答记录.
+			{RoundNumber: 0, Role: "user", Content: "FULL_PAPER_TEXT", TokenCount: 10, CreatedAt: time.Now()},
+			{RoundNumber: 0, Role: "assistant", Content: "INITIAL_SUMMARY_DUP", TokenCount: 20, CreatedAt: time.Now()},
+			// Round 1: real Q&A. Should appear in 问答记录.
+			{RoundNumber: 1, Role: "user", Content: "What is this?", TokenCount: 10, CreatedAt: time.Now()},
+			{RoundNumber: 1, Role: "assistant", Content: "This is a test.", TokenCount: 20, CreatedAt: time.Now()},
 		},
 	}
 
@@ -111,19 +114,31 @@ func TestExportToObsidian(t *testing.T) {
 	if !strings.Contains(s, "This is a test.") {
 		t.Error("missing answer content")
 	}
+	if strings.Contains(s, "FULL_PAPER_TEXT") {
+		t.Error("round 0 paper content should not appear in 问答记录")
+	}
+	if strings.Contains(s, "INITIAL_SUMMARY_DUP") {
+		t.Error("round 0 assistant message should not appear in 问答记录")
+	}
+	if strings.Contains(s, "第 0 轮") {
+		t.Error("round 0 should not appear as a Q&A round")
+	}
+	if !strings.Contains(s, "第 1 轮") {
+		t.Error("round 1 heading missing from 问答记录")
+	}
 }
 
 func TestExportNoVaultPath(t *testing.T) {
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath: "",
+			ExportPath: "",
 		},
 	}
 	p := &session.Paper{ID: 1, Title: "Test"}
 
 	_, err := ExportToObsidian(cfg, p)
 	if err == nil {
-		t.Error("expected error for empty vault path")
+		t.Error("expected error for empty export path")
 	}
 }
 
@@ -131,8 +146,7 @@ func TestExportNoTitle(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    tmpDir,
-			ExportFolder: "Papers",
+			ExportPath: filepath.Join(tmpDir, "Papers"),
 		},
 	}
 	p := &session.Paper{ID: 42, Content: "test"}
@@ -149,12 +163,11 @@ func TestExportNoTitle(t *testing.T) {
 
 func TestExportCreatesDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
-	vaultPath := filepath.Join(tmpDir, "NewVault")
+	exportPath := filepath.Join(tmpDir, "NewVault", "Research", "Papers")
 
 	cfg := &config.Config{
 		Obsidian: config.ObsidianConfig{
-			VaultPath:    vaultPath,
-			ExportFolder: "Research/Papers",
+			ExportPath: exportPath,
 		},
 	}
 	p := &session.Paper{ID: 1, Title: "Test"}
@@ -164,7 +177,7 @@ func TestExportCreatesDirectory(t *testing.T) {
 		t.Fatalf("export should create dirs, got error: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(vaultPath, "Research", "Papers")); os.IsNotExist(err) {
+	if _, err := os.Stat(exportPath); os.IsNotExist(err) {
 		t.Error("export directory should have been created")
 	}
 }

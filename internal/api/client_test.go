@@ -506,3 +506,80 @@ func TestStreamChunk_ToolCallsPriority(t *testing.T) {
 		t.Error("Done should be true when tool call is complete")
 	}
 }
+
+func TestExtractJSONObject(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		want   string
+	}{
+		{
+			name:  "raw JSON",
+			input: `{"title":"标题","abstract":"摘要"}`,
+			want:  `{"title":"标题","abstract":"摘要"}`,
+		},
+		{
+			name:  "json fenced",
+			input: "```json\n{\"title\":\"标题\",\"abstract\":\"摘要\"}\n```",
+			want:  `{"title":"标题","abstract":"摘要"}`,
+		},
+		{
+			name:  "fenced with leading prose",
+			input: "Here is the translation:\n```json\n{\"title\":\"标题\",\"abstract\":\"摘要\"}\n```\nDone.",
+			want:  `{"title":"标题","abstract":"摘要"}`,
+		},
+		{
+			name:  "prose around raw json",
+			input: "下面是结果: {\"title\":\"标题\",\"abstract\":\"摘要\"} 完毕",
+			want:  `{"title":"标题","abstract":"摘要"}`,
+		},
+		{
+			name:  "no braces passes through",
+			input: "no json here",
+			want:  "no json here",
+		},
+		{
+			name:  "fenced with prose inside",
+			input: "```json\nSure! {\"title\":\"T\",\"abstract\":\"A\"} \n```",
+			want:  `{"title":"T","abstract":"A"}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractJSONObject(tc.input)
+			if got != tc.want {
+				t.Errorf("extractJSONObject(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestArticleTranslationJSON(t *testing.T) {
+	raw := `{"title":"基于 Transformer 的语音合成","abstract":"本文提出..."}`
+	var tr articleTranslation
+	if err := json.Unmarshal([]byte(raw), &tr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if tr.Title != "基于 Transformer 的语音合成" {
+		t.Errorf("title: got %q", tr.Title)
+	}
+	if tr.Abstract != "本文提出..." {
+		t.Errorf("abstract: got %q", tr.Abstract)
+	}
+}
+
+func TestKeyPrefix(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", "***"},
+		{"ab", "***"},
+		{"abcde", "abcde"},
+		{"sk-cp-3nJsTcn_k5Be8IFEqUpy-68Jo5Ih3RqN6m43w5iNEimiYtQRlMnjybN0WrQPZISbCfmERtv7ekm8iWz7VAv2o5MLdtoFiWasls8DtOzCeZrnQpjF1hWeBss", "sk-cp"},
+	}
+	for _, tc := range cases {
+		if got := keyPrefix(tc.in); got != tc.want {
+			t.Errorf("keyPrefix(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

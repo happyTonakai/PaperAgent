@@ -4,42 +4,14 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
-import { RefreshCw, Maximize2, Minimize2, Sun, Moon, Monitor } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePaper } from '../hooks/usePapers'
 import { useSSE } from '../hooks/useSSE'
 import { useAppStore } from '../stores/appStore'
 import { MessageBubble } from './MessageBubble'
 import { RoundNav } from './RoundNav'
-import { FontSizeButton } from './FontSizeButton'
-import { FontFamilyButton } from './FontFamilyButton'
-import type { Message, Theme, Paper } from '../types'
-
-function getPdfUrl(arxivId: string): string {
-  return `https://arxiv.org/pdf/${arxivId}`
-}
-
-function SourceLink({ paper }: { paper: Paper | undefined }) {
-  if (!paper?.arxiv_id) return null
-  return (
-    <a
-      href={getPdfUrl(paper.arxiv_id)}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95 ml-1"
-      style={{ color: 'var(--color-text-muted)' }}
-      title="打开 PDF"
-      aria-label="打开论文 PDF"
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-        <polyline points="14 2 14 8 20 8" />
-        <line x1="8" y1="13" x2="16" y2="13" />
-        <line x1="8" y1="17" x2="12" y2="17" />
-      </svg>
-    </a>
-  )
-}
+import type { Message } from '../types'
 
 const remarkPlugins = [remarkMath, remarkGfm]
 const rehypePlugins = [rehypeKatex, rehypeHighlight]
@@ -79,7 +51,7 @@ export function ChatView() {
   const {
     currentPaperId,
     pendingPaperId, pendingSummary, pendingError, clearPending,
-    theme, setTheme, contentWidth, toggleContentWidth,
+    contentWidth,
     connected,
   } = useAppStore()
   const { data: paper, isLoading, refetch } = usePaper(currentPaperId)
@@ -391,12 +363,11 @@ export function ChatView() {
     }
   }
 
-  // --- Controls button style ---
-  const controlBtnClass = "p-1.5 rounded-md transition-all duration-200 hover:scale-105 active:scale-95"
-
   return (
     <div className="flex-1 flex flex-col min-h-0 relative">
-      {/* Title bar */}
+      {/* Title bar — only the paper title. Global controls (width / theme /
+          font / size / settings) live in the App-level tab bar; the per-paper
+          PDF link lives next to the send button in InputBox. */}
       <div
         className="flex-shrink-0 px-5 py-3 flex items-center gap-3"
         style={{
@@ -425,35 +396,6 @@ export function ChatView() {
           )}
           {paper?.title || '加载中...'}
         </h2>
-
-        {/* Controls group */}
-        <div className="flex items-center gap-0.5" style={{ fontFamily: 'var(--font-ui)' }}>
-          <button
-            onClick={toggleContentWidth}
-            className={controlBtnClass}
-            style={{ color: 'var(--color-text-muted)' }}
-            title={contentWidth === 'full' ? '窄屏阅读' : '宽屏阅读'}
-            aria-label={contentWidth === 'full' ? '切换到窄屏' : '切换到宽屏'}
-          >
-            {contentWidth === 'full' ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
-            onClick={() => {
-              const cycle: Theme[] = ['light', 'dark', 'system']
-              const idx = cycle.indexOf(theme)
-              setTheme(cycle[(idx + 1) % cycle.length])
-            }}
-            className={controlBtnClass}
-            style={{ color: 'var(--color-text-muted)' }}
-            title={`主题: ${theme === 'light' ? '浅色' : theme === 'dark' ? '深色' : '跟随系统'}`}
-            aria-label="切换主题"
-          >
-            {theme === 'light' ? <Sun size={15} /> : theme === 'dark' ? <Moon size={15} /> : <Monitor size={15} />}
-          </button>
-          <FontFamilyButton />
-          <FontSizeButton />
-          <SourceLink paper={paper} />
-        </div>
       </div>
 
       {/* Messages container */}
