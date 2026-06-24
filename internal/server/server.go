@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/api"
+	"github.com/happyTonakai/paperagent/internal/chat"
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/feishu"
@@ -58,6 +59,10 @@ type Server struct {
 	logBuf     *logBuffer
 	feishuBot  *feishu.Bot
 	sched      *scheduler.Scheduler
+	// chatEngine runs the shared Q&A pipeline used by handleChat and the
+	// Feishu bot. It is constructed once at boot so its internal state
+	// (cfg, llm client) is shared across all requests.
+	chatEngine *chat.Engine
 }
 
 // SetFeishuBot sets the feishu bot reference for hot-reload support.
@@ -75,11 +80,13 @@ func (s *Server) SetFeishuBot(b *feishu.Bot) {
 func New(cfg *config.Config) *Server {
 	lb := newLogBuffer()
 	initLogCapture(lb)
+	apiClient := api.NewClient(cfg)
 	s := &Server{
-		cfg:    cfg,
-		api:    api.NewClient(cfg),
-		mux:    http.NewServeMux(),
-		logBuf: lb,
+		cfg:        cfg,
+		api:        apiClient,
+		mux:        http.NewServeMux(),
+		logBuf:     lb,
+		chatEngine: chat.NewEngine(apiClient, cfg),
 	}
 	s.registerRoutes()
 	s.startScheduler()

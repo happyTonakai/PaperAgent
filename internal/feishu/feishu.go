@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/api"
+	"github.com/happyTonakai/paperagent/internal/chat"
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/prompt"
@@ -926,137 +927,41 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 
 	round := paper.CurrentRound() + 1
 
-	// Build messages (exclude btw rounds from context) — dynamic token-aware truncation
-	recent := paper.RecentContextMessages()
-	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: paper.Content},
-		{Role: "user", Content: prompt.GetLight()},
-	}
-	for _, msg := range recent {
-		messages = append(messages, api.ChatMessage{Role: msg.Role, Content: msg.Content})
-	}
-	// Add current question
-	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
-
-	// Send initial "thinking" card
+	// Send initial "thinking" card. If the card send fails, fall back to a
+	// synchronous Chat() call and send the answer as plain text — this
+	// preserves the prior behavior where the user always gets an answer.
 	cardMsgID, _ := b.sendInteractiveCard(chatID, buildThinkingCard(paperID, paper.Title))
 	if cardMsgID == "" {
-		log.Printf("[feishu] failed to send thinking card")
-		// Fall back to text
+		log.Printf("[feishu] failed to send thinking card, falling back to text")
+		// Build messages inline for the fallback path. This duplicates the
+		// message construction the engine would do, but only on this rare
+		// fallback branch; the streaming path below uses the shared engine.
+		messages := chat.BuildMessages(paper, question, prompt.GetLight())
 		result, _, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, nil)
 		if chatErr != nil {
 			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
 			return
 		}
+		// Persist user + assistant messages on the fallback path so the
+		// answer is not lost from the paper history. We pass zero token
+		// counts because the synchronous Chat() call doesn't expose them;
+		// SetAnchorFromTokens still anchors the round correctly (the
+		// algorithm rounds up to min_recent_rounds when counts are zero).
+		paper.AddMessage(session.Message{RoundNumber: round, Role: "user", Content: question, TokenCount: session.EstimateTokens(question), SkipContext: skipContext})
+		paper.AddMessage(session.Message{RoundNumber: round, Role: "assistant", Content: result, TokenCount: session.EstimateTokens(result), SkipContext: skipContext})
+		paper.SetAnchorFromTokens(round, 0, 0, b.cfg.UI.MaxInputTokens, b.cfg.UI.MinRecentRounds)
+		paper.Save()
 		b.sendText(chatID, result)
 		return
 	}
 
-	// Multi-card streaming state
-	type chatCardSlot struct {
-		id      string
-		startAt int // byte offset in totalContent
-	}
-	slots := []chatCardSlot{{id: cardMsgID, startAt: 0}}
-
-	// Stream the answer
-	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages, nil)
-	var totalContent strings.Builder
-	var promptTokens, completionTokens, cachedTokens int
-	lastPatch := 0
-
-	for chunk := range ch {
-		if chunk.Err != nil {
-			log.Printf("[feishu] chat stream error: %v", chunk.Err)
-			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chunk.Err))
-			return
-		}
-		if chunk.Done {
-			promptTokens = chunk.PromptTokens
-			completionTokens = chunk.CompletionTokens
-			cachedTokens = chunk.CachedTokens
-			break
-		}
-		totalContent.WriteString(chunk.Content)
-		total := totalContent.String()
-
-		if len(total)-lastPatch < 200 {
-			continue
-		}
-		lastPatch = len(total)
-
-		active := &slots[len(slots)-1]
-		cardContent := total[active.startAt:]
-		isFirst := len(slots) == 1
-
-		fits, overflow := fitMarkdownContent(cardContent, func(c string) string {
-			converted := latexToUnicode(c)
-			if isFirst {
-				return buildChatStreamingCard(paperID, paper.Title, converted)
-			}
-			return buildChatStreamingContinuationCard(converted)
-		})
-
-		if overflow != "" {
-			// Freeze current card as a continuation card (converted)
-			b.patchCard(active.id, buildContinuationCard(latexToUnicode(fits)))
-
-			// Send new streaming continuation card (converted)
-			overflowStart := active.startAt + len(fits)
-			overflowContent := total[overflowStart:]
-			newID, _ := b.sendInteractiveCard(chatID, buildChatStreamingContinuationCard(latexToUnicode(overflowContent)))
-			if newID != "" {
-				slots = append(slots, chatCardSlot{id: newID, startAt: overflowStart})
-				log.Printf("[feishu] chat card full -> card #%d (total so far: %d chars)", len(slots), len(total))
-			}
-		} else {
-			if isFirst {
-				b.patchCard(active.id, buildChatStreamingCard(paperID, paper.Title, fits))
-			} else {
-				b.patchCard(active.id, buildChatStreamingContinuationCard(fits))
-			}
-		}
-	}
-
-	answer := totalContent.String()
-
-	// Save messages
-	paper.AddMessage(session.Message{
-		RoundNumber: round,
-		Role:        "user",
-		Content:     question,
-		TokenCount:  session.EstimateTokens(question),
-		SkipContext: skipContext,
-	})
-	paper.AddMessage(session.Message{
-		RoundNumber:      round,
-		Role:             "assistant",
-		Content:          answer,
-		TokenCount:       session.EstimateTokens(answer),
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		CachedTokens:     cachedTokens,
-		SkipContext:      skipContext,
-	})
-
-	paper.SetAnchorFromTokens(round, promptTokens, completionTokens, b.cfg.UI.MaxInputTokens, b.cfg.UI.MinRecentRounds)
-	paper.Save()
-
-	// Finalize last card
-	last := &slots[len(slots)-1]
-	lastContent := answer[last.startAt:]
-
-	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
-		return buildChatDoneCard(paperID, paper.Title, latexToUnicode(c), round, promptTokens, completionTokens, cachedTokens)
-	})
-
-	if overflow != "" {
-		// Last card still doesn't fit — freeze, send one more done card
-		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
-		_, _ = b.sendInteractiveCard(chatID, buildChatDoneCard(paperID, paper.Title, latexToUnicode(overflow), round, promptTokens, completionTokens, cachedTokens))
-	} else {
-		b.patchCard(last.id, buildChatDoneCard(paperID, paper.Title, latexToUnicode(fits), round, promptTokens, completionTokens, cachedTokens))
+	// Hand the rest off to the shared chat engine. The engine handles
+	// user-message persistence, LLM streaming (including tool-call
+	// follow-up), and assistant-message persistence + anchor update.
+	sink := newCardSink(b, chatID, paperID, paper.Title, cardMsgID, round)
+	engine := chat.NewEngine(b.apiClient, b.cfg)
+	if err := engine.Answer(context.Background(), paper, question, skipContext, sink); err != nil {
+		log.Printf("[feishu] chat engine error: %v", err)
 	}
 }
 
@@ -1262,9 +1167,9 @@ func (b *Bot) sendText(chatID, text string) {
 }
 
 // patchCard updates an existing interactive card via Patch API.
-func (b *Bot) patchCard(messageID, cardJSON string) {
+func (b *Bot) patchCard(messageID, cardJSON string) error {
 	if b.client == nil {
-		return
+		return fmt.Errorf("feishu: client not initialized")
 	}
 	ctx := context.Background()
 	resp, err := b.client.Im.Message.Patch(ctx,
@@ -1277,7 +1182,9 @@ func (b *Bot) patchCard(messageID, cardJSON string) {
 
 	if err != nil || !resp.Success() {
 		log.Printf("[feishu] patch card failed: err=%v %s", err, apiErrDetails(resp))
+		return fmt.Errorf("patch card %s: err=%v", messageID, err)
 	}
+	return nil
 }
 
 func apiErrDetails(resp interface{}) string {

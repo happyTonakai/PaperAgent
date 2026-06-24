@@ -417,9 +417,24 @@ func (s *Server) handleTogglePin(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleChat handles a chat request for a paper.
-// References are stripped from the paper content sent to the LLM and stored
-// separately. A get_references tool is defined so the LLM can request references
-// on demand (e.g., when the user asks about cited papers).
+//
+// The shared Q&A pipeline lives in internal/chat.Engine; this handler is
+// responsible only for:
+//   - acquiring the per-paper lock and loading the paper (with auto-recovery
+//     from source URL if the cached body is missing);
+//   - opening the SSE stream (headers must be flushed before the lock is
+//     released);
+//   - translating engine events into SSE events via sseSink.
+//
+// Lock semantics: the per-paper lock is held for the entire SSE stream.
+// The previous implementation released it during streaming to allow
+// concurrent rating/pin/title updates on the same paper; that was
+// possible because the old code re-loaded the paper from disk after
+// streaming. The new engine works off an in-memory paper pointer, so
+// releasing and re-acquiring the lock would require a reload inside the
+// engine. Holding the lock is simpler and avoids races; the trade-off is
+// that rating/pin/title updates on the same paper block for the duration
+// of a chat (typically a few seconds).
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	log.Printf("[chat] loading paper %s", id)
@@ -432,7 +447,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-recover lost content from source URL if possible
+	// Auto-recover lost content from source URL if possible.
 	if paper.Content == "" && paper.SourceURL != "" {
 		log.Printf("[chat] content empty for %s, re-fetching from %s", id, paper.SourceURL)
 		sourceURL := paper.SourceURL
@@ -494,165 +509,22 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[chat] question: %s", q)
 
-	round := paper.CurrentRound() + 1
-
-	// Add user message
-	userMsg := session.Message{
-		RoundNumber: round,
-		Role:        "user",
-		Content:     req.Question,
-		TokenCount:  session.EstimateTokens(req.Question),
-		SkipContext: req.SkipContext,
-	}
-	paper.AddMessage(userMsg)
-	if err := paper.Save(); err != nil {
-		unlock()
-		log.Printf("[chat] failed to save user message: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to save user message"})
-		return
-	}
-
-	// Build messages for CHAT phase — dynamic token-aware truncation.
-	// New papers have paper.Content stripped of references at creation time.
-	// Old papers (References为空) have full content with references intact.
-	bodyForLLM := paper.Content
-	recent := paper.RecentContextMessages()
-	messages := []api.ChatMessage{
-		{Role: "system", Content: prompt.GetSystem()},
-		{Role: "user", Content: bodyForLLM},
-		{Role: "user", Content: prompt.GetLight()},
-	}
-	for _, msg := range recent {
-		messages = append(messages, api.ChatMessage{Role: msg.Role, Content: msg.Content})
-	}
-	// Add current question
-	messages = append(messages, api.ChatMessage{Role: "user", Content: req.Question})
-
-	// Add the get_references tool if the paper has references extracted.
-	var tools []api.Tool
-	if paper.References != "" {
-		tools = []api.Tool{api.GetReferencesTool()}
-	}
-
-	unlock() // Release lock before SSE stream
-
-	// Stream answer via SSE
+	// Open the SSE stream. Headers must be flushed before any long work,
+	// so we do this under the lock — the lock is held for the whole stream
+	// (see fn-level comment).
 	sw, err := newSSEWriter(w)
 	if err != nil {
+		unlock()
 		log.Printf("[chat] SSE not supported: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming not supported"})
 		return
 	}
 
-	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, tools)
-	var answerBuilder strings.Builder
-	var promptTokens, completionTokens, cachedTokens int
-	var toolCalls []api.ToolCallCompleted
-
-	// First stream pass: detect tool calls.
-	for chunk := range ch {
-		select {
-		case <-r.Context().Done():
-			log.Printf("[chat] client disconnected")
-			return
-		default:
-		}
-
-		if chunk.Err != nil {
-			log.Printf("[chat] stream error: %v", chunk.Err)
-			sw.WriteError(chunk.Err.Error())
-			return
-		}
-		if chunk.ToolCalls != nil {
-			toolCalls = chunk.ToolCalls
-			log.Printf("[chat] tool call detected: %s", toolCalls[0].Function.Name)
-			break
-		}
-		if chunk.Done {
-			promptTokens = chunk.PromptTokens
-			completionTokens = chunk.CompletionTokens
-			cachedTokens = chunk.CachedTokens
-			break
-		}
-		answerBuilder.WriteString(chunk.Content)
-		if err := sw.WriteChunk(chunk.Content); err != nil {
-			return
-		}
+	if err := s.chatEngine.Answer(r.Context(), paper, req.Question, req.SkipContext, &sseSink{sw: sw}); err != nil {
+		log.Printf("[chat] engine error: %v", err)
+		sw.WriteError(err.Error())
 	}
-
-	// If LLM called get_references, inject references and do a follow-up stream.
-	if toolCalls != nil && len(toolCalls) > 0 && paper.References != "" {
-		log.Printf("[chat] injecting %d chars of references via follow-up stream", len(paper.References))
-		followUpMessages := make([]api.ChatMessage, len(messages))
-		copy(followUpMessages, messages)
-		followUpMessages = append(followUpMessages,
-			api.ChatMessage{
-				Role:      "assistant",
-				ToolCalls: toolCalls,
-			},
-			api.ChatMessage{
-				Role:       "tool",
-				ToolCallID: toolCalls[0].ID,
-				Content:    paper.References,
-			},
-		)
-
-		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMessages, nil)
-		for chunk := range ch2 {
-			select {
-			case <-r.Context().Done():
-				return
-			default:
-			}
-
-			if chunk.Err != nil {
-				sw.WriteError(chunk.Err.Error())
-				return
-			}
-			if chunk.Done {
-				promptTokens = chunk.PromptTokens
-				completionTokens = chunk.CompletionTokens
-				cachedTokens = chunk.CachedTokens
-				break
-			}
-			answerBuilder.WriteString(chunk.Content)
-			if err := sw.WriteChunk(chunk.Content); err != nil {
-				return
-			}
-		}
-	}
-
-	answer := answerBuilder.String()
-	log.Printf("[chat] answer complete: %d chars", len(answer))
-
-	unlock = s.lockPaper(id)
-	// Re-load to get latest state after SSE stream (another request may have
-	// modified the paper during the streaming window).
-	paper, err = session.LoadPaperByRef(id)
-	if err != nil {
-		unlock()
-		log.Printf("[chat] reload failed after stream: %v", err)
-		sw.WriteError("failed to save: paper not found")
-		return
-	}
-	// Save assistant message
-	assistantMsg := session.Message{
-		RoundNumber:      round,
-		Role:             "assistant",
-		Content:          answer,
-		TokenCount:       session.EstimateTokens(answer),
-		PromptTokens:     promptTokens,
-		CompletionTokens: completionTokens,
-		CachedTokens:     cachedTokens,
-		SkipContext:      req.SkipContext,
-	}
-	paper.AddMessage(assistantMsg)
-
-	paper.SetAnchorFromTokens(round, promptTokens, completionTokens, s.cfg.UI.MaxInputTokens, s.cfg.UI.MinRecentRounds)
-	paper.Save()
 	unlock()
-
-	sw.WriteDoneWithTokens(paper.Ref(), promptTokens, completionTokens, cachedTokens)
 }
 
 func (s *Server) handleDeleteRound(w http.ResponseWriter, r *http.Request) {
