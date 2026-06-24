@@ -43,12 +43,13 @@ type APIConfig struct {
 
 // RecommendConfig controls the daily recommendation pipeline.
 type RecommendConfig struct {
-	DailyPapers       int     `yaml:"daily_papers"`
-	ScoringBatchSize  int     `yaml:"scoring_batch_size"`
-	DiversityRatio    float64 `yaml:"diversity_ratio"`     // 0-1: proportion of random exploration articles
-	ScheduledTime     string  `yaml:"scheduled_time"`      // HH:MM format, e.g. "08:00"
-	PushToFeishu      bool    `yaml:"push_to_feishu"`      // push recommendations to feishu
-	EnableTranslation bool    `yaml:"enable_translation"`  // translate titles/abstracts via main API
+	DailyPapers       int      `yaml:"daily_papers"`
+	ScoringBatchSize  int      `yaml:"scoring_batch_size"`
+	DiversityRatio    float64  `yaml:"diversity_ratio"`       // 0-1: proportion of random exploration articles
+	ScheduledTime     string   `yaml:"scheduled_time"`        // HH:MM format, e.g. "08:00"
+	PushToFeishu      bool     `yaml:"push_to_feishu"`        // push recommendations to feishu
+	EnableTranslation bool     `yaml:"enable_translation"`    // translate titles/abstracts via main API
+	ExcludedKeywords  []string `yaml:"excluded_keywords"`     // keywords to filter out from RSS articles (case-insensitive substring match)
 }
 
 type ObsidianConfig struct {
@@ -236,6 +237,7 @@ func defaultConfig() *Config {
 			ScheduledTime:     "08:00",
 			PushToFeishu:      true,
 			EnableTranslation: false,
+			ExcludedKeywords:  nil,
 		},
 		Obsidian: ObsidianConfig{
 			ExportPath: "~/Papers",
@@ -319,6 +321,7 @@ func (c *Config) Save() error {
 			ScheduledTime:     c.Recommend.ScheduledTime,
 			PushToFeishu:      c.Recommend.PushToFeishu,
 			EnableTranslation: c.Recommend.EnableTranslation,
+			ExcludedKeywords:  c.Recommend.ExcludedKeywords,
 		},
 		ArxivCategories: c.ArxivCategories,
 		Obsidian: ObsidianConfig{

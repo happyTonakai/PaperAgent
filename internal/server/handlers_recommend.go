@@ -60,6 +60,7 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 			"scheduled_time":      s.cfg.Recommend.ScheduledTime,
 			"push_to_feishu":      s.cfg.Recommend.PushToFeishu,
 			"enable_translation":  s.cfg.Recommend.EnableTranslation,
+			"excluded_keywords":   s.cfg.Recommend.ExcludedKeywords,
 		},
 		"arxiv_categories": s.cfg.ArxivCategories,
 	}
@@ -94,6 +95,15 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		if v, ok := rc["enable_translation"].(bool); ok {
 			s.cfg.Recommend.EnableTranslation = v
 		}
+		if v, ok := rc["excluded_keywords"].([]interface{}); ok {
+			var keywords []string
+			for _, k := range v {
+				if s, ok := k.(string); ok {
+					keywords = append(keywords, s)
+				}
+			}
+			s.cfg.Recommend.ExcludedKeywords = keywords
+		}
 	}
 
 	if cats, ok := updates["arxiv_categories"].([]interface{}); ok {
@@ -117,6 +127,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 	if s.sched != nil {
 		s.cfg.RLock()
 		s.sched.UpdateConfig(s.cfg.Recommend.ScheduledTime, s.cfg.Recommend.DailyPapers, s.cfg.Recommend.ScoringBatchSize, s.cfg.Recommend.DiversityRatio)
+		s.sched.SetExcludedKeywords(s.cfg.Recommend.ExcludedKeywords)
 		s.cfg.RUnlock()
 	}
 

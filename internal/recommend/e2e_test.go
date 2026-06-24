@@ -109,6 +109,7 @@ func TestE2E_RealFetchAndRecommend(t *testing.T) {
 		cfg.Recommend.DailyPapers,
 		cfg.Recommend.ScoringBatchSize,
 		cfg.Recommend.DiversityRatio,
+		cfg.Recommend.ExcludedKeywords,
 	)
 	if err != nil {
 		t.Fatalf("FetchAndRecommend: %v", err)

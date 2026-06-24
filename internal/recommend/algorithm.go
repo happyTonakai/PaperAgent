@@ -111,24 +111,18 @@ func GenerateDailyRecommendations(scoring *ScoringClient, dailyPapers, batchSize
 // keywords, and saves to the database. Returns the number of newly inserted
 // articles. This is a standalone entry point for the scheduler's periodic RSS
 // fetch jobs (separate from the daily recommendation pipeline).
-func FetchAndStoreRSS(categories []string) (int, error) {
+func FetchAndStoreRSS(categories []string, excludedKeywords []string) (int, error) {
 	if len(categories) == 0 {
 		return 0, nil
-	}
-
-	prefs, err := ReadPreferences()
-	if err != nil {
-		log.Printf("[recommend] read preferences for keyword filter: %v (continuing without exclusions)", err)
 	}
 
 	articles, err := FetchArxivRSS(categories, 100)
 	if err != nil {
 		return 0, fmt.Errorf("fetch RSS: %w", err)
 	}
-	if len(articles) > 0 {
-		excluded := ParseExcludedKeywords(prefs)
+	if len(articles) > 0 && len(excludedKeywords) > 0 {
 		before := len(articles)
-		articles = FilterArticlesByKeywords(articles, excluded)
+		articles = FilterArticlesByKeywords(articles, excludedKeywords)
 		if dropped := before - len(articles); dropped > 0 {
 			log.Printf("[recommend] filtered out %d RSS articles by excluded keywords (%d kept)", dropped, len(articles))
 		}
@@ -147,7 +141,7 @@ func FetchAndStoreRSS(categories []string) (int, error) {
 
 // FetchAndRecommend runs preference update → RSS fetch → generate daily recommendations.
 // This is the main entry point called by the scheduler or manual trigger.
-func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers, batchSize int, diversityRatio float64) ([]database.Article, error) {
+func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers, batchSize int, diversityRatio float64, excludedKeywords []string) ([]database.Article, error) {
 	// Step 0: Update preferences based on yesterday's feedback
 	prefs, err := ReadPreferences()
 	if err != nil {
@@ -174,7 +168,7 @@ func FetchAndRecommend(categories []string, scoring *ScoringClient, dailyPapers,
 	}
 
 	// Step 1: Fetch RSS
-	if _, err := FetchAndStoreRSS(categories); err != nil {
+	if _, err := FetchAndStoreRSS(categories, excludedKeywords); err != nil {
 		return nil, err
 	}
 

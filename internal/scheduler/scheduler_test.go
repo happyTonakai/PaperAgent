@@ -62,7 +62,7 @@ func TestRSSFetchTimes(t *testing.T) {
 		{"25:00", nil}, // out of range
 	}
 	for _, tt := range tests {
-		s := New(nil, nil, "", 0, 0, 0, tt.scheduled)
+		s := New(nil, nil, "", 0, 0, 0, tt.scheduled, nil)
 		got := s.rssFetchTimes()
 		if len(got) != len(tt.want) {
 			t.Errorf("scheduled=%q: got %v, want %v", tt.scheduled, got, tt.want)
@@ -84,7 +84,7 @@ func TestShouldFetchRSSAt(t *testing.T) {
 	// Use a baseline scheduler with scheduledTime = "08:00"
 	// Offsets: -1→07:00, +7→15:00, +15→23:00
 	base := func() *Scheduler {
-		return New(nil, nil, "", 0, 0, 0, "08:00")
+		return New(nil, nil, "", 0, 0, 0, "08:00", nil)
 	}
 
 	// Helper to create a time with given yyyy-mm-dd, HH:MM in UTC
@@ -183,7 +183,7 @@ func TestShouldFetchRSSAt(t *testing.T) {
 }
 
 func TestShouldFetchRSSAt_EmptyScheduledTime(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "")
+	s := New(nil, nil, "", 0, 0, 0, "", nil)
 	now := time.Date(2026, 6, 23, 7, 0, 0, 0, time.UTC)
 	ok, hour := s.shouldFetchRSSAt(now)
 	if ok {
@@ -195,7 +195,7 @@ func TestShouldFetchRSSAt_EmptyScheduledTime(t *testing.T) {
 }
 
 func TestShouldFetchRSSAt_InvalidScheduledTime(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "bad")
+	s := New(nil, nil, "", 0, 0, 0, "bad", nil)
 	now := time.Date(2026, 6, 23, 7, 0, 0, 0, time.UTC)
 	ok, _ := s.shouldFetchRSSAt(now)
 	if ok {
@@ -205,7 +205,7 @@ func TestShouldFetchRSSAt_InvalidScheduledTime(t *testing.T) {
 
 func TestShouldFetchRSSAt_CrossMidnight(t *testing.T) {
 	// scheduledTime = 23:00 → offsets produce 22:00, 06:00(+1d), 14:00(+1d)
-	s := New(nil, nil, "", 0, 0, 0, "23:00")
+	s := New(nil, nil, "", 0, 0, 0, "23:00", nil)
 
 	// 06:00 next day — should match the +7h offset (23+7=30→6)
 	now := time.Date(2026, 6, 24, 6, 0, 0, 0, time.UTC)
@@ -221,25 +221,6 @@ func TestShouldFetchRSSAt_CrossMidnight(t *testing.T) {
 // ---------------------------------------------------------------------------
 // FetchAndStoreRSS integration tests
 // ---------------------------------------------------------------------------
-
-// withCleanPreferences writes a temporary preferences file with no excluded
-// keywords, and restores the original file on cleanup. Use when the test
-// should not be affected by the user's real preferences.
-func withCleanPreferences(t *testing.T) {
-	t.Helper()
-	prefPath := recommend.PreferencesPath()
-	orig, origErr := os.ReadFile(prefPath)
-	_ = os.Remove(prefPath)
-	if err := recommend.WritePreferences("# test prefs\n## 排除关键词\n\n"); err != nil {
-		t.Fatalf("WritePreferences: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = os.Remove(prefPath)
-		if origErr == nil {
-			_ = os.WriteFile(prefPath, orig, 0644)
-		}
-	})
-}
 
 // setupFetchTestDB creates an in-memory SQLite database and sets
 // PAPER_RECOMMEND_RSS_FILE to the local testdata. Returns a cleanup function.
@@ -268,9 +249,8 @@ func setupFetchTestDB(t *testing.T) func() {
 func TestFetchAndStoreRSS_InsertsArticles(t *testing.T) {
 	cleanup := setupFetchTestDB(t)
 	defer cleanup()
-	withCleanPreferences(t)
 
-	inserted, err := recommend.FetchAndStoreRSS([]string{"cs.SD"})
+	inserted, err := recommend.FetchAndStoreRSS([]string{"cs.SD"}, nil)
 	if err != nil {
 		t.Fatalf("FetchAndStoreRSS: %v", err)
 	}
@@ -305,10 +285,9 @@ func TestFetchAndStoreRSS_InsertsArticles(t *testing.T) {
 func TestFetchAndStoreRSS_Deduplicates(t *testing.T) {
 	cleanup := setupFetchTestDB(t)
 	defer cleanup()
-	withCleanPreferences(t)
 
 	// First fetch → inserts articles
-	first, err := recommend.FetchAndStoreRSS([]string{"cs.SD"})
+	first, err := recommend.FetchAndStoreRSS([]string{"cs.SD"}, nil)
 	if err != nil {
 		t.Fatalf("first FetchAndStoreRSS: %v", err)
 	}
@@ -317,7 +296,7 @@ func TestFetchAndStoreRSS_Deduplicates(t *testing.T) {
 	}
 
 	// Second fetch with same data → INSERT OR IGNORE skips all duplicates
-	second, err := recommend.FetchAndStoreRSS([]string{"cs.SD"})
+	second, err := recommend.FetchAndStoreRSS([]string{"cs.SD"}, nil)
 	if err != nil {
 		t.Fatalf("second FetchAndStoreRSS: %v", err)
 	}
@@ -327,7 +306,7 @@ func TestFetchAndStoreRSS_Deduplicates(t *testing.T) {
 }
 
 func TestFetchAndStoreRSS_EmptyCategories(t *testing.T) {
-	inserted, err := recommend.FetchAndStoreRSS(nil)
+	inserted, err := recommend.FetchAndStoreRSS(nil, nil)
 	if err != nil {
 		t.Errorf("FetchAndStoreRSS(nil): %v", err)
 	}
@@ -335,7 +314,7 @@ func TestFetchAndStoreRSS_EmptyCategories(t *testing.T) {
 		t.Errorf("inserted = %d with nil categories, want 0", inserted)
 	}
 
-	inserted, err = recommend.FetchAndStoreRSS([]string{})
+	inserted, err = recommend.FetchAndStoreRSS([]string{}, nil)
 	if err != nil {
 		t.Errorf("FetchAndStoreRSS([]): %v", err)
 	}
@@ -359,7 +338,7 @@ func TestRunRSSFetch_SkipsWhenPipelineRunning(t *testing.T) {
 		cleanup()
 	}()
 
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00")
+	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	// Simulate pipeline running
 	s.mu.Lock()
@@ -384,9 +363,8 @@ func TestRunRSSFetch_SkipsWhenPipelineRunning(t *testing.T) {
 func TestRunRSSFetch_Success(t *testing.T) {
 	cleanup := setupFetchTestDB(t)
 	defer cleanup()
-	withCleanPreferences(t)
 
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00")
+	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	s.runRSSFetch(7)
 
@@ -414,7 +392,7 @@ func TestRunRSSFetch_RecordsError(t *testing.T) {
 
 	// Need a DB connection so FetchAndStoreRSS doesn't crash — but since
 	// FetchArxivRSS will fail first (file not found), DB is never touched.
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00")
+	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	s.runRSSFetch(7)
 
@@ -437,7 +415,7 @@ func TestRunRSSFetch_RecordsError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStatus_IncludesRSSTimesAndFetchInfo(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "08:00")
+	s := New(nil, nil, "", 0, 0, 0, "08:00", nil)
 	s.lastFetchAt = "2026-06-23 07:00"
 	s.lastFetchError = "boom"
 

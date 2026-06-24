@@ -152,6 +152,7 @@ func (s *Server) startScheduler() {
 	dailyPapers := s.cfg.Recommend.DailyPapers
 	batchSize := s.cfg.Recommend.ScoringBatchSize
 	scheduledTime := s.cfg.Recommend.ScheduledTime
+	excludedKeywords := s.cfg.Recommend.ExcludedKeywords
 	s.cfg.RUnlock()
 
 	if len(categories) == 0 {
@@ -168,7 +169,7 @@ func (s *Server) startScheduler() {
 		log.Printf("[server] chat_papers migration: %v", err)
 	}
 
-	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime)
+	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime, excludedKeywords)
 
 	// Connect scheduler completion to Feishu daily recommendation push.
 	// The push logic itself lives in RunPush so the Feishu bot's /push

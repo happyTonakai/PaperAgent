@@ -50,30 +50,32 @@ var rssOffsets = []int{-1, 7, 15}
 
 // Scheduler manages periodic background tasks.
 type Scheduler struct {
-	mu             sync.Mutex
-	categories     []string
-	scoring        *recommend.ScoringClient
-	dailyPapers    int
-	batchSize      int
-	diversityRatio float64
-	scheduledTime  string // "HH:MM"
-	stopCh         chan struct{}
-	lastRunStr     string // "2006-01-02 15:04" or empty
-	lastRunDate    string // YYYY-MM-DD, to avoid running twice on same day
-	lastError      string
-	lastFetchError string
-	isRunning      bool
-	dailyCount     int
-	onComplete     AfterRecommendFunc
-	lastFetchDate  string // YYYY-MM-DD of last RSS fetch
-	lastFetchHour  int    // hour of last RSS fetch, -1 = none
-	lastFetchAt    string // "2006-01-02 15:04" or empty
+	mu               sync.Mutex
+	categories       []string
+	excludedKeywords []string
+	scoring          *recommend.ScoringClient
+	dailyPapers      int
+	batchSize        int
+	diversityRatio   float64
+	scheduledTime    string // "HH:MM"
+	stopCh           chan struct{}
+	lastRunStr       string // "2006-01-02 15:04" or empty
+	lastRunDate      string // YYYY-MM-DD, to avoid running twice on same day
+	lastError        string
+	lastFetchError   string
+	isRunning        bool
+	dailyCount       int
+	onComplete       AfterRecommendFunc
+	lastFetchDate    string // YYYY-MM-DD of last RSS fetch
+	lastFetchHour    int    // hour of last RSS fetch, -1 = none
+	lastFetchAt      string // "2006-01-02 15:04" or empty
 }
 
 // New creates a Scheduler.
-func New(categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string) *Scheduler {
+func New(categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string, excludedKeywords []string) *Scheduler {
 	return &Scheduler{
-		categories: categories,
+		categories:        categories,
+		 excludedKeywords:  excludedKeywords,
 		scoring: &recommend.ScoringClient{
 			Client: scoringClient,
 			Model:  scoringModel,
@@ -102,6 +104,13 @@ func (s *Scheduler) UpdateConfig(scheduledTime string, dailyPapers, batchSize in
 	s.dailyPapers = dailyPapers
 	s.batchSize = batchSize
 	s.diversityRatio = diversityRatio
+}
+
+// SetExcludedKeywords updates the excluded keywords used for RSS filtering.
+func (s *Scheduler) SetExcludedKeywords(keywords []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.excludedKeywords = keywords
 }
 
 // Start begins the scheduler loop in a background goroutine.
@@ -248,11 +257,12 @@ func (s *Scheduler) runRSSFetch(hour int) {
 		return
 	}
 	categories := s.categories
+	excludedKeywords := s.excludedKeywords
 	s.mu.Unlock()
 
 	log.Printf("[scheduler] starting RSS fetch (hour=%02d)", hour)
 
-	inserted, err := recommend.FetchAndStoreRSS(categories)
+	inserted, err := recommend.FetchAndStoreRSS(categories, excludedKeywords)
 
 	s.mu.Lock()
 	if err != nil {
@@ -311,12 +321,18 @@ func (s *Scheduler) runOnce(force bool) {
 		return
 	}
 	s.isRunning = true
+	categories := s.categories
+	scoring := s.scoring
+	dailyPapers := s.dailyPapers
+	batchSize := s.batchSize
+	diversityRatio := s.diversityRatio
+	excludedKeywords := s.excludedKeywords
 	s.mu.Unlock()
 
 	today := time.Now().Format("2006-01-02")
 	log.Printf("[scheduler] starting daily pipeline for %s (force=%v)", today, force)
 
-	recs, err := recommend.FetchAndRecommend(s.categories, s.scoring, s.dailyPapers, s.batchSize, s.diversityRatio)
+	recs, err := recommend.FetchAndRecommend(categories, scoring, dailyPapers, batchSize, diversityRatio, excludedKeywords)
 
 	s.mu.Lock()
 	s.isRunning = false

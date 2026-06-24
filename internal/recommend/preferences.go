@@ -13,13 +13,6 @@ import (
 	"github.com/happyTonakai/paperagent/internal/prompt"
 )
 
-// excludedKeywordsMarker is the markdown section header that contains
-// comma-separated keywords used to filter RSS articles before they reach
-// the database. The LLM writes this section when updating preferences;
-// FilterArticlesByKeywords reads it.
-const excludedKeywordsMarker = "## 排除关键词"
-
-
 // PreferencesPath returns the path to the user preference file.
 func PreferencesPath() string {
 	return filepath.Join(config.ConfigDir(), "preferences.md")
@@ -182,66 +175,6 @@ func truncateText(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
-}
-
-// ParseExcludedKeywords extracts the "## 排除关键词" section from a
-// preferences markdown blob. The LLM writes a single comma-separated line
-// under that header. The returned slice is lowercased, trimmed,
-// de-duplicated, and preserves the order of first appearance.
-//
-// Returns nil when the section is missing, empty, or explicitly "无"
-// (the LLM's sentinel for "no excluded keywords"). The nil-vs-empty
-// distinction matters: callers can treat nil as "not configured" and skip
-// filtering, while an empty (non-nil) slice still means "no matches".
-func ParseExcludedKeywords(prefs string) []string {
-	idx := strings.Index(prefs, excludedKeywordsMarker)
-	if idx < 0 {
-		return nil
-	}
-	// Slice from after the marker, then jump to the start of the next line.
-	rest := prefs[idx+len(excludedKeywordsMarker):]
-	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
-		rest = rest[nl+1:]
-	}
-	// The keywords live on the first non-empty line of this section, up
-	// until either the next "## " header or end-of-file.
-	if next := strings.Index(rest, "\n## "); next >= 0 {
-		rest = rest[:next]
-	}
-	content := ""
-	for _, line := range strings.Split(rest, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// Tolerate a leading bullet (the LLM sometimes writes `- k1, k2`).
-		if strings.HasPrefix(line, "- ") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
-		}
-		if line == "" || line == "无" {
-			continue
-		}
-		content = line
-		break
-	}
-	if content == "" {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var out []string
-	for _, raw := range strings.Split(content, ",") {
-		kw := strings.ToLower(strings.TrimSpace(raw))
-		if kw == "" || seen[kw] {
-			continue
-		}
-		seen[kw] = true
-		out = append(out, kw)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // FilterArticlesByKeywords drops any article whose title or abstract
