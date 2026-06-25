@@ -132,6 +132,11 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := pending.HandleCrossFieldChecks(); err != nil {
+		log.Printf("[config] REJECTED PUT /api/recommend/config from %s: %v (body keys: %v)", r.RemoteAddr, err, mapKeys(updates))
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	s.cfg.Lock()
 	s.cfg.CommitFrom(pending)

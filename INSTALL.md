@@ -337,7 +337,9 @@ cat "$CONFIG_DIR/config.yaml"      # 人工 spot-check，确认 api_key / app_se
 ## 6. 启动 + 健康检查
 
 ```bash
-nohup "$INSTALL_DIR/paperagent" > "$CONFIG_DIR/paperagent.log" 2>&1 &
+# 日志按天轮转写入 $CONFIG_DIR/logs/paperagent-YYYY-MM-DD.log，启动时自动清理 7 天前的旧文件
+# stderr 仍重定向到 paperagent.out，以备 panic 诊断
+nohup "$INSTALL_DIR/paperagent" > "$CONFIG_DIR/paperagent.out" 2>&1 &
 echo $! > "$CONFIG_DIR/paperagent.pid"
 
 sleep 3
@@ -352,7 +354,7 @@ curl -sf http://localhost:8686/api/config | head -c 200 && echo " → OK"
 
 | 现象 | 排查 |
 |---|---|
-| `connection refused` | 端口未起 → 看 `$CONFIG_DIR/paperagent.log` |
+| `connection refused` | 端口未起 → 看 `$CONFIG_DIR/logs/paperagent-$(date +%F).log` |
 | 返回 401/403 | API key 无效 → 修 §5.2 后重启 |
 | `unresolved env vars` | config.yaml 里有未展开的 `${VAR}` → 提示用户在 Shell 里 export 对应的 env var 后重启服务 |
 | panic in log | 贴给用户看 |
@@ -396,7 +398,7 @@ curl -sf -X POST http://localhost:8686/api/recommend/trigger | head -c 300
 ### 7.3 飞书验证（仅当启用）
 
 ```bash
-tail -50 "$CONFIG_DIR/paperagent.log" | grep -i "feishu\|lark\|websocket" || echo "NO_FEISHU_LOG"
+tail -50 "$CONFIG_DIR/logs/paperagent-$(date +%F).log" | grep -i "feishu\|lark\|websocket" || echo "NO_FEISHU_LOG"
 ```
 
 **预期**：日志出现 `feishu bot started` 或 `lark websocket connected`。
@@ -441,7 +443,7 @@ tail -50 "$CONFIG_DIR/paperagent.log" | grep -i "feishu\|lark\|websocket" || ech
    - 二进制：<INSTALL_DIR>/paperagent
    - 配置：~/.config/paperagent/config.yaml（权限 600）
    - PID 文件：~/.config/paperagent/paperagent.pid
-   - 日志：~/.config/paperagent/paperagent.log
+   - 日志：~/.config/paperagent/logs/paperagent-YYYY-MM-DD.log（按天轮转，保留 7 天）
    - Web UI：http://localhost:8686
 
 模块状态：
@@ -478,7 +480,7 @@ rm -rf "$CONFIG_DIR"
 
 | 症状 | 第一时间看 |
 |---|---|
-| 启动失败 / panic | `~/.config/paperagent/paperagent.log` |
+| 启动失败 / panic | `~/.config/paperagent/logs/paperagent-$(date +%F).log` 及 `~/.config/paperagent/paperagent.out` |
 | Web UI 打不开 | `curl -v http://localhost:8686/` |
 | Q&A 无响应 | `GET /api/config` 看 api 字段 |
 | 推荐没出来 | `GET /api/recommend/scheduler-status` 看 `last_run` / `last_error` / `next_run` |

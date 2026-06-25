@@ -1100,7 +1100,11 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		pending.Feishu.Enabled = v
 	}
 	if v, ok := updates["feishu_app_id"].(string); ok {
-		pending.Feishu.AppID = v
+		// Same guard as api_key: ignore empty + masked values so a
+		// stray POST can't clear the stored app_id.
+		if v != "" && !strings.Contains(v, "••••") {
+			pending.Feishu.AppID = v
+		}
 	}
 	if v, ok := updates["feishu_app_secret"].(string); ok {
 		if v != "" && !strings.Contains(v, "••••") {
@@ -1112,6 +1116,16 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := pending.Validate(); err != nil {
+		log.Printf("[config] REJECTED POST /api/config from %s: %v (body keys: %v)", r.RemoteAddr, err, mapKeys(updates))
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	// Cross-field check: catches e.g. POST /api/config turning feishu
+	// off while recommend.push_to_feishu is still true. Without this,
+	// the user would silently end up with a push_to_feishu=true that
+	// does nothing at runtime, and the next save from the recommend
+	// tab would mysteriously fail.
+	if err := pending.HandleCrossFieldChecks(); err != nil {
 		log.Printf("[config] REJECTED POST /api/config from %s: %v (body keys: %v)", r.RemoteAddr, err, mapKeys(updates))
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

@@ -3,6 +3,36 @@ import { X, Loader2, Save, ChevronRight, ChevronsUpDown, Eye, EyeOff } from 'luc
 import { useAppStore } from '../stores/appStore'
 import { toast } from 'sonner'
 
+// Backend Validate() / HandleCrossFieldChecks() return English error
+// messages with dot-separated YAML paths (e.g. "api.api_key must not
+// be empty"). Map the ones users actually hit to a Chinese message
+// before they show up in a toast; fall back to the raw English for
+// anything we haven't catalogued yet rather than swallow it.
+const CONFIG_ERROR_MAP: Record<string, string> = {
+	'api.api_key must not be empty': '主 API Key 不能为空',
+	'api.base_url must not be empty': '主 API Base URL 不能为空',
+	'api.default_model must not be empty': '主 API Model 名称不能为空',
+	'ui.min_recent_rounds must be >= 1 (got 0)': '最小保留轮数必须 ≥ 1',
+	'ui.min_recent_rounds must be >= 1 (got -1)': '最小保留轮数必须 ≥ 1',
+	'ui.max_input_tokens must be >= 1000 (got 0)': '最大输入 Token 必须 ≥ 1000',
+	'feishu.app_id must not be empty when feishu is enabled': '启用飞书时必须填写 App ID',
+	'feishu.app_secret must not be empty when feishu is enabled': '启用飞书时必须填写 App Secret',
+	'recommend.daily_papers must be > 0 (got 0)': '每日推荐数量必须大于 0',
+	'recommend.scoring_batch_size must be > 0 (got 0)': '评分批次大小必须大于 0',
+	'recommend.diversity_ratio must be in [0, 1]': '探索比例 (diversity_ratio) 必须在 0 到 1 之间',
+	'recommend.scheduled_time must be HH:MM': '定时推荐时间格式必须为 HH:MM（如 08:00）',
+	'arxiv_categories must not be empty when recommend is enabled': '启用推荐时必须至少填写一个 arXiv 分类',
+	'feishu.enabled must be true when recommend.push_to_feishu is true': '推荐推送需要先启用飞书机器人',
+	'refusing to save invalid config: api.api_key must not be empty': '主 API Key 不能为空',
+}
+
+function translateConfigError(msg: string): string {
+	// Strip the Save() wrapper prefix so the map keys above work for
+	// both the handler path and the Save() defense-in-depth path.
+	const stripped = msg.replace(/^refusing to save invalid config: /, '')
+	return CONFIG_ERROR_MAP[stripped] ?? CONFIG_ERROR_MAP[msg] ?? msg
+}
+
 type Tab = 'api' | 'prompts' | 'feishu' | 'recommend' | 'preferences'
 
 interface ConfigData {
@@ -301,7 +331,7 @@ export function SettingsDialog() {
 			if (body.api_key) setForm((f) => ({ ...f, api_key: '' }))
 			toast.success('配置已保存')
 			close()
-		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+		} catch (err) { toast.error('保存失败: ' + translateConfigError(err instanceof Error ? err.message : '未知错误')) }
 		finally { setSaving(false) }
 	}
 
@@ -318,7 +348,7 @@ export function SettingsDialog() {
 			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
 			toast.success('飞书配置已保存')
 			close()
-		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+		} catch (err) { toast.error('保存失败: ' + translateConfigError(err instanceof Error ? err.message : '未知错误')) }
 		finally { setSaving(false) }
 	}
 
@@ -353,7 +383,7 @@ export function SettingsDialog() {
 				.then(setSchedulerStatus)
 				.catch(() => {})
 			close()
-		} catch (err) { toast.error('保存失败: ' + (err instanceof Error ? err.message : '未知错误')) }
+		} catch (err) { toast.error('保存失败: ' + translateConfigError(err instanceof Error ? err.message : '未知错误')) }
 		finally { setRecSaving(false) }
 	}
 
