@@ -57,15 +57,15 @@ GOCACHE=/tmp/gocache-$USER go build -o arxiv2md ./cmd/arxiv2md/
 go test ./... -v
 
 # 单元测试（不打 API），CI 也只跑这批
-go test ./internal/config/ ./internal/session/ ./internal/prompt/ \
-        ./internal/urlparse/ ./internal/export/ ./internal/database/ \
-        ./internal/recommend/ -v
+go test ./internal/config/ ./internal/session/ ./internal/chat/ \
+        ./internal/prompt/ ./internal/urlparse/ ./internal/export/ \
+        ./internal/database/ ./internal/recommend/ -v
 
 # Lint
 go vet ./...
 ```
 
-测试覆盖：config + crypto（含 AES 解密旧 key 兼容）、session、prompt、urlparse、export、database（含 SQL 池钩子）、recommend（feed / scoring / algorithm 单测 + e2e）、feishu（latex2unicode / 卡片尺寸 / 卡片模板）、api 客户端。
+测试覆盖：config + crypto（含 AES 解密旧 key 兼容）、session、chat（fakeLLM 驱动 Engine+Sink 测试）、prompt、urlparse、export、database（含 SQL 池钩子）、recommend（feed / scoring / algorithm 单测 + e2e）、feishu（latex2unicode / 卡片尺寸 / 卡片模板）、api 客户端。
 
 `internal/recommend/e2e_test.go` 是端到端冒烟：通过 `PAPER_RECOMMEND_RSS_FILE` 环境变量把 RSS XML 替换成本地文件，跑完整推荐管线，不打网络。
 
@@ -129,7 +129,8 @@ CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`
 │  Q&A System  │               │  Recommend   │
 │  session/    │               │  recommend/  │
 │  api/        │               │  database/   │
-│  prompt/     │               │  scheduler/  │
+│  chat/       │               │  scheduler/  │
+│  prompt/     │               │              │
 │  urlparse/   │               │              │
 └──────┬───────┘               └──────┬───────┘
        │                              │
@@ -146,11 +147,11 @@ CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`
 ### Q&A 二阶段状态机
 
 - **INIT**：`system.txt` + 论文全文 + `heavy.txt` 任务提示 → API → SSE 流式输出 Markdown 摘要；title 从 arXiv HTML 解析
-- **CHAT**：每次提问 = `system.txt` + 论文全文 + `light.txt` + 动态上下文（从 `TruncationAnchor` 算起；超 `max_input_tokens` 硬截断到 `min_recent_rounds`）→ SSE 流式回答
+- **CHAT**：`chat.Engine` 构建消息（`system.txt` + 论文全文 + `light.txt` + 动态上下文）→ LLM 可调用工具（`fetch_arxiv` 获取另一篇论文做交叉对比、`get_references` 查看参考文献）→ 流式回复经 `sseSink` / `cardSink` 输出
 
 ### 每日推荐管线（每天触发一次）
 
-1. **收集反馈**：`CollectYesterdayFeedback()` —— 汇集推荐系统（`articles.status`）和 Q&A 系统（`chat_papers.updated_at` + rating）的反馈信号
+1. **收集反馈**：`CollectYesterdayFeedback()` —— 汇集推荐系统（`articles.status`，含点赞/点踩/已读/PDF点击）和 Q&A 系统（`chat_papers.updated_at` + rating）的反馈信号
 2. **更新偏好**：`UpdatePreferences()` 用 LLM 把反馈合成新的 `preferences.md`
 3. **拉 RSS**：`FetchArxivRSS(categories, 100)` 从配置的 arXiv category 拉新论文（按 arXiv ID 去重，过滤 `replace` 公告）
 4. **LLM 打分**：`ScoreArticlesBatch()` 按偏好 + 摘要批量打分
@@ -180,32 +181,35 @@ CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`
 
 | Package | 职责 |
 |---|---|
-| `config/` | `~/.config/paperagent/config.yaml` 加载、env var override、AES-256-GCM 加密 API key、路径 helper（`ConfigDir` / `PapersDir` / `PromptsDir` / `ConfigExists`）。**`Config` 是 `sync.RWMutex` 保护的**，server 端 handler 持锁读。 |
-| `api/` | OpenAI 兼容 HTTP 客户端。`Chat()` 同步 / `ChatStream()` 通过 goroutine 返回 `<-chan StreamChunk`。SSE chunk 解析 + prompt/completion/cached token 提取。 |
-| `session/` | `Paper`（含 `SessionID` UUID、`Pinned` / `Rating` / `SkipContext` / `TruncationAnchor` / `References`）和 `Message` 模型。`Manager`（mutex 保护）做 CRUD + 持久化到 `~/.config/paperagent/papers/{uuid}.json`。`ExtractReferences()` 从 MD / TeX 抽出参考文献。`EstimateTokens(text) = len(text) / 4`。加载时从 `source_url` 回填 `arxiv_id`，从 `messages[0]` 回填 `Content` / `InitialSummary`。同步元数据到 `chat_papers` 表（Q&A 偏好信号源）。 |
+| `config/` | `$XDG_CONFIG_HOME/paperagent/config.yaml` 加载（默认 `~/.config/paperagent/`）、env var override、AES-256-GCM 加密 API key、路径 helper（`ConfigDir` / `PapersDir` / `PromptsDir` / `ConfigExists`）。**`Config` 是 `sync.RWMutex` 保护的**，server 端 handler 持锁读。 |
+| `api/` | OpenAI 兼容 HTTP 客户端。`Chat()` 同步 / `ChatStream()` 通过 goroutine 返回 `<-chan StreamChunk`。SSE chunk 解析 + prompt/completion/cached token 提取。提供 `FetchArxivTool()` / `GetReferencesTool()` 供 LLM 调用。 |
+| `session/` | `Paper`（含 `SessionID` UUID、`Pinned` / `Rating` / `SkipContext` / `TruncationAnchor` / `References`）和 `Message` 模型（含 `ToolCalls` / `ToolCallID` 字段支持 tool call 序列化）。`Manager`（mutex 保护）做 CRUD + 持久化到 `~/.config/paperagent/papers/{uuid}.json`。`ExtractReferences()` 从 MD / TeX 抽出参考文献。`EstimateTokens(text) = len(text) / 4`。加载时从 `source_url` 回填 `arxiv_id`，从 `messages[0]` 回填 `Content` / `InitialSummary`。同步元数据到 `chat_papers` 表（Q&A 偏好信号源）。 |
+| `chat/` | **新增**。共享 Q&A 引擎，Web SSE / 飞书统一使用。`Engine` 负责消息构造、LLM 流式循环（含 tool-call follow-up）、消息持久化。`Sink` 接口（`OnChunk` / `OnToolCall` / `OnDone` / `OnError`）适配不同传输。`BuildChatTools()` 统一注册 `fetch_arxiv` + `get_references` 工具。`BuildMessages()` 统一消息构造。`ResolveToolCall()` 统一工具分派（live-chat 和 retry 路径共用）。 |
 | `prompt/` | `//go:embed` 模板：`system.txt` / `heavy.txt` / `light.txt` / `summarize.txt` / `scoring.txt` / `update-prefs.txt`。`Get*()` 检查用户覆写文件（`system.txt` 锁住，不允许覆写）。结构 `[system, user(论文), user(任务)]` 优化 prompt cache 命中。 |
-| `urlparse/` | arXiv URL/ID 归一化。`FetchURL()` 优先 HTML → TeX 源 → PDF。`FetchArxivAsMarkdown()`（HTML 优先，MathML→LaTeX，保留表格）。`FetchArxivAsMarkdownFromTeX()`（自动展开 `\input`，`\begin{tabular}` → Markdown 表格）。`LoadFile()` 读本地文件（`~` 展开）。 |
+| `urlparse/` | arXiv URL/ID 归一化。`FetchURL(ctx)` / `FetchArxivAsMarkdown(ctx)` / `FetchArxivAsMarkdownFromTeX(ctx)` / `FetchArxivTitleCtx(ctx)` / `FetchArxivAbstractCtx(ctx)` 均接受 `context.Context` 支持调用方取消（浏览器关 tab → arxiv2text 子进程 SIGKILL）。HTML 优先 → TeX 源 → PDF。`LoadFile()` 读本地文件（`~` 展开）。 |
 | `export/` | `ExportToObsidian()` 写带 YAML frontmatter 的 Markdown 到 Obsidian vault。`ExportSummary()` 导出纯摘要。模板在 `~/.config/paperagent/prompts/export.md`。 |
 | `database/` | **新增**。SQLite 池（`modernc.org/sqlite`，纯 Go）。`zenflow.db` 与 JSON session 存储**分开**。`articles` 表（推荐系统，schema v1）和 `chat_papers` 表（Q&A 元数据，schema v2），schema v3 / v4 加翻译字段、推荐类型、投票细分字段。`SetDB(nil)` 测试钩子；`OpenTestDB()` 内存 DB。WAL 模式，SQLite 单写者所以 `SetMaxOpenConns(1)`。 |
 | `recommend/` | **新增**。`feed.go`（arXiv RSS 拉取 + 解析 + 去重 + 过滤 replace 公告）、`scoring.go`（LLM 批量打分 + JSON 响应解析）、`preferences.go`（preferences.md 读写 + LLM 偏好更新 + 反馈汇集）、`votes.go`（HuggingFace + AlphaXiv 并行拉票数）、`algorithm.go`（`GenerateDailyRecommendations` + `FetchAndRecommend` 主入口）。`e2e_test.go` 走 `PAPER_RECOMMEND_RSS_FILE` 环境变量替换 RSS 源。 |
 | `scheduler/` | **新增**。每分钟醒一次的 cron 风格调度器。`scheduled_time`（HH:MM）+ `lastRunDate` 防止一天跑两次。`Status()` / `ManualTrigger()` / `UpdateConfig()` 供 API 调用。`SetOnComplete()` 回调在跑完后触发（server 用来翻译 + 推飞书）。 |
-| `server/` | **新增**（从 main.go 抽出）。`Server` struct 持 config / 三套 API client（Q&A / scoring / translation）。`handlers.go`（Q&A、config、prompts、logs、active paper、feishu status）、`handlers_recommend.go`（recommend CRUD、scheduler、preferences、stats、push）。`sse.go` 流式响应。`logbuffer.go` 内存日志环形缓冲。`//go:embed frontend-dist` 把前端 SPA 嵌进二进制，`/` 路由兜底返回 `index.html`。 |
+| `server/` | **新增**（从 main.go 抽出）。`Server` struct 持 config / 三套 API client（Q&A / scoring / translation）。`handlers.go`（Q&A、config、prompts、logs、active paper、feishu status）使用 `chat.Engine` + `sseSink` 驱动 Q&A 流式回复。`handlers_recommend.go`（recommend CRUD、scheduler、preferences、stats、push）。`sse.go` 流式响应。`sse_sink.go` 实现 `chat.Sink` 写 SSE `chunk`/`tool_call`/`done`/`error` 事件。`logbuffer.go` 内存日志环形缓冲。`//go:embed frontend-dist` 把前端 SPA 嵌进二进制，`/` 路由兜底返回 `index.html`。 |
 | `systray/` | **新增**。`fyne.io/systray` 封装。菜单项：版本 / 关于 / 退出；左键直接开浏览器。SIGINT/SIGTERM 优雅退出。 |
-| `feishu/` | 飞书机器人。`larksuite/oapi-sdk-go/v3` WebSocket 事件分发。Slash 命令：`/new` / `/list` / `/search` / `/summary` / `/fetch` / `/chat` / `/btw` / `/rate` / `/pin` / `/help`。`PushDailyRecommend()` 推推荐卡片（带交互按钮：点赞/点踩/已读/进入对话），通过 Card Patch 流式更新。`card.go` 卡片模板，`latex2unicode.go` 公式转 Unicode（避免飞书渲染 LaTeX 出错）。Hot-reload：配置改了调 `Reload()` 重建连接。 |
+| `feishu/` | 飞书机器人。`larksuite/oapi-sdk-go/v3` WebSocket 事件分发。Slash 命令：`/new` / `/list` / `/search` / `/summary` / `/fetch` / `/chat` / `/btw` / `/rate` / `/pin` / `/help`。`PushDailyRecommend()` 推推荐卡片（带交互按钮：点赞/点踩/已读/进入对话），通过 Card Patch 流式更新。`card_sink.go` 实现 `chat.Sink` 驱动聊天流式卡片（自动拆分多卡、LaTeX→Unicode）。`card.go` 卡片模板，`latex2unicode.go` 公式转 Unicode（避免飞书渲染 LaTeX 出错）。聊天命令使用 `chat.Engine` + `cardSink` 取代旧有内联流式。Hot-reload：配置改了调 `Reload()` 重建连接。 |
 
 ### 数据流（双系统）
 
 **Q&A**：
-1. 用户给论文 → `urlparse` 抓内容（arXiv HTML / TeX / PDF）
+1. 用户给论文 → `urlparse` 抓内容（arXiv HTML / TeX / PDF，所有函数接受 `context.Context` 支持取消）
 2. `session.NewPaper()` 建 paper 对象（UUID）
 3. INIT：`SYSTEM_PROMPT + 论文 + HEAVY_PROMPT` → 流式摘要
-4. CHAT：每轮 = `SYSTEM_PROMPT + 论文 + LIGHT_PROMPT + 动态上下文` → 流式回答
-5. 持久化为 JSON `~/.config/paperagent/papers/{uuid}.json`（content / initial_summary 在写出时被清空，从 messages[0] 回填）
-6. 元数据同步到 SQLite `chat_papers` 表（作为偏好信号源）
+4. CHAT：`chat.Engine` 构造消息（`SYSTEM_PROMPT + 论文 + LIGHT_PROMPT + 动态上下文`）→ LLM 可调用工具（`fetch_arxiv` 跨论文对比、`get_references` 查看参考文献）→ `chat.Engine` 执行工具 handler 并持久化 tool-call/tool-result 消息 → 流式回复经 `sseSink` / `cardSink` 输出
+5. Web SSE 走 `sseSink`（`server/sse_sink.go`），飞书走 `cardSink`（`feishu/card_sink.go`），两者共享 `chat.Engine`
+6. 工具调用记录（`ToolCalls` / `ToolCallID`）持久化到 paper JSON，后续轮次可重放避免重复调用
+7. 持久化为 JSON `~/.config/paperagent/papers/{uuid}.json`（content / initial_summary 在写出时被清空，从 messages[0] 回填）
+8. 元数据同步到 SQLite `chat_papers` 表（作为偏好信号源）
 
 **每日推荐**：
 1. Scheduler 到点 → `recommend.FetchAndRecommend()`
-2. 收集昨日反馈（推荐 status + Q&A rating）→ LLM 更新 preferences.md
+2. 收集昨日反馈（推荐 status 含点赞/点踩/已读/PDF点击 + Q&A rating）→ LLM 更新 preferences.md
 3. 拉 arXiv RSS → 过滤 `replace` 公告 → 按 arXiv ID 去重入 SQLite
 4. LLM 按偏好 + 摘要批量打分 → 回写 `articles.score`
 5. 混合策略选 top N（score + diversity 随机）→ 打 `recommend_date` / `batch_order` / `recommendation_type`
@@ -229,7 +233,7 @@ CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`
 
 ## Configuration
 
-三层优先级：**环境变量** > `~/.config/paperagent/config.yaml` > 内置默认值。
+三层优先级：**环境变量** > `$XDG_CONFIG_HOME/paperagent/config.yaml`（默认 `~/.config/paperagent/config.yaml`） > 内置默认值。
 
 ### 环境变量
 
