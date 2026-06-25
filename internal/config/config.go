@@ -69,6 +69,9 @@ type FeishuConfig struct {
 }
 
 func ConfigDir() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "paperagent")
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "paperagent")
 }

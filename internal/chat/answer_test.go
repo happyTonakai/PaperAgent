@@ -100,7 +100,7 @@ func (s *recordingSink) OnError(err error) {
 func newTestPaper(t *testing.T, content, references string) *session.Paper {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
 
 	paper := session.NewPaper(content, "https://arxiv.org/abs/0000.0000", "")
 	paper.References = references
