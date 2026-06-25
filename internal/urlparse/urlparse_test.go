@@ -1,9 +1,13 @@
 package urlparse
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestIsURL(t *testing.T) {
@@ -92,9 +96,42 @@ func TestLoadFileNotFound(t *testing.T) {
 }
 
 func TestHTTPFetchInvalidURL(t *testing.T) {
-	_, err := httpFetch("http://localhost:1")
+	_, err := httpFetch(context.Background(), "http://localhost:1")
 	if err == nil {
 		t.Error("expected error for invalid URL")
+	}
+}
+
+func TestHTTPFetchRespectsContextCancellation(t *testing.T) {
+	// httpFetch on a URL that hangs should return promptly when ctx is
+	// cancelled. We use a deliberately-slow test server (long sleep on a
+	// 127.0.0.1 endpoint) and cancel the context partway through.
+	// Skipped if a usable bind address isn't available.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(30 * time.Second):
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := httpFetch(ctx, srv.URL)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Error("expected error after ctx cancellation, got nil")
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("httpFetch took %v after ctx cancel; should return promptly", elapsed)
 	}
 }
 

@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -43,7 +44,7 @@ func main() {
 	}
 
 	// Priority 1: HTML version → markdown (with tables preserved)
-	content, err := urlparse.FetchArxivAsMarkdown(id)
+	content, err := urlparse.FetchArxivAsMarkdown(context.Background(), id)
 	if err == nil && content != "" {
 		body, refs := session.ExtractReferences(content)
 		fmt.Println(body)
@@ -55,7 +56,7 @@ func main() {
 	fmt.Fprintf(os.Stderr, "HTML unavailable (%v), trying TeX source...\n", err)
 
 	// Priority 2: TeX source → markdown (with tables preserved)
-	content, err = urlparse.FetchArxivAsMarkdownFromTeX(id)
+	content, err = urlparse.FetchArxivAsMarkdownFromTeX(context.Background(), id)
 	if err == nil && content != "" {
 		body, refs := session.ExtractReferences(content)
 		fmt.Println(body)

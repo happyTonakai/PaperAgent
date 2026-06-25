@@ -62,6 +62,31 @@ func GetReferencesTool() Tool {
 	}
 }
 
+// FetchArxivTool returns the tool definition for the fetch_arxiv function.
+// It fetches the content of an arXiv paper given a URL or bare ID, with
+// references stripped — useful for cross-paper comparison inside a Q&A
+// session, where the user wants to ask about another paper alongside
+// the currently-loaded one.
+func FetchArxivTool() Tool {
+	return Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name: "fetch_arxiv",
+			Description: "Fetch the content of an arXiv paper by URL or ID and return it as Markdown (references stripped — use get_references on the current paper if you need that). Use this when the user wants to compare with, contrast, or reference another paper.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"url_or_id": map[string]interface{}{
+						"type":        "string",
+						"description": "An arXiv URL (https://arxiv.org/abs/2106.09685 or https://arxiv.org/pdf/2106.09685) or bare ID (2106.09685, arXiv:2106.09685, cs.AI/0001001, etc.).",
+					},
+				},
+				"required": []string{"url_or_id"},
+			},
+		},
+	}
+}
+
 type ChatMessage struct {
 	Role       string              `json:"role"`
 	Content    string              `json:"content"`

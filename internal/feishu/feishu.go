@@ -415,7 +415,7 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 	}()
 
 	// Fetch paper content
-	content, sourceURL, arxivID, err := b.fetchContent(url)
+	content, sourceURL, arxivID, err := b.fetchContent(context.Background(), url)
 	if err != nil {
 		log.Printf("[feishu] fetch error: %v", err)
 		b.sendText(chatID, fmt.Sprintf("❌ 获取论文失败：%v", err))
@@ -450,7 +450,7 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 
 	// Try HTML title extraction for arXiv
 	if arxivID != "" {
-		if title, err := urlparse.FetchArxivTitle(arxivID); err == nil && title != "" {
+		if title, err := urlparse.FetchArxivTitleCtx(context.Background(), arxivID); err == nil && title != "" {
 			paper.SetTitle(title)
 			log.Printf("[feishu] title from HTML: %s", title)
 		}
@@ -459,7 +459,7 @@ func (b *Bot) cmdNew(chatID, messageID, url string) {
 		// recommendation pool and any entry with status=0/score=0 would be
 		// picked up by MarkDailyRecommendations and pushed to the user.
 		// chat_paper_abstracts is the dedicated cache for Q&A abstracts.
-		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil {
+		if abstract, err := urlparse.FetchArxivAbstractCtx(context.Background(), arxivID); err == nil {
 			if err := database.UpsertChatPaperAbstract(arxivID, abstract); err != nil {
 				log.Printf("[feishu] cache abstract for %s: %v", arxivID, err)
 			}
@@ -960,7 +960,8 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 	// follow-up), and assistant-message persistence + anchor update.
 	sink := newCardSink(b, chatID, paperID, paper.Title, cardMsgID, round)
 	engine := chat.NewEngine(b.apiClient, b.cfg)
-	if err := engine.Answer(context.Background(), paper, question, skipContext, sink); err != nil {
+	tools, handlers := chat.BuildChatTools(paper)
+	if err := engine.Answer(context.Background(), paper, question, skipContext, tools, handlers, sink); err != nil {
 		log.Printf("[feishu] chat engine error: %v", err)
 	}
 }
@@ -1128,15 +1129,17 @@ func (b *Bot) handleCardResumeQA(paperID, chatID string) (*callback.CardActionTr
 	}, nil
 }
 
-// fetchContent fetches paper content from a URL.
-func (b *Bot) fetchContent(url string) (content, sourceURL, arxivID string, err error) {
+// fetchContent fetches paper content from a URL. ctx is propagated to
+// urlparse so the caller's cancellation (e.g., bot shutdown) terminates
+// the HTTP request or arxiv2text subprocess.
+func (b *Bot) fetchContent(ctx context.Context, url string) (content, sourceURL, arxivID string, err error) {
 	if arxivURL, id, ok := urlparse.NormalizeArxivInput(url); ok {
 		sourceURL = arxivURL
 		arxivID = id
-		content, err = urlparse.FetchURL(arxivURL)
+		content, err = urlparse.FetchURL(ctx, arxivURL)
 	} else {
 		sourceURL = url
-		content, err = urlparse.FetchURL(url)
+		content, err = urlparse.FetchURL(ctx, url)
 	}
 	if err != nil {
 		return "", "", "", fmt.Errorf("获取论文失败: %w", err)

@@ -12,16 +12,20 @@
 //     only the user message, which leaked the btw answer into later
 //     context. This is an intentional correctness fix.
 //   - Tool-call follow-up: when the LLM returns a tool_calls delta, the
-//     engine persists the assistant tool_calls message and the tool
-//     result message into paper.Messages BEFORE the follow-up stream.
-//     This ensures subsequent rounds can replay the tool call instead
-//     of re-invoking it, and that the on-disk history matches what was
-//     sent to the LLM.
-//   - Only one tool (get_references) is currently exposed, so tool-call
-//     arrays of length >1 are not expected. The engine handles the
-//     single-call case explicitly; adding a second tool would require
-//     extending the persistence and follow-up loops to handle per-call
-//     routing.
+//     engine looks up the named tool in the handlers map passed to
+//     Answer, executes the handler, and persists both the assistant
+//     tool_calls message and the tool result message BEFORE the
+//     follow-up stream. This ensures subsequent rounds can replay the
+//     tool call instead of re-invoking it, and that the on-disk history
+//     matches what was sent to the LLM.
+//   - The engine is tool-agnostic: it doesn't know which tools exist.
+//     The caller (handleChat / cmdChat) constructs the tools list and
+//     the handlers map, conditional on the paper's state (e.g.
+//     get_references is only attached when paper.References != "").
+//   - Only one tool call per round is currently expected (the engine
+//     handles the single-call case explicitly via toolCalls[0]). Adding
+//     a second tool would require per-call routing in the persistence
+//     and follow-up loops.
 //   - Locking is the caller's responsibility. The engine assumes the
 //     in-memory paper pointer is stable for the duration of Answer.
 package chat
@@ -38,6 +42,13 @@ import (
 	"github.com/happyTonakai/paperagent/internal/prompt"
 	"github.com/happyTonakai/paperagent/internal/session"
 )
+
+// ToolHandler executes a tool call and returns the result content to be
+// sent back to the LLM as the tool message. The arguments string is the
+// raw JSON the LLM produced for the tool call. Returning a non-nil error
+// surfaces the error message as the tool result (so the LLM can see what
+// went wrong and adjust) rather than aborting the round.
+type ToolHandler func(ctx context.Context, arguments string) (string, error)
 
 // Sink receives incremental output from Engine.Answer. Implementations
 // translate each event into a transport-specific representation: the Web
@@ -94,28 +105,34 @@ func NewEngine(llm llmClient, cfg *config.Config) *Engine {
 // response to sink. It is the single source of truth for the chat phase:
 // both the Web SSE handler and the Feishu bot call into it.
 //
+// The caller supplies two tool-related inputs:
+//   - tools: the tool definitions advertised to the LLM (api.GetReferencesTool,
+//     api.FetchArxivTool, etc.). The LLM can only call tools in this list.
+//   - handlers: a map from tool name to ToolHandler. When the LLM invokes
+//     a tool, the engine looks up the handler by the tool call's function
+//     name. Handlers can close over paper state (e.g. the get_references
+//     handler typically closes over paper.References), which is why
+//     handlers are per-call rather than per-engine.
+//
 // Locking is the caller's responsibility. The engine assumes the caller
 // holds a per-paper write lock for the duration of the call — it does
-// not acquire or release locks internally, so the caller can interleave
-// Answer with other operations if needed (though that would be racy).
+// not acquire or release locks internally.
 //
 // The engine:
 //  1. Computes the next round number and appends the user message to
 //     paper.Messages, persisting immediately so the question survives
 //     even if streaming fails.
-//  2. Builds the LLM message array (system + paper content + light
-//     prompt + recent context + question). When paper.References is
-//     non-empty, attaches the get_references tool.
-//  3. Streams the response. If the LLM calls a tool, performs a
-//     follow-up stream with the tool result injected.
-//  4. Appends the assistant message, updates the truncation anchor,
-//     and persists. The answer passed to sink.OnDone is the raw LLM
-//     output — no transport-specific transformations (LaTeX conversion,
-//     HTML escaping, etc.) happen here.
+//  2. Builds the LLM message array and streams the response. If the LLM
+//     calls a tool, the engine executes the handler, persists the
+//     assistant(tool_calls) + tool(result) messages, and re-streams with
+//     the tool result injected.
+//  3. Appends the assistant message, updates the truncation anchor,
+//     and persists.
 //
 // Returns a non-nil error only on persistence failure. Streaming errors
-// are reported via sink.OnError and do not propagate.
-func (e *Engine) Answer(ctx context.Context, paper *session.Paper, question string, skipContext bool, sink Sink) error {
+// and tool-execution errors are reported via sink.OnError and do not
+// propagate.
+func (e *Engine) Answer(ctx context.Context, paper *session.Paper, question string, skipContext bool, tools []api.Tool, handlers map[string]ToolHandler, sink Sink) error {
 	if paper == nil {
 		return errors.New("chat: nil paper")
 	}
@@ -140,15 +157,11 @@ func (e *Engine) Answer(ctx context.Context, paper *session.Paper, question stri
 		return fmt.Errorf("chat: save user message: %w", err)
 	}
 
-	// 2. Build messages + tools.
+	// 2. Build messages.
 	messages := BuildMessages(paper, question, prompt.GetLight())
-	var tools []api.Tool
-	if paper.References != "" {
-		tools = []api.Tool{api.GetReferencesTool()}
-	}
 
 	// 3. Stream + tool follow-up.
-	answer, pTokens, cTokens, ccTokens, streamErr := e.stream(ctx, paper, round, messages, tools, paper.References, skipContext, sink)
+	answer, pTokens, cTokens, ccTokens, streamErr := e.stream(ctx, paper, round, messages, tools, handlers, skipContext, sink)
 	if streamErr != nil {
 		sink.OnError(streamErr)
 		// Persist what we have so far so the user can see the partial
@@ -239,19 +252,24 @@ func (e *Engine) persistAssistant(paper *session.Paper, round int, answer string
 // errors are returned; sink callback errors are logged and treated as
 // advisory.
 //
-// When the LLM invokes a tool, the assistant message (with ToolCalls)
-// and the tool result message are appended to paper.Messages BEFORE
-// the follow-up stream. This is required so that:
-//   - the follow-up stream sees a self-consistent conversation history;
-//   - subsequent chat rounds can replay the tool call instead of
-//     re-invoking the (potentially expensive) tool;
-//   - the paper on disk reflects what was actually sent to the LLM.
+// When the LLM invokes a tool:
+//   - The engine looks up the handler in the handlers map by tool name.
+//   - The handler is invoked with the tool call's arguments JSON; its
+//     return value becomes the tool message content sent back to the LLM.
+//   - If the handler returns an error, the error message is sent as the
+//     tool result (prefixed) so the LLM can see what went wrong and
+//     adjust its next move. The round does NOT abort.
+//   - The assistant message (with ToolCalls) and the tool result message
+//     are appended to paper.Messages BEFORE the follow-up stream. This
+//     is required so the follow-up stream sees a self-consistent history,
+//     subsequent rounds can replay the tool call instead of re-invoking
+//     the tool, and the paper on disk reflects what was sent to the LLM.
 //
 // Tool-message persistence failure aborts the round (the caller is
 // notified via the returned error and sink.OnError). This is deliberate:
 // without persisted tool history, the next round would re-trigger the
 // tool, which is both wasteful and confusing for the user.
-func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, messages []api.ChatMessage, tools []api.Tool, references string, skipContext bool, sink Sink) (answer string, pTokens, cTokens, ccTokens int, err error) {
+func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, messages []api.ChatMessage, tools []api.Tool, handlers map[string]ToolHandler, skipContext bool, sink Sink) (answer string, pTokens, cTokens, ccTokens int, err error) {
 	var buf strings.Builder
 
 	firstPass, firstTokens, firstErr := e.streamOnce(ctx, messages, tools, sink, &buf)
@@ -259,14 +277,32 @@ func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, me
 	if firstErr != nil {
 		return buf.String(), pTokens, cTokens, ccTokens, firstErr
 	}
-	if firstPass.toolCalls == nil || len(firstPass.toolCalls) == 0 || references == "" {
+	if firstPass.toolCalls == nil || len(firstPass.toolCalls) == 0 {
 		return buf.String(), pTokens, cTokens, ccTokens, nil
 	}
 
-	// Tool follow-up: emit the assistant tool_calls message + the tool
-	// result, then re-stream without tools.
+	// Resolve handler for the called tool. Missing handler is an engine
+	// configuration bug (the caller advertised a tool with no handler).
+	// Surface it as a tool result so the LLM can report the issue rather
+	// than the round aborting silently.
 	toolCalls := firstPass.toolCalls
-	sink.OnToolCall(toolCalls[0].Function.Name)
+	toolName := toolCalls[0].Function.Name
+	sink.OnToolCall(toolName)
+
+	handler, ok := handlers[toolName]
+	var toolResult string
+	if !ok {
+		toolResult = fmt.Sprintf("Tool %q is not available in this session.", toolName)
+		log.Printf("[chat] no handler registered for tool %q", toolName)
+	} else {
+		result, herr := handler(ctx, toolCalls[0].Function.Arguments)
+		if herr != nil {
+			toolResult = fmt.Sprintf("Tool %q execution failed: %v", toolName, herr)
+			log.Printf("[chat] tool %q execution error: %v", toolName, herr)
+		} else {
+			toolResult = result
+		}
+	}
 
 	// Persist the assistant tool_calls message. Content is empty — the
 	// tool call itself is the round's content. TokenCount is 0 because
@@ -279,19 +315,17 @@ func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, me
 		SkipContext: skipContext,
 		ToolCalls:   toolCalls,
 	})
-	// Persist the tool result message. The tool result content is the
-	// references string, which can be large — estimate its tokens so
-	// the round's token accounting is accurate. SkipContext is mirrored
-	// from the round (e.g. /btw) for consistency with the user and
-	// assistant messages in the same round, even though
-	// collectAllContextMessages excludes by assistant.SkipContext, not
-	// tool.SkipContext.
+	// Persist the tool result message. Estimate tokens so the round's
+	// token accounting is accurate. SkipContext is mirrored from the
+	// round (e.g. /btw) for consistency with the user and assistant
+	// messages in the same round, even though collectAllContextMessages
+	// excludes by assistant.SkipContext, not tool.SkipContext.
 	paper.AddMessage(session.Message{
 		RoundNumber: round,
 		Role:        "tool",
 		ToolCallID:  toolCalls[0].ID,
-		Content:     references,
-		TokenCount:  session.EstimateTokens(references),
+		Content:     toolResult,
+		TokenCount:  session.EstimateTokens(toolResult),
 		SkipContext: skipContext,
 	})
 	if err := paper.Save(); err != nil {
@@ -303,7 +337,7 @@ func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, me
 	followUp = append(followUp, messages...)
 	followUp = append(followUp,
 		api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
-		api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: references},
+		api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: toolResult},
 	)
 
 	_, secondTokens, secondErr := e.streamOnce(ctx, followUp, nil, sink, &buf)

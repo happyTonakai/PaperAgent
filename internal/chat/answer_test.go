@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -124,6 +125,29 @@ func cfgWithDefaults() *config.Config {
 	}
 }
 
+// refsHandler returns a get_references-style handler that just returns
+// the given string. Used by tests that want to exercise tool-call
+// follow-up without going through urlparse.
+func refsHandler(refs string) ToolHandler {
+	return func(ctx context.Context, args string) (string, error) {
+		return refs, nil
+	}
+}
+
+// makeRefsTools returns a (tools, handlers) pair that advertises the
+// get_references tool with refs as its result.
+func makeRefsTools(refs string) ([]api.Tool, map[string]ToolHandler) {
+	return []api.Tool{api.GetReferencesTool()}, map[string]ToolHandler{
+		"get_references": refsHandler(refs),
+	}
+}
+
+// makeNoTools returns the (nil, nil) tool config used by tests that don't
+// expect the LLM to call any tools.
+func makeNoTools() ([]api.Tool, map[string]ToolHandler) {
+	return nil, nil
+}
+
 func TestToAPIMessage_ForwardsToolMetadata(t *testing.T) {
 	tc := api.ToolCallCompleted{ID: "call_1", Type: "function"}
 	tc.Function.Name = "get_references"
@@ -212,7 +236,7 @@ func TestAnswer_SimpleStream(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(fake, cfgWithDefaults())
 
-	if err := engine.Answer(context.Background(), paper, "what?", false, sink); err != nil {
+	if err := engine.Answer(context.Background(), paper, "what?", false, nil, nil, sink); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 
@@ -250,6 +274,7 @@ func TestAnswer_SimpleStream(t *testing.T) {
 func TestAnswer_ToolCallFollowUp(t *testing.T) {
 	paper := newTestPaper(t, "body", "ref1\nref2\n")
 
+	refs := "ref1\nref2\n"
 	toolCallID := "call_abc"
 	toolCall := api.ToolCallCompleted{
 		ID:   toolCallID,
@@ -273,7 +298,8 @@ func TestAnswer_ToolCallFollowUp(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(fake, cfgWithDefaults())
 
-	if err := engine.Answer(context.Background(), paper, "what refs?", false, sink); err != nil {
+	tools, handlers := makeRefsTools(refs)
+	if err := engine.Answer(context.Background(), paper, "what refs?", false, tools, handlers, sink); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 
@@ -302,6 +328,7 @@ func TestAnswer_ToolCallFollowUp(t *testing.T) {
 func TestAnswer_ToolCallPersistsMessages(t *testing.T) {
 	paper := newTestPaper(t, "body", "ref1\nref2\n")
 
+	refs := "ref1\nref2\n"
 	toolCallID := "call_xyz"
 	toolCall := api.ToolCallCompleted{
 		ID:   toolCallID,
@@ -324,7 +351,8 @@ func TestAnswer_ToolCallPersistsMessages(t *testing.T) {
 	sink := &recordingSink{}
 	engine := NewEngine(fake, cfgWithDefaults())
 
-	if err := engine.Answer(context.Background(), paper, "what refs?", false, sink); err != nil {
+	tools, handlers := makeRefsTools(refs)
+	if err := engine.Answer(context.Background(), paper, "what refs?", false, tools, handlers, sink); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 
@@ -401,7 +429,8 @@ func TestAnswer_ToolCallPersistsSkipContext(t *testing.T) {
 	engine := NewEngine(fake, cfgWithDefaults())
 
 	// skipContext=true simulates /btw — the entire round should be excluded.
-	if err := engine.Answer(context.Background(), paper, "btw q", true, sink); err != nil {
+	tools, handlers := makeRefsTools("refs")
+	if err := engine.Answer(context.Background(), paper, "btw q", true, tools, handlers, sink); err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
 	if got := len(paper.Messages); got != 4 {
@@ -437,7 +466,8 @@ func TestAnswer_ToolCallHistoryIncludedInNextRound(t *testing.T) {
 	engine := NewEngine(fake, cfgWithDefaults())
 
 	// Round 1
-	if err := engine.Answer(context.Background(), paper, "q1", false, sink); err != nil {
+	tools, handlers := makeRefsTools("ref content")
+	if err := engine.Answer(context.Background(), paper, "q1", false, tools, handlers, sink); err != nil {
 		t.Fatalf("round 1: %v", err)
 	}
 
@@ -460,7 +490,7 @@ func TestAnswer_ToolCallHistoryIncludedInNextRound(t *testing.T) {
 
 	// Round 2
 	sink2 := &recordingSink{}
-	if err := engine.Answer(context.Background(), paper, "q2", false, sink2); err != nil {
+	if err := engine.Answer(context.Background(), paper, "q2", false, tools, handlers, sink2); err != nil {
 		t.Fatalf("round 2: %v", err)
 	}
 
@@ -507,7 +537,7 @@ func TestAnswer_StreamingErrorPersistsPartial(t *testing.T) {
 	engine := NewEngine(fake, cfgWithDefaults())
 
 	// Streaming errors are reported via OnError; engine returns nil.
-	if err := engine.Answer(context.Background(), paper, "what?", false, sink); err != nil {
+	if err := engine.Answer(context.Background(), paper, "what?", false, nil, nil, sink); err != nil {
 		t.Fatalf("Answer should swallow streaming errors, got %v", err)
 	}
 	if sink.errArg == nil {
@@ -526,6 +556,181 @@ func TestAnswer_StreamingErrorPersistsPartial(t *testing.T) {
 	}
 }
 
+func TestFetchArxivHandler_InputValidation(t *testing.T) {
+	h := FetchArxivHandler()
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		args string
+	}{
+		{"empty arguments", `{}`},
+		{"empty url_or_id", `{"url_or_id": ""}`},
+		{"not arxiv", `{"url_or_id": "https://example.com/foo"}`},
+		{"bare gibberish", `{"url_or_id": "not-an-id"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := h(ctx, tc.args); err == nil {
+				t.Errorf("expected error for %q, got nil", tc.args)
+			}
+		})
+	}
+
+	t.Run("bad json", func(t *testing.T) {
+		if _, err := h(ctx, "not json"); err == nil {
+			t.Error("expected error for bad JSON, got nil")
+		}
+	})
+}
+
+func TestFetchArxivHandler_AcceptsVariousInputs(t *testing.T) {
+	// We can't actually fetch (would require network), but we can verify
+	// that valid arXiv inputs pass the normalization step before failing
+	// at the fetch step. The error message should mention the ID.
+	h := FetchArxivHandler()
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		args string
+		want string // substring expected in error message
+	}{
+		{"bare ID", `{"url_or_id": "2106.09685"}`, "2106.09685"},
+		{"arxiv prefix", `{"url_or_id": "arxiv:2106.09685"}`, "2106.09685"},
+		{"abs URL", `{"url_or_id": "https://arxiv.org/abs/2106.09685v2"}`, "2106.09685"},
+		{"pdf URL", `{"url_or_id": "https://arxiv.org/pdf/2106.09685"}`, "2106.09685"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := h(ctx, tc.args)
+			if err == nil {
+				t.Skip("fetch succeeded (network available); nothing to assert")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildChatTools_ConditionalReferences(t *testing.T) {
+	t.Run("with references", func(t *testing.T) {
+		paper := &session.Paper{Content: "body", References: "the refs"}
+		tools, handlers := BuildChatTools(paper)
+		if len(tools) != 2 {
+			t.Errorf("tools len = %d, want 2 (get_references + fetch_arxiv)", len(tools))
+		}
+		if _, ok := handlers["get_references"]; !ok {
+			t.Error("get_references handler missing")
+		}
+		if _, ok := handlers["fetch_arxiv"]; !ok {
+			t.Error("fetch_arxiv handler missing")
+		}
+	})
+	t.Run("without references", func(t *testing.T) {
+		paper := &session.Paper{Content: "body"}
+		tools, handlers := BuildChatTools(paper)
+		if len(tools) != 1 {
+			t.Errorf("tools len = %d, want 1 (fetch_arxiv only)", len(tools))
+		}
+		if tools[0].Function.Name != "fetch_arxiv" {
+			t.Errorf("tools[0] = %s, want fetch_arxiv", tools[0].Function.Name)
+		}
+		if _, ok := handlers["get_references"]; ok {
+			t.Error("get_references handler should not be registered when paper has no references")
+		}
+	})
+}
+
+func TestAnswer_MissingToolHandlerSurfacesError(t *testing.T) {
+	// LLM calls a tool but no handler is registered. The engine should
+	// surface this as a tool result message (so the LLM can see what
+	// went wrong) rather than aborting the round.
+	paper := newTestPaper(t, "body", "")
+
+	toolCall := api.ToolCallCompleted{ID: "call_orphan", Type: "function"}
+	toolCall.Function.Name = "mystery_tool"
+	toolCall.Function.Arguments = "{}"
+
+	fake := &fakeLLM{
+		scripts: [][]api.StreamChunk{
+			{{ToolCalls: []api.ToolCallCompleted{toolCall}}},
+			{{Content: "ok after error"}, {Done: true, PromptTokens: 50, CompletionTokens: 25}},
+		},
+	}
+	sink := &recordingSink{}
+	engine := NewEngine(fake, cfgWithDefaults())
+
+	// Advertise the tool but register no handler.
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "mystery_tool"}}}
+	handlers := map[string]ToolHandler{} // empty — no handler for mystery_tool
+
+	if err := engine.Answer(context.Background(), paper, "q", false, tools, handlers, sink); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !sink.doneArg.called {
+		t.Fatal("OnDone not called")
+	}
+
+	// Paper should contain the tool result with an error message.
+	if got := len(paper.Messages); got != 4 {
+		t.Fatalf("paper.Messages len = %d, want 4", got)
+	}
+	toolMsg := paper.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Errorf("Messages[2].Role = %q, want tool", toolMsg.Role)
+	}
+	if !strings.Contains(toolMsg.Content, "mystery_tool") {
+		t.Errorf("tool result = %q, want it to mention mystery_tool", toolMsg.Content)
+	}
+	if !strings.Contains(toolMsg.Content, "not available") {
+		t.Errorf("tool result = %q, want it to say 'not available'", toolMsg.Content)
+	}
+}
+
+func TestAnswer_HandlerErrorSurfacesAsContent(t *testing.T) {
+	// Handler returns an error. Engine should surface the error as the
+	// tool result content (so the LLM can see what failed) and continue
+	// with the follow-up stream.
+	paper := newTestPaper(t, "body", "")
+
+	toolCall := api.ToolCallCompleted{ID: "call_fail", Type: "function"}
+	toolCall.Function.Name = "broken_tool"
+	toolCall.Function.Arguments = "{}"
+
+	fake := &fakeLLM{
+		scripts: [][]api.StreamChunk{
+			{{ToolCalls: []api.ToolCallCompleted{toolCall}}},
+			{{Content: "recovered"}, {Done: true, PromptTokens: 50, CompletionTokens: 25}},
+		},
+	}
+	sink := &recordingSink{}
+	engine := NewEngine(fake, cfgWithDefaults())
+
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "broken_tool"}}}
+	handlers := map[string]ToolHandler{
+		"broken_tool": func(ctx context.Context, args string) (string, error) {
+			return "", fmt.Errorf("simulated handler failure")
+		},
+	}
+
+	if err := engine.Answer(context.Background(), paper, "q", false, tools, handlers, sink); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+
+	toolMsg := paper.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Errorf("Messages[2].Role = %q, want tool", toolMsg.Role)
+	}
+	if !strings.Contains(toolMsg.Content, "simulated handler failure") {
+		t.Errorf("tool result = %q, want it to contain 'simulated handler failure'", toolMsg.Content)
+	}
+	if got := strings.Join(sink.chunks, ""); got != "recovered" {
+		t.Errorf("chunks = %q, want %q", got, "recovered")
+	}
+}
+
 func TestAnswer_ContextCancellation(t *testing.T) {
 	paper := newTestPaper(t, "body", "")
 
@@ -540,7 +745,7 @@ func TestAnswer_ContextCancellation(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	if err := engine.Answer(ctx, paper, "what?", false, sink); err != nil {
+	if err := engine.Answer(ctx, paper, "what?", false, nil, nil, sink); err != nil {
 		t.Fatalf("Answer returned %v, want nil on cancellation", err)
 	}
 	if sink.errArg == nil {

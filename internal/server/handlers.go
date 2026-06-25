@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -87,7 +88,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[new-paper] fetching content for URL: %s", req.URL)
 
-	content, sourceURL, arxivID, err := s.fetchPaperContent(req)
+	content, sourceURL, arxivID, err := s.fetchPaperContent(r.Context(), req)
 	if err != nil {
 		log.Printf("[new-paper] fetch error: %v", err)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -134,7 +135,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	// Try HTML title extraction for arXiv papers (instant, no LLM call)
 	if arxivID != "" {
-		if title, err := urlparse.FetchArxivTitle(arxivID); err == nil && title != "" {
+		if title, err := urlparse.FetchArxivTitleCtx(r.Context(), arxivID); err == nil && title != "" {
 			paper.SetTitle(title)
 			log.Printf("[new-paper] title from HTML: %s", title)
 		} else {
@@ -146,7 +147,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		// creation. The abstract is also cached in chat_paper_abstracts so the
 		// preference-update pipeline can read it (this fills a pre-existing
 		// gap where the cache was never populated for Q&A papers).
-		if abstract, err := urlparse.FetchArxivAbstract(arxivID); err == nil && abstract != "" {
+		if abstract, err := urlparse.FetchArxivAbstractCtx(r.Context(), arxivID); err == nil && abstract != "" {
 			if gh := urlparse.ExtractGitHubURL(abstract); gh != "" {
 				paper.GitHubURL = gh
 				log.Printf("[new-paper] github url from abstract: %s", gh)
@@ -454,7 +455,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sourceURL := paper.SourceURL
 		unlock()
 
-		content, _, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		content, _, _, err := s.fetchPaperContent(r.Context(), newPaperRequest{URL: sourceURL})
 		if err != nil {
 			log.Printf("[chat] re-fetch failed: %v", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("paper content lost and re-fetch from source URL failed: %v", err)})
@@ -521,7 +522,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.chatEngine.Answer(r.Context(), paper, req.Question, req.SkipContext, &sseSink{sw: sw}); err != nil {
+	tools, handlers := chat.BuildChatTools(paper)
+	if err := s.chatEngine.Answer(r.Context(), paper, req.Question, req.SkipContext, tools, handlers, &sseSink{sw: sw}); err != nil {
 		log.Printf("[chat] engine error: %v", err)
 		sw.WriteError(err.Error())
 	}
@@ -602,7 +604,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		sourceURL := paper.SourceURL
 		unlock()
 
-		content, _, _, err := s.fetchPaperContent(newPaperRequest{URL: sourceURL})
+		content, _, _, err := s.fetchPaperContent(r.Context(), newPaperRequest{URL: sourceURL})
 		if err != nil {
 			log.Printf("[retry-summary] re-fetch failed: %v", err)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("re-fetch from source URL failed: %v", err)})
@@ -1361,15 +1363,15 @@ func (s *Server) handleFeishuStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) fetchPaperContent(req newPaperRequest) (content string, sourceURL string, arxivID string, err error) {
+func (s *Server) fetchPaperContent(ctx context.Context, req newPaperRequest) (content string, sourceURL string, arxivID string, err error) {
 	if req.URL != "" {
 		sourceURL = req.URL
 		if arxivURL, id, ok := urlparse.NormalizeArxivInput(req.URL); ok {
 			sourceURL = arxivURL
 			arxivID = id
-			content, err = urlparse.FetchURL(arxivURL)
+			content, err = urlparse.FetchURL(ctx, arxivURL)
 		} else {
-			content, err = urlparse.FetchURL(req.URL)
+			content, err = urlparse.FetchURL(ctx, req.URL)
 		}
 		if err != nil {
 			return "", "", "", fmt.Errorf("fetch URL failed: %w", err)

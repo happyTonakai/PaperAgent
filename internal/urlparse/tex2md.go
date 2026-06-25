@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,8 +16,8 @@ import (
 )
 
 // FetchArxivAsMarkdownFromTeX downloads and converts arXiv TeX source to Markdown.
-func FetchArxivAsMarkdownFromTeX(arxivID string) (string, error) {
-	tex, err := downloadTeXSource(arxivID)
+func FetchArxivAsMarkdownFromTeX(ctx context.Context, arxivID string) (string, error) {
+	tex, err := downloadTeXSource(ctx, arxivID)
 	if err != nil {
 		return "", fmt.Errorf("download TeX source: %w", err)
 	}
@@ -24,10 +25,15 @@ func FetchArxivAsMarkdownFromTeX(arxivID string) (string, error) {
 }
 
 // downloadTeXSource downloads and extracts the main .tex content from arXiv e-print.
-func downloadTeXSource(arxivID string) (string, error) {
+func downloadTeXSource(ctx context.Context, arxivID string) (string, error) {
 	url := fmt.Sprintf("https://arxiv.org/e-print/%s", arxivID)
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "PaperAgent/1.0")
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

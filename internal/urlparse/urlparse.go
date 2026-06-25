@@ -1,6 +1,7 @@
 package urlparse
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -100,7 +101,11 @@ func extractArxivIDFromURL(raw string) (string, bool) {
 // Priority:
 //  1. HTML version (https://arxiv.org/html/{id}/)
 //  2. TeX source (via arxiv2text binary)
-func FetchURL(url string) (string, error) {
+//
+// ctx cancels both the HTTP fetch and the arxiv2text subprocess. Errors
+// from each fallback are collected and reported in the final error if
+// both fail, so the caller (typically the LLM) can see what went wrong.
+func FetchURL(ctx context.Context, url string) (string, error) {
 	_, id, ok := extractArxivIDFromAbsURL(url)
 	if !ok {
 		return "", fmt.Errorf("not a valid arXiv URL: %s", url)
@@ -108,17 +113,22 @@ func FetchURL(url string) (string, error) {
 
 	// Priority 1: Try HTML version
 	htmlURL := fmt.Sprintf("https://arxiv.org/html/%s/", id)
-	if content, err := fetchArxivHTML(htmlURL); err == nil && content != "" {
-		return content, nil
+	htmlContent, htmlErr := fetchArxivHTML(ctx, htmlURL)
+	if htmlErr == nil && htmlContent != "" {
+		return htmlContent, nil
 	}
 
 	// Priority 2: Fallback to TeX source via arxiv2text
 	absURL := fmt.Sprintf("https://arxiv.org/abs/%s", id)
-	if content, err := tryArxiv2Text(absURL); err == nil && content != "" {
-		return content, nil
+	texContent, texErr := tryArxiv2Text(ctx, absURL)
+	if texErr == nil && texContent != "" {
+		return texContent, nil
 	}
 
-	return "", fmt.Errorf("failed to fetch paper from arXiv: HTML and TeX source both unavailable for %s", id)
+	// Both failed — return a combined error so the caller can see which
+	// paths were tried and what went wrong with each.
+	return "", fmt.Errorf("failed to fetch paper from arXiv (id=%s): HTML: %v; TeX (arxiv2text): %v",
+		id, htmlErr, texErr)
 }
 
 // extractArxivIDFromAbsURL extracts the arXiv ID from an arXiv abs URL like
@@ -161,10 +171,10 @@ func extractArxivIDFromAbsURL(url string) (string, string, bool) {
 
 // FetchArxivAsMarkdown fetches the HTML version of an arXiv paper and converts
 // it to Markdown, preserving tables and document structure.
-func FetchArxivAsMarkdown(arxivID string) (string, error) {
+func FetchArxivAsMarkdown(ctx context.Context, arxivID string) (string, error) {
 	htmlURL := fmt.Sprintf("https://arxiv.org/html/%s/", arxivID)
 
-	html, err := fetchArxivHTMLRaw(htmlURL)
+	html, err := fetchArxivHTMLRaw(ctx, htmlURL)
 	if err != nil {
 		return "", err
 	}
@@ -174,8 +184,8 @@ func FetchArxivAsMarkdown(arxivID string) (string, error) {
 
 // fetchArxivHTML fetches the HTML version of an arXiv paper, converting to
 // plain text for LLM consumption.
-func fetchArxivHTML(url string) (string, error) {
-	html, err := fetchArxivHTMLRaw(url)
+func fetchArxivHTML(ctx context.Context, url string) (string, error) {
+	html, err := fetchArxivHTMLRaw(ctx, url)
 	if err != nil {
 		return "", err
 	}
@@ -183,7 +193,7 @@ func fetchArxivHTML(url string) (string, error) {
 }
 
 // fetchArxivHTMLRaw fetches the raw HTML from an arXiv HTML URL.
-func fetchArxivHTMLRaw(url string) (string, error) {
+func fetchArxivHTMLRaw(ctx context.Context, url string) (string, error) {
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -193,7 +203,7 @@ func fetchArxivHTMLRaw(url string) (string, error) {
 		},
 	}
 
-	resp, err := doGet(client, url)
+	resp, err := doGet(ctx, client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv HTML: %w", err)
 	}
@@ -264,10 +274,17 @@ var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 // FetchArxivTitle fetches the arXiv abstract page and extracts the paper title from the HTML <title> tag.
 // Format: "[arxivID] Paper Title" → returns "Paper Title".
 func FetchArxivTitle(arxivID string) (string, error) {
+	return FetchArxivTitleCtx(context.Background(), arxivID)
+}
+
+// FetchArxivTitleCtx is the context-aware variant of FetchArxivTitle. Use
+// this from request handlers so the HTTP fetch can be cancelled when
+// the client disconnects.
+func FetchArxivTitleCtx(ctx context.Context, arxivID string) (string, error) {
 	url := "https://arxiv.org/abs/" + arxivID
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := doGet(client, url)
+	resp, err := doGet(ctx, client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv page: %w", err)
 	}
@@ -295,10 +312,15 @@ func FetchArxivTitle(arxivID string) (string, error) {
 // FetchArxivAbstract fetches the arXiv abstract page and extracts the paper abstract.
 // Returns the plain-text abstract (stripped of HTML tags).
 func FetchArxivAbstract(arxivID string) (string, error) {
+	return FetchArxivAbstractCtx(context.Background(), arxivID)
+}
+
+// FetchArxivAbstractCtx is the context-aware variant of FetchArxivAbstract.
+func FetchArxivAbstractCtx(ctx context.Context, arxivID string) (string, error) {
 	url := "https://arxiv.org/abs/" + arxivID
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := doGet(client, url)
+	resp, err := doGet(ctx, client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching arxiv page: %w", err)
 	}
@@ -335,14 +357,17 @@ func FetchArxivAbstract(arxivID string) (string, error) {
 	return "", fmt.Errorf("abstract not found in arxiv page")
 }
 
-func tryArxiv2Text(url string) (string, error) {
+func tryArxiv2Text(ctx context.Context, url string) (string, error) {
 	// Check if arxiv2text is available
 	path, err := exec.LookPath("arxiv2text")
 	if err != nil {
 		return "", fmt.Errorf("arxiv2text not found in PATH")
 	}
 
-	cmd := exec.Command(path, url)
+	// exec.CommandContext propagates ctx cancellation to the subprocess:
+	// if the caller cancels (e.g., the user closes the browser tab), the
+	// arxiv2text process is killed via SIGKILL.
+	cmd := exec.CommandContext(ctx, path, url)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("arxiv2text failed: %w", err)
@@ -351,9 +376,9 @@ func tryArxiv2Text(url string) (string, error) {
 	return string(output), nil
 }
 
-func httpFetch(url string) (string, error) {
+func httpFetch(ctx context.Context, url string) (string, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := doGet(client, url)
+	resp, err := doGet(ctx, client, url)
 	if err != nil {
 		return "", fmt.Errorf("fetching URL: %w", err)
 	}
@@ -372,8 +397,10 @@ func httpFetch(url string) (string, error) {
 }
 
 // doGet sends a GET request with a User-Agent header set (arXiv requires it).
-func doGet(client *http.Client, url string) (*http.Response, error) {
-	req, err := http.NewRequest("GET", url, nil)
+// The request is bound to ctx so the caller's cancellation propagates to
+// the underlying network I/O.
+func doGet(ctx context.Context, client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
