@@ -189,7 +189,11 @@ export function ArticleCard({ article, onStatusChange, onChatClick }: ArticleCar
     // Track PDF click as status=1 (clicked), but only if not already liked (2) or disliked (-1).
     // A PDF click means the user is interested — but a like/dislike is a stronger signal
     // and should not be downgraded.
-    if (displayStatus !== 2 && displayStatus !== -1) {
+    //
+    // Read currentStatusRef.current (not displayStatus) so a rapid like/dislike
+    // followed by a title click sees the updated status instead of a stale
+    // closure value — same pattern handleMouseEnter uses.
+    if (currentStatusRef.current !== 2 && currentStatusRef.current !== -1) {
       const newStatus = 1
       setDisplayStatus(newStatus)
       updateArticleStatus(article.id, newStatus)
