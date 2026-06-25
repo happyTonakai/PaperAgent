@@ -43,6 +43,10 @@ type SchedulerStatus struct {
 	RSSTimes []string `json:"rss_times"`
 	// LastFetchAt is the timestamp of the most recent successful RSS fetch.
 	LastFetchAt string `json:"last_fetch_at"`
+	// Enabled reports the current master-switch state of the
+	// recommendation pipeline. False means both the RSS fetcher and
+	// the daily run are skipped, regardless of scheduled_time.
+	Enabled bool `json:"enabled"`
 }
 
 // rssOffsets are the hour offsets from scheduledTime for RSS fetches.
@@ -51,6 +55,7 @@ var rssOffsets = []int{-1, 7, 15}
 // Scheduler manages periodic background tasks.
 type Scheduler struct {
 	mu               sync.Mutex
+	enabled          bool
 	categories       []string
 	excludedKeywords []string
 	scoring          *recommend.ScoringClient
@@ -59,6 +64,7 @@ type Scheduler struct {
 	diversityRatio   float64
 	scheduledTime    string // "HH:MM"
 	stopCh           chan struct{}
+	stopOnce         sync.Once
 	lastRunStr       string // "2006-01-02 15:04" or empty
 	lastRunDate      string // YYYY-MM-DD, to avoid running twice on same day
 	lastError        string
@@ -72,8 +78,9 @@ type Scheduler struct {
 }
 
 // New creates a Scheduler.
-func New(categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string, excludedKeywords []string) *Scheduler {
+func New(enabled bool, categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string, excludedKeywords []string) *Scheduler {
 	return &Scheduler{
+		enabled:          enabled,
 		categories:       categories,
 		excludedKeywords: excludedKeywords,
 		scoring: &recommend.ScoringClient{
@@ -94,6 +101,24 @@ func (s *Scheduler) SetOnComplete(fn AfterRecommendFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onComplete = fn
+}
+
+// SetEnabled toggles the master switch on the recommendation pipeline.
+// When false, both the RSS fetcher and the daily run no-op for the
+// rest of the process lifetime (or until SetEnabled(true) is called).
+// Status() reflects the new state immediately so the Web UI sees it
+// without waiting for the next loop tick.
+func (s *Scheduler) SetEnabled(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enabled = v
+}
+
+// Enabled reports the current master-switch state.
+func (s *Scheduler) Enabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enabled
 }
 
 // UpdateConfig updates scheduler parameters at runtime.
@@ -140,9 +165,15 @@ func (s *Scheduler) Start() {
 	}()
 }
 
-// Stop signals the scheduler to stop gracefully.
+// Stop signals the scheduler to stop gracefully. Safe to call
+// multiple times — the first call closes the stop channel, subsequent
+// calls are no-ops. This matters because main.go defers feishuBot.Stop
+// alongside the systray teardown and a future caller may add their
+// own defer without realising Stop has already fired.
 func (s *Scheduler) Stop() {
-	close(s.stopCh)
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+	})
 }
 
 // Status returns the current scheduler state.
@@ -174,6 +205,7 @@ func (s *Scheduler) Status() SchedulerStatus {
 		DailyCount:     s.dailyCount,
 		RSSTimes:       rssTimes,
 		LastFetchAt:    s.lastFetchAt,
+		Enabled:        s.enabled,
 	}
 }
 
@@ -216,12 +248,13 @@ func (s *Scheduler) shouldFetchRSS() (bool, int) {
 // explicit "now" time.
 func (s *Scheduler) shouldFetchRSSAt(now time.Time) (bool, int) {
 	s.mu.Lock()
+	enabled := s.enabled
 	scheduled := s.scheduledTime
 	lastDate := s.lastFetchDate
 	lastHour := s.lastFetchHour
 	s.mu.Unlock()
 
-	if scheduled == "" {
+	if !enabled || scheduled == "" {
 		return false, -1
 	}
 
@@ -285,10 +318,11 @@ func (s *Scheduler) runRSSFetch(hour int) {
 // and the pipeline hasn't run yet today.
 func (s *Scheduler) shouldRun() bool {
 	s.mu.Lock()
+	enabled := s.enabled
 	scheduled := s.scheduledTime
 	s.mu.Unlock()
 
-	if scheduled == "" {
+	if !enabled || scheduled == "" {
 		return false
 	}
 

@@ -445,6 +445,24 @@ func TestValidate(t *testing.T) {
 			t.Errorf("expected scheduled_time error for out-of-range hour, got: %v", err)
 		}
 	})
+
+	t.Run("rejects recommend.enabled=true with empty arxiv_categories", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.Enabled = true
+		c.ArxivCategories = nil
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "arxiv_categories") {
+			t.Errorf("expected arxiv_categories error, got: %v", err)
+		}
+	})
+
+	t.Run("allows recommend.enabled=false with empty arxiv_categories", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.Enabled = false
+		c.ArxivCategories = nil
+		if err := c.Validate(); err != nil {
+			t.Errorf("expected nil (categories only required when enabled), got: %v", err)
+		}
+	})
 }
 
 func TestHandleCrossFieldChecks(t *testing.T) {
@@ -488,6 +506,153 @@ func TestIsValidHHMM(t *testing.T) {
 		if got := isValidHHMM(input); got != want {
 			t.Errorf("isValidHHMM(%q) = %v, want %v", input, got, want)
 		}
+	}
+}
+
+// TestLoad_MigratesRecommendEnabled verifies the four backward-
+// compat scenarios for the recommend.enabled master switch (added
+// 2026-06-25). Existing users upgrading from a pre-switch version
+// must end up with the right Enabled value without losing any other
+// state.
+//
+// The migration uses *bool on a side struct to detect "field absent
+// in YAML" (nil) vs "field present and false" (&false), which is
+// critical: we must not flip a user's explicit disabled choice back
+// to true, but a legacy config (no field at all) should be enabled
+// iff they had arxiv categories — the only signal that they were
+// actually using the recommender.
+func TestLoad_MigratesRecommendEnabled(t *testing.T) {
+	cases := []struct {
+		name        string
+		yaml        string
+		wantEnabled bool
+	}{
+		{
+			name: "legacy config with arxiv_categories, no enabled field",
+			yaml: `api:
+  base_url: "https://x/v1"
+  api_key: "${X}"
+  default_model: "m"
+recommend:
+  daily_papers: 20
+  scoring_batch_size: 10
+  diversity_ratio: 0.3
+  scheduled_time: "08:00"
+arxiv_categories:
+  - cs.SD
+feishu:
+  enabled: false
+`,
+			// User was running the recommender → keep them running.
+			wantEnabled: true,
+		},
+		{
+			name: "legacy config with empty arxiv_categories, no enabled field",
+			yaml: `api:
+  base_url: "https://x/v1"
+  api_key: "${X}"
+  default_model: "m"
+recommend:
+  daily_papers: 20
+ui:
+  min_recent_rounds: 2
+  max_input_tokens: 30000
+feishu:
+  enabled: false
+`,
+			// No categories = never used the recommender = stay disabled.
+			wantEnabled: false,
+		},
+		{
+			name: "config with explicit enabled: false must be preserved",
+			yaml: `api:
+  base_url: "https://x/v1"
+  api_key: "${X}"
+  default_model: "m"
+recommend:
+  enabled: false
+  daily_papers: 20
+arxiv_categories:
+  - cs.SD
+feishu:
+  enabled: false
+`,
+			// User explicitly disabled. Don't override.
+			wantEnabled: false,
+		},
+		{
+			name: "config with explicit enabled: true must be preserved",
+			yaml: `api:
+  base_url: "https://x/v1"
+  api_key: "${X}"
+  default_model: "m"
+recommend:
+  enabled: true
+  daily_papers: 20
+arxiv_categories:
+  - cs.SD
+feishu:
+  enabled: false
+`,
+			wantEnabled: true,
+		},
+		{
+			name: "no recommend section at all, no arxiv_categories",
+			yaml: `api:
+  base_url: "https://x/v1"
+  api_key: "${X}"
+  default_model: "m"
+feishu:
+  enabled: false
+`,
+			// Truly fresh config that never had recommend = stay disabled.
+			wantEnabled: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			origHome := os.Getenv("HOME")
+			os.Setenv("HOME", tmpDir)
+			t.Setenv("XDG_CONFIG_HOME", "")
+			defer os.Setenv("HOME", origHome)
+
+			configDir := filepath.Join(tmpDir, ".config", "paperagent")
+			if err := os.MkdirAll(configDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(tc.yaml), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			if cfg.Recommend.Enabled != tc.wantEnabled {
+				t.Errorf("cfg.Recommend.Enabled = %v, want %v", cfg.Recommend.Enabled, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+func TestSave_RejectsInvalidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	defer os.Setenv("HOME", origHome)
+
+	cfg := validCfg()
+	cfg.API.APIKey = "" // invalidate
+	if err := cfg.Save(); err == nil {
+		t.Fatal("expected Save() to refuse invalid config, got nil error")
+	}
+
+	// And the disk file must not have been created/written.
+	if _, err := os.Stat(filepath.Join(tmpDir, ".config", "paperagent", "config.yaml")); err == nil {
+		t.Error("config.yaml should not exist on disk after a rejected Save()")
 	}
 }
 

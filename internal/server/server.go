@@ -160,7 +160,13 @@ func (s *Server) startScheduler() {
 	batchSize := s.cfg.Recommend.ScoringBatchSize
 	scheduledTime := s.cfg.Recommend.ScheduledTime
 	excludedKeywords := s.cfg.Recommend.ExcludedKeywords
+	enabled := s.cfg.Recommend.Enabled
 	s.cfg.RUnlock()
+
+	if !enabled {
+		log.Println("[server] recommend pipeline disabled in config, scheduler not started")
+		return
+	}
 
 	if len(categories) == 0 {
 		log.Println("[server] no arXiv categories, scheduler not started")
@@ -176,7 +182,7 @@ func (s *Server) startScheduler() {
 		log.Printf("[server] chat_papers migration: %v", err)
 	}
 
-	s.sched = scheduler.New(categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime, excludedKeywords)
+	s.sched = scheduler.New(enabled, categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime, excludedKeywords)
 
 	// Connect scheduler completion to Feishu daily recommendation push.
 	// The push logic itself lives in RunPush so the Feishu bot's /push

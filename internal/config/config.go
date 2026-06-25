@@ -44,6 +44,7 @@ type APIConfig struct {
 
 // RecommendConfig controls the daily recommendation pipeline.
 type RecommendConfig struct {
+	Enabled           bool     `yaml:"enabled"` // master switch for the daily recommendation pipeline
 	DailyPapers       int      `yaml:"daily_papers"`
 	ScoringBatchSize  int      `yaml:"scoring_batch_size"`
 	DiversityRatio    float64  `yaml:"diversity_ratio"`    // 0-1: proportion of random exploration articles
@@ -173,6 +174,31 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// Migration: recommend.enabled was added in 2026-06-25. Old configs
+	// lack the field and yaml.Unmarshal leaves it as false — the zero
+	// value. Without this backfill, every legacy config that was
+	// actively using the recommender would suddenly look "disabled"
+	// on first boot after upgrade. We detect "field absent" via *bool
+	// on a side struct: nil means the YAML didn't mention the key at
+	// all, &false means the user explicitly disabled. Only flip the
+	// default when the disk file doesn't mention enabled at all AND
+	// the rest of the recommend config is plausibly populated (the
+	// user had arxiv_categories) — otherwise an empty/skeletal file
+	// would silently start fetching on upgrade.
+	var hasEnabledField struct {
+		Recommend struct {
+			Enabled *bool `yaml:"enabled"`
+		} `yaml:"recommend"`
+	}
+	var hasArxivCategories struct {
+		ArxivCategories *[]string `yaml:"arxiv_categories"`
+	}
+	_ = yaml.Unmarshal(data, &hasEnabledField)
+	_ = yaml.Unmarshal(data, &hasArxivCategories)
+	if hasEnabledField.Recommend.Enabled == nil {
+		cfg.Recommend.Enabled = hasArxivCategories.ArxivCategories != nil && len(*hasArxivCategories.ArxivCategories) > 0
+	}
+
 	// Resolve API key: expand env vars + decrypt
 	cfg.API.APIKey, _ = resolveAPIKey(cfg.API.APIKey)
 
@@ -278,6 +304,9 @@ func (c *Config) Validate() error {
 	if !isValidHHMM(c.Recommend.ScheduledTime) {
 		return fmt.Errorf("recommend.scheduled_time must be HH:MM (got %q)", c.Recommend.ScheduledTime)
 	}
+	if c.Recommend.Enabled && len(c.ArxivCategories) == 0 {
+		return errors.New("arxiv_categories must not be empty when recommend is enabled")
+	}
 
 	return nil
 }
@@ -319,13 +348,15 @@ func defaultConfig() *Config {
 			DefaultModel: "gpt-4o",
 		},
 		Recommend: RecommendConfig{
-			DailyPapers:      20,
-			ScoringBatchSize: 10,
-			DiversityRatio:   0.3,
-			ScheduledTime:    "08:00",
-			// Default to false so Validate() doesn't require a configured
-			// Feishu bot on first boot. The Web UI flips this on after
-			// the user fills in app_id + app_secret.
+			// Default disabled so Validate() passes before the user has
+			// picked any arxiv categories. The handler flips this to
+			// true once the first valid POST /api/recommend/config
+			// arrives with non-empty arxiv_categories.
+			Enabled:           false,
+			DailyPapers:       20,
+			ScoringBatchSize:  10,
+			DiversityRatio:    0.3,
+			ScheduledTime:     "08:00",
 			PushToFeishu:      false,
 			EnableTranslation: false,
 			ExcludedKeywords:  nil,
@@ -416,6 +447,7 @@ func (c *Config) Save() error {
 			DefaultModel: c.API.DefaultModel,
 		},
 		Recommend: RecommendConfig{
+			Enabled:           c.Recommend.Enabled,
 			DailyPapers:       c.Recommend.DailyPapers,
 			ScoringBatchSize:  c.Recommend.ScoringBatchSize,
 			DiversityRatio:    c.Recommend.DiversityRatio,

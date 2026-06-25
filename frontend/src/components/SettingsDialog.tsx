@@ -33,7 +33,7 @@ interface SchedulerStatus {
 }
 
 interface RecommendConfigData {
-	recommend: { daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number; enable_translation: boolean; excluded_keywords: string[] }
+	recommend: { enabled: boolean; daily_papers: number; scoring_batch_size: number; scheduled_time: string; push_to_feishu: boolean; diversity_ratio: number; enable_translation: boolean; excluded_keywords: string[] }
 	arxiv_categories: string[]
 }
 
@@ -472,9 +472,27 @@ export function SettingsDialog() {
 	) : (
 		<div className="space-y-4">
 			<fieldset className="space-y-3">
+				<legend className={legendCls}>总开关</legend>
+				<p className={hintCls}>关闭后，RSS 抓取与每日推荐管线完全跳过；后台 scheduler 不会再醒来。配置项仍保留，下次开启即可恢复。</p>
+				<div className="flex items-center gap-2">
+					<input
+						type="checkbox"
+						id="recommend-enabled"
+						checked={recommendConfig?.recommend.enabled ?? false}
+						onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, recommend: { ...prev.recommend, enabled: e.target.checked } } : prev)}
+						className="w-4 h-4 rounded border-[var(--color-border)]"
+					/>
+					<label htmlFor="recommend-enabled" className={labelCls}>启用每日推荐管线</label>
+				</div>
+			</fieldset>
+			<hr className={dividerCls} />
+			<fieldset className="space-y-3">
 				<legend className={legendCls}>arXiv 订阅分类</legend>
 				<p className={hintCls}>每天从这些 arXiv 分类中拉取最新论文。</p>
 				<div><label className={labelCls}>分类列表（用逗号分隔，如 cs.LG, cs.CV, cs.AI）</label><input type="text" value={recommendConfig?.arxiv_categories?.join(', ') ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, arxiv_categories: e.target.value.split(',').map(s => s.trim()).filter(Boolean) } : prev)} className={inputCls} placeholder="cs.LG, cs.CV, cs.AI" /></div>
+				{(recommendConfig?.recommend.enabled ?? false) && (recommendConfig?.arxiv_categories?.length ?? 0) === 0 && (
+					<p className="text-xs text-amber-600 dark:text-amber-400">启用推荐时必须至少填写一个分类，否则后端会拒绝保存。</p>
+				)}
 			</fieldset>
 			<hr className={dividerCls} />
 			<fieldset className="space-y-3">

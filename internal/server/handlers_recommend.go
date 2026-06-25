@@ -55,6 +55,7 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 
 	resp := map[string]interface{}{
 		"recommend": map[string]interface{}{
+			"enabled":            s.cfg.Recommend.Enabled,
 			"daily_papers":       s.cfg.Recommend.DailyPapers,
 			"scoring_batch_size": s.cfg.Recommend.ScoringBatchSize,
 			"diversity_ratio":    s.cfg.Recommend.DiversityRatio,
@@ -84,6 +85,9 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 	s.cfg.RUnlock()
 
 	if rc, ok := updates["recommend"].(map[string]interface{}); ok {
+		if v, ok := rc["enabled"].(bool); ok {
+			pending.Recommend.Enabled = v
+		}
 		if v, ok := rc["daily_papers"].(float64); ok {
 			pending.Recommend.DailyPapers = int(v)
 		}

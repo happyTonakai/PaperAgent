@@ -62,7 +62,7 @@ func TestRSSFetchTimes(t *testing.T) {
 		{"25:00", nil}, // out of range
 	}
 	for _, tt := range tests {
-		s := New(nil, nil, "", 0, 0, 0, tt.scheduled, nil)
+		s := New(true, nil, nil, "", 0, 0, 0, tt.scheduled, nil)
 		got := s.rssFetchTimes()
 		if len(got) != len(tt.want) {
 			t.Errorf("scheduled=%q: got %v, want %v", tt.scheduled, got, tt.want)
@@ -84,7 +84,7 @@ func TestShouldFetchRSSAt(t *testing.T) {
 	// Use a baseline scheduler with scheduledTime = "08:00"
 	// Offsets: -1→07:00, +7→15:00, +15→23:00
 	base := func() *Scheduler {
-		return New(nil, nil, "", 0, 0, 0, "08:00", nil)
+		return New(true, nil, nil, "", 0, 0, 0, "08:00", nil)
 	}
 
 	// Helper to create a time with given yyyy-mm-dd, HH:MM in UTC
@@ -183,7 +183,7 @@ func TestShouldFetchRSSAt(t *testing.T) {
 }
 
 func TestShouldFetchRSSAt_EmptyScheduledTime(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "", nil)
+	s := New(true, nil, nil, "", 0, 0, 0, "", nil)
 	now := time.Date(2026, 6, 23, 7, 0, 0, 0, time.UTC)
 	ok, hour := s.shouldFetchRSSAt(now)
 	if ok {
@@ -195,7 +195,7 @@ func TestShouldFetchRSSAt_EmptyScheduledTime(t *testing.T) {
 }
 
 func TestShouldFetchRSSAt_InvalidScheduledTime(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "bad", nil)
+	s := New(true, nil, nil, "", 0, 0, 0, "bad", nil)
 	now := time.Date(2026, 6, 23, 7, 0, 0, 0, time.UTC)
 	ok, _ := s.shouldFetchRSSAt(now)
 	if ok {
@@ -205,7 +205,7 @@ func TestShouldFetchRSSAt_InvalidScheduledTime(t *testing.T) {
 
 func TestShouldFetchRSSAt_CrossMidnight(t *testing.T) {
 	// scheduledTime = 23:00 → offsets produce 22:00, 06:00(+1d), 14:00(+1d)
-	s := New(nil, nil, "", 0, 0, 0, "23:00", nil)
+	s := New(true, nil, nil, "", 0, 0, 0, "23:00", nil)
 
 	// 06:00 next day — should match the +7h offset (23+7=30→6)
 	now := time.Date(2026, 6, 24, 6, 0, 0, 0, time.UTC)
@@ -338,7 +338,7 @@ func TestRunRSSFetch_SkipsWhenPipelineRunning(t *testing.T) {
 		cleanup()
 	}()
 
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
+	s := New(true, []string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	// Simulate pipeline running
 	s.mu.Lock()
@@ -364,7 +364,7 @@ func TestRunRSSFetch_Success(t *testing.T) {
 	cleanup := setupFetchTestDB(t)
 	defer cleanup()
 
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
+	s := New(true, []string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	s.runRSSFetch(7)
 
@@ -392,7 +392,7 @@ func TestRunRSSFetch_RecordsError(t *testing.T) {
 
 	// Need a DB connection so FetchAndStoreRSS doesn't crash — but since
 	// FetchArxivRSS will fail first (file not found), DB is never touched.
-	s := New([]string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
+	s := New(true, []string{"cs.SD"}, nil, "", 0, 0, 0, "08:00", nil)
 
 	s.runRSSFetch(7)
 
@@ -415,7 +415,7 @@ func TestRunRSSFetch_RecordsError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStatus_IncludesRSSTimesAndFetchInfo(t *testing.T) {
-	s := New(nil, nil, "", 0, 0, 0, "08:00", nil)
+	s := New(true, nil, nil, "", 0, 0, 0, "08:00", nil)
 	s.lastFetchAt = "2026-06-23 07:00"
 	s.lastFetchError = "boom"
 
