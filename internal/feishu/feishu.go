@@ -552,6 +552,15 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 	}
 	slots := []cardSlot{{id: cardMsgID, startAt: 0}}
 
+	// patch logs patchCard failures instead of discarding them. The card
+	// snapshot may fall behind when a patch fails, but logging at least
+	// makes the failure observable (matches card_sink.go's convention).
+	patch := func(id, card string) {
+		if err := b.patchCard(id, card); err != nil {
+			log.Printf("[feishu] summary patchCard: %v", err)
+		}
+	}
+
 	// Build messages for summary
 	messages := []api.ChatMessage{
 		{Role: "system", Content: prompt.GetSystem()},
@@ -599,7 +608,7 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 
 		if overflow != "" {
 			// Freeze current card (converted)
-			b.patchCard(active.id, buildContinuationCard(latexToUnicode(fits)))
+			patch(active.id, buildContinuationCard(latexToUnicode(fits)))
 
 			// Send new streaming continuation card (converted)
 			overflowStart := active.startAt + len(fits)
@@ -614,9 +623,9 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 		} else {
 			// Normal streaming update
 			if isFirst {
-				b.patchCard(active.id, buildStreamingCard(paper.Ref(), paper.Title, fits))
+				patch(active.id, buildStreamingCard(paper.Ref(), paper.Title, fits))
 			} else {
-				b.patchCard(active.id, buildStreamingContinuationCard(fits))
+				patch(active.id, buildStreamingContinuationCard(fits))
 			}
 		}
 	}
@@ -648,14 +657,14 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 
 	if overflow != "" {
 		// Last card's content still doesn't fit — freeze as continuation, send one more done card
-		b.patchCard(last.id, buildContinuationCard(latexToUnicode(fits)))
+		patch(last.id, buildContinuationCard(latexToUnicode(fits)))
 		_, _ = b.sendInteractiveCard(chatID, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(overflow), promptTokens, completionTokens, cachedTokens))
 	} else if len(slots) == 1 {
 		// Single card: patch from streaming to done in-place
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
+		patch(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
 	} else {
 		// Last of multiple cards: patch to done
-		b.patchCard(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
+		patch(last.id, buildDoneCard(paper.Ref(), paper.Title, latexToUnicode(fits), promptTokens, completionTokens, cachedTokens))
 	}
 }
 

@@ -78,6 +78,15 @@ func (s *cardSink) OnChunk(text string) error {
 
 // patchActive re-renders the active card from its startAt offset,
 // splitting off a new continuation card if the content overflows.
+//
+// Error-handling note: this method returns errors, but the engine's
+// streamOnce treats a non-nil OnChunk return as advisory — it logs and
+// keeps streaming rather than aborting. So if sendInteractiveCard fails
+// here (no new slot is appended), the next OnChunk call re-enters with
+// the same active slot and re-patches it with the now-larger total; the
+// frozen snapshot is overwritten rather than preserved. This is an
+// accepted edge case (card send failures are rare) and matches the prior
+// inline behavior in cmdChat.
 func (s *cardSink) patchActive(total string) error {
 	active := &s.slots[len(s.slots)-1]
 	cardContent := total[active.startAt:]
@@ -130,8 +139,14 @@ func (s *cardSink) OnDone(answer string, promptTokens, completionTokens, cachedT
 	if len(s.slots) == 0 {
 		return
 	}
+	// Index s.total rather than the answer argument. Both are equal today
+	// (the engine feeds buf and the sink the same chunks in the same order,
+	// and tool-message persistence touches neither), but using the sink's
+	// own accumulated total keeps OnDone self-consistent with the byte
+	// offsets we tracked in patchActive even if that coupling ever changes.
+	total := s.total.String()
 	last := &s.slots[len(s.slots)-1]
-	lastContent := answer[last.startAt:]
+	lastContent := total[last.startAt:]
 
 	fits, overflow := fitMarkdownContent(lastContent, func(c string) string {
 		return buildChatDoneCard(s.paperID, s.title, latexToUnicode(c), s.round, promptTokens, completionTokens, cachedTokens)
