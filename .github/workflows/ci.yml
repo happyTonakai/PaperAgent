@@ -25,6 +25,15 @@ jobs:
       - name: Build frontend
         run: cd frontend && npm ci && npm run build
 
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -s -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error title=gofmt::The following files are not gofmt'd with -s:"
+            echo "$unformatted"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 
