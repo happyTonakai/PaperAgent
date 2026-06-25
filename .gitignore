@@ -9,6 +9,7 @@ paperagent
 *.swo
 .paperagent/
 .claude/
+.pi/
 
 # Frontend
 frontend/node_modules/
