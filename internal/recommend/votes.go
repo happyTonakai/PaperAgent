@@ -37,7 +37,7 @@ func FetchVotesForArticles(ids []string) map[string]VoteData {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	sem := make(chan struct{}, 5) // max 5 concurrent requests
+	sem := make(chan struct{}, 5)                    // max 5 concurrent requests
 	ticker := time.NewTicker(500 * time.Millisecond) // ~2 QPS rate limit
 	defer ticker.Stop()
 

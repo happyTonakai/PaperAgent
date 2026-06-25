@@ -91,8 +91,8 @@ type llmClient interface {
 // per-paper mutex; the Feishu bot relies on its message handler being
 // single-threaded per chat).
 type Engine struct {
-	llm   llmClient
-	cfg   *config.Config
+	llm llmClient
+	cfg *config.Config
 }
 
 // NewEngine returns an Engine that uses llm for LLM calls and reads

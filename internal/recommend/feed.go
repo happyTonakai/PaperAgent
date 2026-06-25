@@ -28,7 +28,7 @@ var rssAnnounceRe = regexp.MustCompile(`Announce Type:\s*(\S+)`)
 
 // RSS represents the top-level RSS feed response from arXiv.
 type rssFeed struct {
-	XMLName xml.Name  `xml:"rss"`
+	XMLName xml.Name   `xml:"rss"`
 	Channel rssChannel `xml:"channel"`
 }
 

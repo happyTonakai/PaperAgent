@@ -509,9 +509,9 @@ func TestStreamChunk_ToolCallsPriority(t *testing.T) {
 
 func TestExtractJSONObject(t *testing.T) {
 	cases := []struct {
-		name   string
-		input  string
-		want   string
+		name  string
+		input string
+		want  string
 	}{
 		{
 			name:  "raw JSON",

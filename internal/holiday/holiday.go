@@ -73,10 +73,11 @@ const timorDefaultEndpoint = "https://timor.tech/api/holiday/info"
 
 // TimorProvider queries timor.tech for Chinese holiday data.
 // type.type field semantics:
-//   0 = workday
-//   1 = ordinary weekend (not in holiday calendar)
-//   2 = legal holiday / holiday continuation
-//   3 = compensatory work day (调休补班, NOT a holiday)
+//
+//	0 = workday
+//	1 = ordinary weekend (not in holiday calendar)
+//	2 = legal holiday / holiday continuation
+//	3 = compensatory work day (调休补班, NOT a holiday)
 type TimorProvider struct {
 	HTTPClient *http.Client
 	// UserAgent is sent on every request. Cloudflare blocks default Go UAs.
@@ -89,7 +90,7 @@ type TimorProvider struct {
 func NewTimorProvider() *TimorProvider {
 	return &TimorProvider{
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
-		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 	}
 }
 
@@ -103,8 +104,8 @@ func (p *TimorProvider) endpoint() string {
 func (p *TimorProvider) Name() string { return "timor" }
 
 type timorResponse struct {
-	Code  int `json:"code"`
-	Type  struct {
+	Code int `json:"code"`
+	Type struct {
 		Type int    `json:"type"`
 		Name string `json:"name"`
 	} `json:"type"`
@@ -178,7 +179,7 @@ type OneAPIProvider struct {
 func NewOneAPIProvider() *OneAPIProvider {
 	return &OneAPIProvider{
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
-		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 	}
 }
 
@@ -194,9 +195,9 @@ func (p *OneAPIProvider) Name() string { return "oneapi" }
 type oneapiResponse struct {
 	Code int `json:"code"`
 	Data []struct {
-		Status   int    `json:"status"`    // 1=work, 2=holiday
-		BadDay   int    `json:"badDay"`    // 1=调休补班 (compulsory work day)
-		Festival string `json:"festival"`  // holiday name, e.g. "国庆节"
+		Status   int    `json:"status"`   // 1=work, 2=holiday
+		BadDay   int    `json:"badDay"`   // 1=调休补班 (compulsory work day)
+		Festival string `json:"festival"` // holiday name, e.g. "国庆节"
 	} `json:"data"`
 }
 
@@ -254,10 +255,11 @@ const bitefuDefaultEndpoint = "https://tool.bitefu.net/jiari/"
 // BitefuProvider queries tool.bitefu.net for Chinese holiday data.
 //
 // Response is a single-digit integer as the response body:
-//   0 = workday (including 调休补班)
-//   1 = weekend or holiday continuation day (i.e. off-day but not the
-//       named festival itself)
-//   2 = the festival day itself
+//
+//	0 = workday (including 调休补班)
+//	1 = weekend or holiday continuation day (i.e. off-day but not the
+//	    named festival itself)
+//	2 = the festival day itself
 //
 // For our purposes, any non-zero value means "skip push".
 type BitefuProvider struct {
@@ -269,7 +271,7 @@ type BitefuProvider struct {
 func NewBitefuProvider() *BitefuProvider {
 	return &BitefuProvider{
 		HTTPClient: &http.Client{Timeout: 5 * time.Second},
-		UserAgent:   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		UserAgent:  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 	}
 }
 
@@ -349,16 +351,16 @@ func (c *Chain) Check(ctx context.Context, date time.Time) (holiday bool, name s
 const cacheTTL = 24 * time.Hour
 
 type cacheEntry struct {
-	result  CheckResult
+	result   CheckResult
 	storedAt time.Time
 }
 
 // Checker is the public holiday-query entry point. It memoizes results per
 // date and falls back to a weekday rule when all configured providers fail.
 type Checker struct {
-	chain  *Chain
-	mu     sync.RWMutex
-	cache  map[string]cacheEntry
+	chain *Chain
+	mu    sync.RWMutex
+	cache map[string]cacheEntry
 }
 
 // NewChecker wraps a provider chain with caching and weekday fallback.

@@ -409,6 +409,7 @@ func GetArticlesNeedingVotes(limit int) ([]string, error) {
 // MarkDailyRecommendations assigns a recommend_date batch using a hybrid strategy:
 //   - (1 - diversityRatio) * count  top-scored articles
 //   - diversityRatio * count        random articles from the remaining scored pool
+//
 // Each article gets a recommendation_type tag ("score" or "random").
 func MarkDailyRecommendations(date string, count int, diversityRatio float64) (int, error) {
 	if diversityRatio < 0 {

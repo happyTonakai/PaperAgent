@@ -38,15 +38,15 @@ type chatSession struct {
 
 // Bot is the Feishu bot for PaperAgent.
 type Bot struct {
-	cfg        *config.Config
-	apiClient  *api.Client
-	client     *lark.Client
+	cfg          *config.Config
+	apiClient    *api.Client
+	client       *lark.Client
 	replayClient *lark.Client
 	replayMu     sync.Mutex
-	wsClient   *larkws.Client
-	cancel     context.CancelFunc
-	sessions   map[string]*chatSession // chatID -> session
-	sessionsMu sync.Mutex
+	wsClient     *larkws.Client
+	cancel       context.CancelFunc
+	sessions     map[string]*chatSession // chatID -> session
+	sessionsMu   sync.Mutex
 
 	mu        sync.RWMutex
 	connected bool
@@ -1241,7 +1241,7 @@ const helpText = "📚 **PaperAgent 飞书助手**\n\n" +
 	"可用命令：\n" +
 	"• **/new <链接>** — 创建新的论文总结\n" +
 	"• **/list** — 查看文章列表（支持翻页）\n" +
-		"• **/search <关键词>** — 搜索论文标题\n" +
+	"• **/search <关键词>** — 搜索论文标题\n" +
 	"• **/summary** — 查看当前论文的初始总结\n" +
 	"• **/fetch [n]** — 拉取最近 n 轮问答（默认 2）\n" +
 	"• **/btw <问题>** — 提问但不记入上下文\n" +

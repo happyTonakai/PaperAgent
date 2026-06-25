@@ -71,7 +71,7 @@ func FetchArxivTool() Tool {
 	return Tool{
 		Type: "function",
 		Function: ToolFunction{
-			Name: "fetch_arxiv",
+			Name:        "fetch_arxiv",
 			Description: "Fetch the content of an arXiv paper by URL or ID and return it as Markdown (references stripped — use get_references on the current paper if you need that). Use this when the user wants to compare with, contrast, or reference another paper.",
 			Parameters: map[string]interface{}{
 				"type": "object",
@@ -101,7 +101,7 @@ type ChatRequest struct {
 	StreamOptions *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
-	Tools         []Tool        `json:"tools,omitempty"`
+	Tools []Tool `json:"tools,omitempty"`
 }
 
 type chatResponse struct {
@@ -117,9 +117,9 @@ type chatResponse struct {
 		} `json:"message,omitempty"`
 	} `json:"choices"`
 	Usage *struct {
-		CompletionTokens int `json:"completion_tokens"`
-		PromptTokens     int `json:"prompt_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		TotalTokens         int `json:"total_tokens"`
 		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details,omitempty"`
@@ -179,7 +179,7 @@ func newHTTPClient() *http.Client {
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 10 * time.Second,
-		Proxy:                http.ProxyFromEnvironment,
+		Proxy:                 http.ProxyFromEnvironment,
 	}
 	return &http.Client{
 		Transport: tr,
@@ -206,7 +206,7 @@ func (c *Client) ChatStream(model string, messages []ChatMessage, tools []Tool) 
 			StreamOptions: &struct {
 				IncludeUsage bool `json:"include_usage"`
 			}{IncludeUsage: true},
-			Tools:    tools,
+			Tools: tools,
 		}
 
 		if model == "" {

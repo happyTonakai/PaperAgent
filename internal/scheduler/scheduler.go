@@ -74,8 +74,8 @@ type Scheduler struct {
 // New creates a Scheduler.
 func New(categories []string, scoringClient *api.Client, scoringModel string, dailyPapers, batchSize int, diversityRatio float64, scheduledTime string, excludedKeywords []string) *Scheduler {
 	return &Scheduler{
-		categories:        categories,
-		 excludedKeywords:  excludedKeywords,
+		categories:       categories,
+		excludedKeywords: excludedKeywords,
 		scoring: &recommend.ScoringClient{
 			Client: scoringClient,
 			Model:  scoringModel,

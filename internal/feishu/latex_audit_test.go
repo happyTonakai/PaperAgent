@@ -119,7 +119,7 @@ func TestLatexAudit(t *testing.T) {
 			t.Logf("    公式数: %d | 转换: %d | 保留: %d",
 				len(r.spans), countConverted(r.spans), countSkipped(r.spans))
 		}
-			// Only print details for unconverted formulas to reduce noise
+		// Only print details for unconverted formulas to reduce noise
 		for _, sp := range r.spans {
 			if !sp.converted {
 				t.Logf("    [✗] %s: %s", sp.source, truncStr(sp.latex, 80))

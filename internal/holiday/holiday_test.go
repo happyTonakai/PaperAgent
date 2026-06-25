@@ -67,24 +67,24 @@ func newBody(s string) *readCloser {
 func newTimorWithTransport(ft *fakeTransport) *TimorProvider {
 	return &TimorProvider{
 		HTTPClient: &http.Client{Transport: ft},
-		UserAgent:   "test",
-		Endpoint:    "http://test.invalid",
+		UserAgent:  "test",
+		Endpoint:   "http://test.invalid",
 	}
 }
 
 func newOneAPIWithTransport(ft *fakeTransport) *OneAPIProvider {
 	return &OneAPIProvider{
 		HTTPClient: &http.Client{Transport: ft},
-		UserAgent:   "test",
-		Endpoint:    "http://test.invalid",
+		UserAgent:  "test",
+		Endpoint:   "http://test.invalid",
 	}
 }
 
 func newBitefuWithTransport(ft *fakeTransport) *BitefuProvider {
 	return &BitefuProvider{
 		HTTPClient: &http.Client{Transport: ft},
-		UserAgent:   "test",
-		Endpoint:    "http://test.invalid",
+		UserAgent:  "test",
+		Endpoint:   "http://test.invalid",
 	}
 }
 
@@ -606,9 +606,15 @@ func TestProvider_AllThreeRealProvidersFail_FallsBackToWeekday(t *testing.T) {
 		return ctor(srv.URL)
 	}
 	chain := NewChain(
-		makeBroken(func(url string) Provider { return &TimorProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url} }),
-		makeBroken(func(url string) Provider { return &OneAPIProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url} }),
-		makeBroken(func(url string) Provider { return &BitefuProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url} }),
+		makeBroken(func(url string) Provider {
+			return &TimorProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url}
+		}),
+		makeBroken(func(url string) Provider {
+			return &OneAPIProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url}
+		}),
+		makeBroken(func(url string) Provider {
+			return &BitefuProvider{HTTPClient: &http.Client{}, UserAgent: "t", Endpoint: url}
+		}),
 	)
 	c := NewChecker(chain)
 

@@ -203,5 +203,3 @@ func TestExtractArxivID(t *testing.T) {
 		}
 	}
 }
-
-

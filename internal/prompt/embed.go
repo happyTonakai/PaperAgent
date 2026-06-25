@@ -39,11 +39,11 @@ func Get(name string, fallback string) string {
 // GetSystem always returns the embedded system prompt; user overrides at
 // prompts/system.txt are intentionally not honored. Any pre-existing override
 // file is left on disk but silently ignored.
-func GetSystem() string { return SystemPrompt }
-func GetHeavy() string     { return Get("heavy", HeavyPrompt) }
-func GetLight() string     { return Get("light", LightPrompt) }
-func GetSummarize() string { return Get("summarize", SummarizePrompt) }
-func GetScoring() string   { return Get("scoring", ScoringPrompt) }
+func GetSystem() string      { return SystemPrompt }
+func GetHeavy() string       { return Get("heavy", HeavyPrompt) }
+func GetLight() string       { return Get("light", LightPrompt) }
+func GetSummarize() string   { return Get("summarize", SummarizePrompt) }
+func GetScoring() string     { return Get("scoring", ScoringPrompt) }
 func GetUpdatePrefs() string { return Get("update-prefs", UpdatePrefsPrompt) }
 
 // GetContent returns the effective prompt content for a given name.

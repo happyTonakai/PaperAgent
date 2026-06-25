@@ -288,7 +288,6 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 	}
 }
 
-
 func TestExpandHome(t *testing.T) {
 	home, _ := os.UserHomeDir()
 

@@ -18,10 +18,10 @@ const maxLogEntries = 500
 
 // logBuffer is a thread-safe circular buffer that captures log output.
 type logBuffer struct {
-	mu    sync.RWMutex
+	mu      sync.RWMutex
 	entries []LogEntry
-	next  int
-	full  bool
+	next    int
+	full    bool
 }
 
 func newLogBuffer() *logBuffer {

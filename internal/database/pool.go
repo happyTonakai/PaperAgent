@@ -18,10 +18,10 @@ import (
 )
 
 var (
-	once    sync.Once
-	db      *sql.DB
-	dbErr   error
-	testDB  atomicDB  // overrides GetDB when set (for tests)
+	once   sync.Once
+	db     *sql.DB
+	dbErr  error
+	testDB atomicDB // overrides GetDB when set (for tests)
 )
 
 // atomicDB wraps a *sql.DB with atomic load/store for thread safety.

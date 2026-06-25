@@ -54,13 +54,13 @@ func (s *Server) handleRecommendGetConfig(w http.ResponseWriter, r *http.Request
 
 	resp := map[string]interface{}{
 		"recommend": map[string]interface{}{
-			"daily_papers":        s.cfg.Recommend.DailyPapers,
-			"scoring_batch_size":  s.cfg.Recommend.ScoringBatchSize,
-			"diversity_ratio":     s.cfg.Recommend.DiversityRatio,
-			"scheduled_time":      s.cfg.Recommend.ScheduledTime,
-			"push_to_feishu":      s.cfg.Recommend.PushToFeishu,
-			"enable_translation":  s.cfg.Recommend.EnableTranslation,
-			"excluded_keywords":   s.cfg.Recommend.ExcludedKeywords,
+			"daily_papers":       s.cfg.Recommend.DailyPapers,
+			"scoring_batch_size": s.cfg.Recommend.ScoringBatchSize,
+			"diversity_ratio":    s.cfg.Recommend.DiversityRatio,
+			"scheduled_time":     s.cfg.Recommend.ScheduledTime,
+			"push_to_feishu":     s.cfg.Recommend.PushToFeishu,
+			"enable_translation": s.cfg.Recommend.EnableTranslation,
+			"excluded_keywords":  s.cfg.Recommend.ExcludedKeywords,
 		},
 		"arxiv_categories": s.cfg.ArxivCategories,
 	}
@@ -528,12 +528,12 @@ func (s *Server) handleRecommendStats(w http.ResponseWriter, r *http.Request) {
 	read := stats[3]
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"unread":  unread,
-		"clicked": clicked,
-		"liked":   liked,
+		"unread":   unread,
+		"clicked":  clicked,
+		"liked":    liked,
 		"disliked": disliked,
-		"read":    read,
-		"total":   total,
+		"read":     read,
+		"total":    total,
 	})
 }
 
@@ -620,4 +620,3 @@ func articlesToResponse(articles []database.Article) []map[string]interface{} {
 }
 
 // --- Helpers ---
-

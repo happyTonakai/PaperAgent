@@ -46,7 +46,7 @@ func WritePreferences(content string) error {
 type FeedbackArticle struct {
 	Title    string
 	Abstract string
-	Status   int    // 0:unread, 1:clicked, 2:liked, -1:disliked
+	Status   int // 0:unread, 1:clicked, 2:liked, -1:disliked
 	Comment  *string
 	Source   string // "recommend" 或 "chat"
 	Rating   *int   // 问答系统评分 (1-10)，仅 chat 来源
@@ -218,4 +218,3 @@ func FilterArticlesByKeywords(articles []database.NewArticle, keywords []string)
 	}
 	return out
 }
-

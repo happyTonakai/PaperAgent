@@ -52,15 +52,15 @@ type Message struct {
 type Paper struct {
 	// SessionID is the stable identifier used for persistence and /open.
 	// ID is retained only for backward compatibility with older numeric sessions.
-	SessionID      string    `json:"session_id,omitempty"`
-	ID             int       `json:"id,omitempty"`
-	Title          string    `json:"title"`
-	SourceURL      string    `json:"source_url"`
-	ArxivID        string    `json:"arxiv_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	ID        int    `json:"id,omitempty"`
+	Title     string `json:"title"`
+	SourceURL string `json:"source_url"`
+	ArxivID   string `json:"arxiv_id,omitempty"`
 	// Content and InitialSummary are redundant with messages[0]; omitted from JSON when empty.
 	// SavePaper clears them before marshaling; unmarshal from old files still works.
-	Content        string    `json:"content,omitempty"`
-	InitialSummary string    `json:"initial_summary,omitempty"`
+	Content        string `json:"content,omitempty"`
+	InitialSummary string `json:"initial_summary,omitempty"`
 	// References holds the extracted reference section of the paper.
 	// It is NOT sent to the LLM by default; available via get_references tool.
 	References string `json:"references,omitempty"`
@@ -69,17 +69,17 @@ type Paper struct {
 	// can show a dedicated "open GitHub" icon next to the PDF button. Empty
 	// when no GitHub URL is found in the abstract; the WebUI hides the
 	// button in that case.
-	GitHubURL string `json:"github_url,omitempty"`
-	ModelUsed      string    `json:"model_used"`
-	TotalTokens    int       `json:"total_tokens_used"`
-	TotalPromptTokens        int       `json:"total_prompt_tokens,omitempty"`
-	TotalCompletionTokens    int       `json:"total_completion_tokens,omitempty"`
-	TotalCachedTokens        int       `json:"total_cached_tokens,omitempty"`
-	Rating         int       `json:"rating"`
-	Pinned         bool      `json:"pinned"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Messages       []Message `json:"messages"`
+	GitHubURL             string    `json:"github_url,omitempty"`
+	ModelUsed             string    `json:"model_used"`
+	TotalTokens           int       `json:"total_tokens_used"`
+	TotalPromptTokens     int       `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens int       `json:"total_completion_tokens,omitempty"`
+	TotalCachedTokens     int       `json:"total_cached_tokens,omitempty"`
+	Rating                int       `json:"rating"`
+	Pinned                bool      `json:"pinned"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	Messages              []Message `json:"messages"`
 	// TruncationAnchor is the round number from which token counting restarts
 	// after a budget-exceeded truncation. 0 means "count from the first context round".
 	TruncationAnchor int `json:"truncation_anchor,omitempty"`
@@ -245,8 +245,6 @@ func ContextRoundRange(msgs []Message) (int, int) {
 	}
 	return minR, maxR
 }
-
-
 
 func (p *Paper) Save() error {
 	if p == nil {

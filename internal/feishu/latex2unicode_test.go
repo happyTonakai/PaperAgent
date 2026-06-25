@@ -89,7 +89,7 @@ func TestLatexToUnicode_Simple(t *testing.T) {
 			name: "tilde with mathbf inside (bold x with tilde)",
 			in:   "$\\tilde{\\mathbf{x}}$",
 			want: "**x̃**",
-		},{
+		}, {
 			name: "thin space comma ignored",
 			in:   "$x\\,y$",
 			want: "x y",
@@ -257,7 +257,7 @@ func TestLatexToUnicode_InlineFormulaPreserved(t *testing.T) {
 	// \mathcal{L}{distill} → *L*distill (after text stripping)
 	// But \lambda_{distill} → λ followed by subscript "distill" which has 'd' without subscript
 	// So \lambda_{\text{distill}} should be preserved
-	
+
 	// Actually, let me think about what the expected output should be:
 	// First formula: $\mathcal{L}{\text{distill}}$
 	//   After \text{} stripping: $\mathcal{L}{distill}$
@@ -273,7 +273,7 @@ func TestLatexToUnicode_InlineFormulaPreserved(t *testing.T) {
 	// Actually wait, \text{distill} — after stripping, we get "distill"
 	// d, i, s, t, i, l, l — d has no subscript, so _{distill} fails
 	// But _{t} works for single char!
-	
+
 	// With braces now preserved for standalone groups:
 	// \mathcal{L}{\text{distill}} → *L*{distill}
 	want := "其中 *L*{distill} 即WavLM蒸馏损失，权重 $\\lambda_{\\text{distill}}=25$（附录H表13）"
@@ -358,7 +358,7 @@ func TestStripTextCommands(t *testing.T) {
 		{
 			name: "nested braces not handled",
 			in:   "\\text{hello {there}}",
-			want: "hello {there}", // the first } closes \text, leaving " {there}}" 
+			want: "hello {there}", // the first } closes \text, leaving " {there}}"
 		},
 		{
 			name: "text with no braces",
@@ -388,7 +388,7 @@ func TestProcessMathSpans_NoCompleteSpan(t *testing.T) {
 func TestProcessMathSpans_Mixed(t *testing.T) {
 	// Mix of convertible and non-convertible formulas
 	in := "已知 $\\alpha = \\lambda_t$，且 $x_b$ 是参数" // \alpha convertible, \lambda_t convertible, x_b not
-	
+
 	// After conversion:
 	// $α = λₜ$ — convertible!
 	// $x_b$ — not convertible (b has no subscript)

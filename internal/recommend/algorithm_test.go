@@ -13,11 +13,11 @@ import (
 // using the local RSS test file and injected scores (no real API calls).
 //
 // This tests:
-//   1. RSS feed parsing from local file
-//   2. Saving articles to SQLite
-//   3. Scoring with deterministic random scores
-//   4. MarkDailyRecommendations with hybrid (score + random) strategy
-//   5. Querying recommended articles
+//  1. RSS feed parsing from local file
+//  2. Saving articles to SQLite
+//  3. Scoring with deterministic random scores
+//  4. MarkDailyRecommendations with hybrid (score + random) strategy
+//  5. Querying recommended articles
 func TestFetchAndRecommendFullPipeline(t *testing.T) {
 	// --- Setup: in-memory SQLite ---
 	conn, cleanup, err := database.OpenTestDB()

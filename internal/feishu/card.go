@@ -600,7 +600,7 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 					"tag":            "column",
 					"width":          "auto",
 					"vertical_align": "center",
-					"elements": []map[string]any{btn},
+					"elements":       []map[string]any{btn},
 				},
 			},
 		}
@@ -716,8 +716,8 @@ type RecommendCardItem struct {
 	// PDFURL is the URL the per-article arXiv icon button opens. Derived
 	// from the abs URL at construction time (abs → pdf). Empty for non-arXiv
 	// sources; the card builder hides the button in that case.
-	PDFURL    string
-	Score     float64
+	PDFURL string
+	Score  float64
 	// Status mirrors articles.status: 0=unread, 1=activated, 2=liked,
 	// -1=disliked, 3=read. The card builder uses it to render buttons in
 	// their post-action state so the user gets visual feedback after a click.
@@ -1065,8 +1065,8 @@ func splitTextByBytes(text string, maxBytes int) []string {
 
 	// Find safe split points: positions where we are NOT inside a code block or table
 	type safePoint struct {
-		pos   int
-		good  int // quality: 2=double newline, 1=single newline, 0=forced
+		pos  int
+		good int // quality: 2=double newline, 1=single newline, 0=forced
 	}
 
 	lines := strings.Split(text, "\n")

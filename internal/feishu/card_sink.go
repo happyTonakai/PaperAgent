@@ -38,9 +38,9 @@ type cardSink struct {
 	round    int
 	patchMin int // re-patch the active card once this many bytes have accumulated since the last patch
 
-	slots      []chatCardSlot
-	total      strings.Builder
-	lastPatch  int
+	slots     []chatCardSlot
+	total     strings.Builder
+	lastPatch int
 }
 
 // newCardSink creates a cardSink with the given initial card ID. The

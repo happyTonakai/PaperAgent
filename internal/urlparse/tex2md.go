@@ -328,10 +328,10 @@ func stripLineComment(line string) string {
 // ---------------------------------------------------------------------------
 
 type texMacroDef struct {
-	name    string
-	nargs   int
-	optDef  string
-	body    string
+	name   string
+	nargs  int
+	optDef string
+	body   string
 }
 
 func expandMacros(tex string) string {

@@ -635,14 +635,14 @@ func TestGetUnpushedArticles_FiltersAndOrders(t *testing.T) {
 		batchOrder  int
 		pushedAt    *string
 	}{
-		{"a1", "2026-06-14", 0, nil},                          // pending, oldest
-		{"a2", "2026-06-14", 1, nil},                          // pending, same date later
-		{"a3", "2026-06-14", 0, &pushedYesterday},             // already pushed, must be excluded
-		{"a4", "2026-06-15", 0, nil},                          // pending, newer date
-		{"a5", "2026-06-15", 0, nil},                          // pending, same date
-		{"a6", "2026-06-15", 1, &pushedYesterday},             // already pushed, newer date
-		{"a7", "2026-06-13", 0, nil},                          // pending, oldest of all
-		{"a8", "2026-06-15", 0, nil},                          // no recommend_date
+		{"a1", "2026-06-14", 0, nil},              // pending, oldest
+		{"a2", "2026-06-14", 1, nil},              // pending, same date later
+		{"a3", "2026-06-14", 0, &pushedYesterday}, // already pushed, must be excluded
+		{"a4", "2026-06-15", 0, nil},              // pending, newer date
+		{"a5", "2026-06-15", 0, nil},              // pending, same date
+		{"a6", "2026-06-15", 1, &pushedYesterday}, // already pushed, newer date
+		{"a7", "2026-06-13", 0, nil},              // pending, oldest of all
+		{"a8", "2026-06-15", 0, nil},              // no recommend_date
 		// a8 has recommend_date=nil so should be excluded by the WHERE clause.
 	})
 	// a8 must be excluded by the WHERE clause (recommend_date IS NOT NULL),

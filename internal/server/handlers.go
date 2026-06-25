@@ -38,22 +38,22 @@ type chatRequest struct {
 // --- Response types ---
 
 type paperResponse struct {
-	ID                   string            `json:"id"`
-	Title                string            `json:"title"`
-	SourceURL            string            `json:"source_url"`
-	ArxivID              string            `json:"arxiv_id,omitempty"`
-	GitHubURL            string            `json:"github_url,omitempty"`
-	InitialSummary       string            `json:"initial_summary"`
-	ModelUsed            string            `json:"model_used"`
-	TotalTokens          int               `json:"total_tokens_used,omitempty"`
-	TotalPromptTokens    int               `json:"total_prompt_tokens,omitempty"`
-	TotalCompletionTokens int              `json:"total_completion_tokens,omitempty"`
-	TotalCachedTokens    int               `json:"total_cached_tokens,omitempty"`
-	Rating               int               `json:"rating"`
-	Pinned               bool              `json:"pinned"`
-	CreatedAt            string            `json:"created_at"`
-	UpdatedAt            string            `json:"updated_at"`
-	Messages             []messageResponse `json:"messages"`
+	ID                    string            `json:"id"`
+	Title                 string            `json:"title"`
+	SourceURL             string            `json:"source_url"`
+	ArxivID               string            `json:"arxiv_id,omitempty"`
+	GitHubURL             string            `json:"github_url,omitempty"`
+	InitialSummary        string            `json:"initial_summary"`
+	ModelUsed             string            `json:"model_used"`
+	TotalTokens           int               `json:"total_tokens_used,omitempty"`
+	TotalPromptTokens     int               `json:"total_prompt_tokens,omitempty"`
+	TotalCompletionTokens int               `json:"total_completion_tokens,omitempty"`
+	TotalCachedTokens     int               `json:"total_cached_tokens,omitempty"`
+	Rating                int               `json:"rating"`
+	Pinned                bool              `json:"pinned"`
+	CreatedAt             string            `json:"created_at"`
+	UpdatedAt             string            `json:"updated_at"`
+	Messages              []messageResponse `json:"messages"`
 }
 
 type messageResponse struct {
@@ -1046,9 +1046,9 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"max_input_tokens":  s.cfg.UI.MaxInputTokens,
 		},
 		"feishu": map[string]interface{}{
-			"enabled":                s.cfg.Feishu.Enabled,
-			"app_id":                 maskFeishu(s.cfg.Feishu.AppID),
-			"app_secret":             maskFeishu(s.cfg.Feishu.AppSecret),
+			"enabled":                 s.cfg.Feishu.Enabled,
+			"app_id":                  maskFeishu(s.cfg.Feishu.AppID),
+			"app_secret":              maskFeishu(s.cfg.Feishu.AppSecret),
 			"daily_recommend_chat_id": s.cfg.Feishu.DailyRecommendChatID,
 		},
 	}
@@ -1430,22 +1430,22 @@ func paperToResponse(p *session.Paper) paperResponse {
 	}
 
 	return paperResponse{
-		ID:                     p.Ref(),
-		Title:                  p.Title,
-		SourceURL:              p.SourceURL,
-		ArxivID:                p.ArxivID,
-		GitHubURL:              p.GitHubURL,
-		InitialSummary:         p.InitialSummary,
-		ModelUsed:              p.ModelUsed,
-		TotalTokens:            p.TotalTokens,
-		TotalPromptTokens:      p.TotalPromptTokens,
-		TotalCompletionTokens:  p.TotalCompletionTokens,
-		TotalCachedTokens:      p.TotalCachedTokens,
-		Rating:                 p.Rating,
-		Pinned:                 p.Pinned,
-		CreatedAt:              p.CreatedAt.Format("2006-01-02 15:04"),
-		UpdatedAt:              p.UpdatedAt.Format("2006-01-02 15:04"),
-		Messages:               msgs,
+		ID:                    p.Ref(),
+		Title:                 p.Title,
+		SourceURL:             p.SourceURL,
+		ArxivID:               p.ArxivID,
+		GitHubURL:             p.GitHubURL,
+		InitialSummary:        p.InitialSummary,
+		ModelUsed:             p.ModelUsed,
+		TotalTokens:           p.TotalTokens,
+		TotalPromptTokens:     p.TotalPromptTokens,
+		TotalCompletionTokens: p.TotalCompletionTokens,
+		TotalCachedTokens:     p.TotalCachedTokens,
+		Rating:                p.Rating,
+		Pinned:                p.Pinned,
+		CreatedAt:             p.CreatedAt.Format("2006-01-02 15:04"),
+		UpdatedAt:             p.UpdatedAt.Format("2006-01-02 15:04"),
+		Messages:              msgs,
 	}
 }
 
