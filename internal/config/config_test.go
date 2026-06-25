@@ -55,6 +55,7 @@ func TestLoadNonExistent(t *testing.T) {
 	origModel := os.Getenv("OPENAI_MODEL_NAME")
 	tmpDir := t.TempDir()
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	os.Unsetenv("OPENAI_BASE_URL")
 	os.Unsetenv("OPENAI_MODEL_NAME")
 	defer os.Setenv("HOME", origHome)
@@ -91,6 +92,7 @@ ui:
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	cfg, err := Load()
@@ -130,6 +132,7 @@ api:
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	os.Setenv("TEST_API_KEY", "expanded-key-value")
 	defer os.Setenv("HOME", origHome)
 	defer os.Unsetenv("TEST_API_KEY")
@@ -150,6 +153,7 @@ func TestSave(t *testing.T) {
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	cfg := &Config{
@@ -194,6 +198,7 @@ func TestLoadReencryptsPlaintextAPIKey(t *testing.T) {
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	cfg, err := Load()
@@ -237,6 +242,7 @@ func TestLoadPreservesEnvVarRef(t *testing.T) {
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	cfg, err := Load()
@@ -275,6 +281,7 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	_, err := Load()
@@ -309,6 +316,7 @@ func TestExpandHome(t *testing.T) {
 }
 
 func TestConfigDirPaths(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home, _ := os.UserHomeDir()
 
 	if ConfigDir() != filepath.Join(home, ".config", "paperagent") {
@@ -326,6 +334,7 @@ func TestConfigExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	defer os.Setenv("HOME", origHome)
 
 	// Initially no config file exists.

@@ -15,6 +15,7 @@ func setupTestDir(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Cleanup(func() { os.Unsetenv("HOME") })
 	return tmpDir
 }
