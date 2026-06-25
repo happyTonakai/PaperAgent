@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1068,43 +1069,70 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Lock()
+	// Snapshot the live cfg under RLock, apply the requested updates to
+	// the snapshot, validate it, and only commit if validation passes.
+	// This guarantees we never leave the in-memory cfg in an invalid
+	// state when the request is rejected — the next Load() restores the
+	// last good on-disk form regardless.
+	s.cfg.RLock()
+	pending := s.cfg.Snapshot()
+	s.cfg.RUnlock()
+
 	if v, ok := updates["api_key"].(string); ok && v != "" && !strings.Contains(v, "••••") {
-		s.cfg.API.APIKey = resolveAPIKeyInput(v)
+		pending.API.APIKey = resolveAPIKeyInput(v)
 	}
 	if v, ok := updates["base_url"].(string); ok && v != "" {
-		s.cfg.API.BaseURL = v
+		pending.API.BaseURL = v
 	}
 	if v, ok := updates["default_model"].(string); ok && v != "" {
-		s.cfg.API.DefaultModel = v
+		pending.API.DefaultModel = v
 	}
 	if v, ok := updates["min_recent_rounds"].(float64); ok {
-		s.cfg.UI.MinRecentRounds = int(v)
+		pending.UI.MinRecentRounds = int(v)
 	}
 	if v, ok := updates["max_input_tokens"].(float64); ok {
-		s.cfg.UI.MaxInputTokens = int(v)
+		pending.UI.MaxInputTokens = int(v)
 	}
 	if v, ok := updates["obsidian_export_path"].(string); ok {
-		s.cfg.Obsidian.ExportPath = v
+		pending.Obsidian.ExportPath = v
 	}
 	if v, ok := updates["feishu_enabled"].(bool); ok {
-		s.cfg.Feishu.Enabled = v
+		pending.Feishu.Enabled = v
 	}
 	if v, ok := updates["feishu_app_id"].(string); ok {
-		s.cfg.Feishu.AppID = v
+		pending.Feishu.AppID = v
 	}
 	if v, ok := updates["feishu_app_secret"].(string); ok {
 		if v != "" && !strings.Contains(v, "••••") {
-			s.cfg.Feishu.AppSecret = v
+			pending.Feishu.AppSecret = v
 		}
 	}
 	if v, ok := updates["feishu_daily_recommend_chat_id"].(string); ok {
-		s.cfg.Feishu.DailyRecommendChatID = v
+		pending.Feishu.DailyRecommendChatID = v
 	}
+
+	if err := pending.Validate(); err != nil {
+		log.Printf("[config] REJECTED POST /api/config from %s: %v (body keys: %v)", r.RemoteAddr, err, mapKeys(updates))
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.cfg.Lock()
+	s.cfg.CommitFrom(pending)
 	s.cfg.Unlock()
 
 	if err := s.cfg.Save(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed"})
+		// Save's own Validate would have rejected illegal configs above;
+		// reaching here means a filesystem failure. Roll back the
+		// in-memory state so the next request doesn't see partially-
+		// applied changes.
+		log.Printf("[config] save failed, reloading from disk: %v", err)
+		if fresh, lerr := config.Load(); lerr == nil {
+			s.cfg.Lock()
+			s.cfg.CommitFrom(fresh)
+			s.cfg.Unlock()
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed: " + err.Error()})
 		return
 	}
 
@@ -1303,6 +1331,19 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Helpers ---
+
+// mapKeys returns a sorted slice of a request body's top-level keys,
+// used in reject-log messages so operators can see which fields a
+// caller tried to set without dumping the full body (which may
+// contain secrets).
+func mapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	limitStr := r.URL.Query().Get("limit")

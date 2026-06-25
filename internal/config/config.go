@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -226,6 +227,90 @@ func hasUnresolvedEnv(s string) bool {
 	return strings.Contains(s, "${") && strings.Contains(s, "}")
 }
 
+// Validate checks every field for legal values and returns the first
+// violation it finds, or nil if the config is valid. Callers (HTTP
+// handlers, Load) should call this BEFORE writing to disk so the
+// on-disk form is always recoverable.
+//
+// Cross-field invariants (e.g. push_to_feishu requires feishu.enabled)
+// are deliberately NOT checked here. They're enforced by HTTP handlers
+// in HandleCrossFieldChecks (below) at write time, so a freshly-loaded
+// config that pre-dates the invariant can still round-trip through
+// Load+Save without losing the re-encrypt API key migration.
+func (c *Config) Validate() error {
+	if c.API.APIKey == "" {
+		return errors.New("api.api_key must not be empty")
+	}
+	if c.API.BaseURL == "" {
+		return errors.New("api.base_url must not be empty")
+	}
+	if c.API.DefaultModel == "" {
+		return errors.New("api.default_model must not be empty")
+	}
+
+	if c.UI.MinRecentRounds < 1 {
+		return fmt.Errorf("ui.min_recent_rounds must be >= 1 (got %d)", c.UI.MinRecentRounds)
+	}
+	if c.UI.MaxInputTokens < 1000 {
+		return fmt.Errorf("ui.max_input_tokens must be >= 1000 (got %d)", c.UI.MaxInputTokens)
+	}
+
+	if c.Feishu.Enabled {
+		// Conditional required: turning the bot on without credentials
+		// makes the WebSocket reconnect loop forever with a useless error.
+		if c.Feishu.AppID == "" {
+			return errors.New("feishu.app_id must not be empty when feishu is enabled")
+		}
+		if c.Feishu.AppSecret == "" {
+			return errors.New("feishu.app_secret must not be empty when feishu is enabled")
+		}
+	}
+
+	if c.Recommend.DailyPapers <= 0 {
+		return fmt.Errorf("recommend.daily_papers must be > 0 (got %d)", c.Recommend.DailyPapers)
+	}
+	if c.Recommend.ScoringBatchSize <= 0 {
+		return fmt.Errorf("recommend.scoring_batch_size must be > 0 (got %d)", c.Recommend.ScoringBatchSize)
+	}
+	if c.Recommend.DiversityRatio < 0 || c.Recommend.DiversityRatio > 1 {
+		return fmt.Errorf("recommend.diversity_ratio must be in [0, 1] (got %v)", c.Recommend.DiversityRatio)
+	}
+	if !isValidHHMM(c.Recommend.ScheduledTime) {
+		return fmt.Errorf("recommend.scheduled_time must be HH:MM (got %q)", c.Recommend.ScheduledTime)
+	}
+
+	return nil
+}
+
+// HandleCrossFieldChecks reports violations of cross-field invariants
+// that don't fit cleanly into per-field Validate(). HTTP handlers call
+// this AFTER applying the user's update to a snapshot but BEFORE
+// committing to the live config.
+//
+// Currently checks:
+//   - recommend.push_to_feishu=true requires feishu.enabled=true.
+//     Without this invariant, a save can silently "succeed" with a
+//     push_to_feishu toggle that does nothing at runtime because the
+//     Feishu WebSocket bot isn't connected.
+func (c *Config) HandleCrossFieldChecks() error {
+	if c.Recommend.PushToFeishu && !c.Feishu.Enabled {
+		return errors.New("feishu.enabled must be true when recommend.push_to_feishu is true")
+	}
+	return nil
+}
+
+// isValidHHMM reports whether s is a "HH:MM" 24-hour clock string in
+// the valid range (00:00–23:59). Mirrors scheduler.parseTimeOfDay's
+// acceptance so the two never disagree about what counts as a time.
+func isValidHHMM(s string) bool {
+	if len(s) != 5 || s[2] != ':' {
+		return false
+	}
+	h := int(s[0]-'0')*10 + int(s[1]-'0')
+	m := int(s[3]-'0')*10 + int(s[4]-'0')
+	return h >= 0 && h <= 23 && m >= 0 && m <= 59
+}
+
 func defaultConfig() *Config {
 	cfg := &Config{
 		API: APIConfig{
@@ -234,11 +319,14 @@ func defaultConfig() *Config {
 			DefaultModel: "gpt-4o",
 		},
 		Recommend: RecommendConfig{
-			DailyPapers:       20,
-			ScoringBatchSize:  10,
-			DiversityRatio:    0.3,
-			ScheduledTime:     "08:00",
-			PushToFeishu:      true,
+			DailyPapers:      20,
+			ScoringBatchSize: 10,
+			DiversityRatio:   0.3,
+			ScheduledTime:    "08:00",
+			// Default to false so Validate() doesn't require a configured
+			// Feishu bot on first boot. The Web UI flips this on after
+			// the user fills in app_id + app_secret.
+			PushToFeishu:      false,
 			EnableTranslation: false,
 			ExcludedKeywords:  nil,
 		},
@@ -265,6 +353,16 @@ func defaultConfig() *Config {
 func (c *Config) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Reject illegal configs at the door — every field must be in a
+	// valid state. This is the last line of defence: even if a caller
+	// bypasses handler-level validation, the on-disk file is never
+	// overwritten with a half-broken config. The in-memory cfg may
+	// already hold the bad value (from the request) but a fresh
+	// Load() will restore the previous good state.
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("refusing to save invalid config: %w", err)
+	}
 
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -367,3 +465,50 @@ func (c *Config) Lock()    { c.mu.Lock() }
 func (c *Config) Unlock()  { c.mu.Unlock() }
 func (c *Config) RLock()   { c.mu.RLock() }
 func (c *Config) RUnlock() { c.mu.RUnlock() }
+
+// Snapshot returns a value-copy of c safe to mutate freely without
+// touching the live Config. The mutex is intentionally NOT copied —
+// the snapshot is a value type that nobody else holds, so locking is
+// unnecessary. Slices are deep-copied so handlers can append/clear
+// without aliasing the live state.
+//
+// Callers should validate the snapshot (Validate) and only commit the
+// resulting fields back via CommitFrom if validation passes. This is
+// the pattern that lets HTTP handlers reject bad config without
+// leaving the in-memory cfg in an invalid state.
+//
+// Implementation note: we can't use `out := *c` because that copies
+// the embedded sync.RWMutex and govet rightly complains about copying
+// a lock value (vet: "assignment copies lock value"). Instead each
+// non-mutex field is copied explicitly.
+func (c *Config) Snapshot() *Config {
+	out := &Config{
+		API:             c.API,
+		Recommend:       c.Recommend,
+		Obsidian:        c.Obsidian,
+		UI:              c.UI,
+		Feishu:          c.Feishu,
+		RawOnDiskAPIKey: c.RawOnDiskAPIKey,
+	}
+	if c.ArxivCategories != nil {
+		out.ArxivCategories = append([]string(nil), c.ArxivCategories...)
+	}
+	if c.Recommend.ExcludedKeywords != nil {
+		out.Recommend.ExcludedKeywords = append([]string(nil), c.Recommend.ExcludedKeywords...)
+	}
+	return out
+}
+
+// CommitFrom copies the validated snapshot's fields back into c.
+// Caller must hold c.Lock(). RawOnDiskAPIKey is preserved verbatim
+// (it tracks what's on disk so Save can preserve env-var references
+// and ciphertext pass-through).
+func (c *Config) CommitFrom(src *Config) {
+	c.API = src.API
+	c.Recommend = src.Recommend
+	c.ArxivCategories = src.ArxivCategories
+	c.Obsidian = src.Obsidian
+	c.UI = src.UI
+	c.Feishu = src.Feishu
+	c.RawOnDiskAPIKey = src.RawOnDiskAPIKey
+}

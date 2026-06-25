@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/happyTonakai/paperagent/internal/api"
+	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/recommend"
 	"github.com/happyTonakai/paperagent/internal/scheduler"
@@ -74,26 +75,32 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.cfg.Lock()
+	// Snapshot → apply → validate → commit. Reject the request before
+	// mutating the live cfg so a stray zero-value POST (e.g. the empty
+	// recommend state seen in past bug reports) can't desync the
+	// in-memory and on-disk configs.
+	s.cfg.RLock()
+	pending := s.cfg.Snapshot()
+	s.cfg.RUnlock()
 
 	if rc, ok := updates["recommend"].(map[string]interface{}); ok {
 		if v, ok := rc["daily_papers"].(float64); ok {
-			s.cfg.Recommend.DailyPapers = int(v)
+			pending.Recommend.DailyPapers = int(v)
 		}
 		if v, ok := rc["scoring_batch_size"].(float64); ok {
-			s.cfg.Recommend.ScoringBatchSize = int(v)
+			pending.Recommend.ScoringBatchSize = int(v)
 		}
 		if v, ok := rc["diversity_ratio"].(float64); ok {
-			s.cfg.Recommend.DiversityRatio = v
+			pending.Recommend.DiversityRatio = v
 		}
 		if v, ok := rc["scheduled_time"].(string); ok {
-			s.cfg.Recommend.ScheduledTime = v
+			pending.Recommend.ScheduledTime = v
 		}
 		if v, ok := rc["push_to_feishu"].(bool); ok {
-			s.cfg.Recommend.PushToFeishu = v
+			pending.Recommend.PushToFeishu = v
 		}
 		if v, ok := rc["enable_translation"].(bool); ok {
-			s.cfg.Recommend.EnableTranslation = v
+			pending.Recommend.EnableTranslation = v
 		}
 		if v, ok := rc["excluded_keywords"].([]interface{}); ok {
 			var keywords []string
@@ -102,7 +109,7 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 					keywords = append(keywords, s)
 				}
 			}
-			s.cfg.Recommend.ExcludedKeywords = keywords
+			pending.Recommend.ExcludedKeywords = keywords
 		}
 	}
 
@@ -113,13 +120,27 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 				strCats = append(strCats, s)
 			}
 		}
-		s.cfg.ArxivCategories = strCats
+		pending.ArxivCategories = strCats
 	}
 
+	if err := pending.Validate(); err != nil {
+		log.Printf("[config] REJECTED PUT /api/recommend/config from %s: %v (body keys: %v)", r.RemoteAddr, err, mapKeys(updates))
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.cfg.Lock()
+	s.cfg.CommitFrom(pending)
 	s.cfg.Unlock()
 
 	if err := s.cfg.Save(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed"})
+		log.Printf("[config] save failed, reloading from disk: %v", err)
+		if fresh, lerr := config.Load(); lerr == nil {
+			s.cfg.Lock()
+			s.cfg.CommitFrom(fresh)
+			s.cfg.Unlock()
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save config failed: " + err.Error()})
 		return
 	}
 

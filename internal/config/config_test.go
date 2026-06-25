@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -162,7 +163,9 @@ func TestSave(t *testing.T) {
 			APIKey:       "real-key",
 			DefaultModel: "test-model",
 		},
-		UI: UIConfig{MinRecentRounds: 3, MaxInputTokens: 30000},
+		UI:              UIConfig{MinRecentRounds: 3, MaxInputTokens: 30000},
+		Recommend:       RecommendConfig{DailyPapers: 20, ScoringBatchSize: 10, DiversityRatio: 0.3, ScheduledTime: "08:00"},
+		ArxivCategories: []string{"cs.SD"},
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -273,7 +276,12 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 	os.MkdirAll(configDir, 0755)
 
 	// Encrypt a key manually, write that, then load — disk form must not change.
-	cfg := &Config{API: APIConfig{APIKey: "preserved-plaintext"}}
+	cfg := &Config{
+		API:             APIConfig{BaseURL: "https://test.com/v1", APIKey: "preserved-plaintext", DefaultModel: "test-model"},
+		UI:              UIConfig{MinRecentRounds: 2, MaxInputTokens: 30000},
+		Recommend:       RecommendConfig{DailyPapers: 20, ScoringBatchSize: 10, DiversityRatio: 0.3, ScheduledTime: "08:00"},
+		ArxivCategories: []string{"cs.SD"},
+	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("initial save: %v", err)
 	}
@@ -311,6 +319,174 @@ func TestExpandHome(t *testing.T) {
 		result := expandHome(tt.input)
 		if result != tt.expected {
 			t.Errorf("expandHome(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+// validCfg returns a minimal *Config that passes Validate. Tests
+// override one field at a time to assert the corresponding error
+// path is enforced.
+func validCfg() *Config {
+	return &Config{
+		API: APIConfig{
+			BaseURL:      "https://test.api/v1",
+			APIKey:       "sk-valid",
+			DefaultModel: "test-model",
+		},
+		UI:              UIConfig{MinRecentRounds: 2, MaxInputTokens: 30000},
+		Recommend:       RecommendConfig{DailyPapers: 20, ScoringBatchSize: 10, DiversityRatio: 0.3, ScheduledTime: "08:00"},
+		ArxivCategories: []string{"cs.SD"},
+	}
+}
+
+func TestValidate(t *testing.T) {
+	t.Run("accepts a fully-populated valid config", func(t *testing.T) {
+		if err := validCfg().Validate(); err != nil {
+			t.Errorf("expected valid cfg, got: %v", err)
+		}
+	})
+
+	t.Run("rejects empty api_key", func(t *testing.T) {
+		c := validCfg()
+		c.API.APIKey = ""
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "api.api_key") {
+			t.Errorf("expected api.api_key error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects empty base_url", func(t *testing.T) {
+		c := validCfg()
+		c.API.BaseURL = ""
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "base_url") {
+			t.Errorf("expected base_url error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects empty default_model", func(t *testing.T) {
+		c := validCfg()
+		c.API.DefaultModel = ""
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "default_model") {
+			t.Errorf("expected default_model error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects min_recent_rounds < 1", func(t *testing.T) {
+		c := validCfg()
+		c.UI.MinRecentRounds = 0
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "min_recent_rounds") {
+			t.Errorf("expected min_recent_rounds error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects max_input_tokens < 1000", func(t *testing.T) {
+		c := validCfg()
+		c.UI.MaxInputTokens = 500
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "max_input_tokens") {
+			t.Errorf("expected max_input_tokens error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects feishu.enabled=true with empty app_id", func(t *testing.T) {
+		c := validCfg()
+		c.Feishu.Enabled = true
+		c.Feishu.AppID = ""
+		c.Feishu.AppSecret = "valid-secret"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "app_id") {
+			t.Errorf("expected app_id error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects feishu.enabled=true with empty app_secret", func(t *testing.T) {
+		c := validCfg()
+		c.Feishu.Enabled = true
+		c.Feishu.AppID = "cli_xxx"
+		c.Feishu.AppSecret = ""
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "app_secret") {
+			t.Errorf("expected app_secret error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects daily_papers <= 0", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.DailyPapers = 0
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "daily_papers") {
+			t.Errorf("expected daily_papers error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects scoring_batch_size <= 0", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.ScoringBatchSize = 0
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "scoring_batch_size") {
+			t.Errorf("expected scoring_batch_size error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects diversity_ratio out of range", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.DiversityRatio = 1.5
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "diversity_ratio") {
+			t.Errorf("expected diversity_ratio error, got: %v", err)
+		}
+		c.Recommend.DiversityRatio = -0.1
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "diversity_ratio") {
+			t.Errorf("expected diversity_ratio error, got: %v", err)
+		}
+	})
+
+	t.Run("rejects malformed scheduled_time", func(t *testing.T) {
+		c := validCfg()
+		c.Recommend.ScheduledTime = "8am"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "scheduled_time") {
+			t.Errorf("expected scheduled_time error, got: %v", err)
+		}
+		c.Recommend.ScheduledTime = "25:00"
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "scheduled_time") {
+			t.Errorf("expected scheduled_time error for out-of-range hour, got: %v", err)
+		}
+	})
+}
+
+func TestHandleCrossFieldChecks(t *testing.T) {
+	t.Run("accepts push_to_feishu=false with feishu disabled", func(t *testing.T) {
+		c := validCfg()
+		c.Feishu.Enabled = false
+		c.Recommend.PushToFeishu = false
+		if err := c.HandleCrossFieldChecks(); err != nil {
+			t.Errorf("expected nil, got: %v", err)
+		}
+	})
+
+	t.Run("rejects push_to_feishu=true with feishu disabled", func(t *testing.T) {
+		c := validCfg()
+		c.Feishu.Enabled = false
+		c.Recommend.PushToFeishu = true
+		if err := c.HandleCrossFieldChecks(); err == nil || !strings.Contains(err.Error(), "feishu.enabled") {
+			t.Errorf("expected cross-field error, got: %v", err)
+		}
+	})
+
+	t.Run("accepts push_to_feishu=true with feishu enabled", func(t *testing.T) {
+		c := validCfg()
+		c.Feishu.Enabled = true
+		c.Feishu.AppID = "cli_xxx"
+		c.Feishu.AppSecret = "valid"
+		c.Recommend.PushToFeishu = true
+		if err := c.HandleCrossFieldChecks(); err != nil {
+			t.Errorf("expected nil, got: %v", err)
+		}
+	})
+}
+
+func TestIsValidHHMM(t *testing.T) {
+	cases := map[string]bool{
+		"00:00": true, "08:00": true, "23:59": true,
+		"": false, "8:00": false, "24:00": false, "12:60": false,
+		"8am": false, " 08:00": false, "08:00 ": false, "08-00": false,
+	}
+	for input, want := range cases {
+		if got := isValidHHMM(input); got != want {
+			t.Errorf("isValidHHMM(%q) = %v, want %v", input, got, want)
 		}
 	}
 }
