@@ -1,5 +1,12 @@
 # PaperAgent 📄
 
+[![CI](https://github.com/happyTonakai/paperagent/actions/workflows/ci.yml/badge.svg)](https://github.com/happyTonakai/paperagent/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/release/happyTonakai/paperagent.svg)](https://github.com/happyTonakai/paperagent/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/happyTonakai/paperagent)](https://goreportcard.com/report/github.com/happyTonakai/paperagent)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/happyTonakai/paperagent/releases/latest)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/happyTonakai/paperagent)](https://go.dev/)
+[![License](https://img.shields.io/github/license/happyTonakai/paperagent)](LICENSE)
+
 **给你的论文装上 AI 大脑 —— 粘贴 arXiv 链接，深度解析，多轮追问；每天还有精选 arXiv 推荐自动送到飞书。**
 
 PaperAgent 是一个 Go + Web UI 的 AI 论文阅读助手，已经从「单功能 Q&A」演化为「**Q&A + 每日推荐**」双系统产品。中文 UI / 中文文档。
