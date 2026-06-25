@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"fyne.io/systray"
+
+	"github.com/happyTonakai/paperagent/internal/server"
 )
 
 const repoURL = "https://github.com/happyTonakai/PaperAgent"
@@ -76,6 +78,14 @@ func onExit(httpServer *http.Server) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	httpServer.Shutdown(ctx)
+	// Flush the daily log file so the last few lines aren't lost if the
+	// user quit via the tray. Best-effort; the OS will close the FD on
+	// process exit anyway.
+	if s := server.GetActive(); s != nil {
+		if err := s.CloseLog(); err != nil {
+			fmt.Fprintf(os.Stderr, "close log: %v\n", err)
+		}
+	}
 }
 
 // Quit gracefully stops the systray (called from main.go for HTTP errors).

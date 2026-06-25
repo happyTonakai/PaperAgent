@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -97,6 +98,27 @@ func PapersDir() string {
 
 func PromptsDir() string {
 	return filepath.Join(ConfigDir(), "prompts")
+}
+
+// LogPath returns the path to today's log file. Logs live in their
+// own subdirectory (ConfigDir/logs/) so the config dir root stays
+// readable — config.yaml, papers/, prompts/, preferences.md are
+// what users mostly look at. See LogPathAt for a specific time.
+func LogPath() string {
+	return LogPathAt(time.Now())
+}
+
+// LogPathAt returns the log file path for the given time.
+// Format: <ConfigDir>/logs/paperagent-YYYY-MM-DD.log.
+func LogPathAt(t time.Time) string {
+	return filepath.Join(ConfigDir(), "logs", "paperagent-"+t.Format("2006-01-02")+".log")
+}
+
+// LogDir returns the directory where rotated log files live. The
+// directory is created lazily on first write (see dailyRotateWriter)
+// so it doesn't exist for users who never run the server.
+func LogDir() string {
+	return filepath.Join(ConfigDir(), "logs")
 }
 
 func Load() (*Config, error) {

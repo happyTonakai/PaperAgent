@@ -30,7 +30,24 @@ var frontendDist embed.FS
 var (
 	holidayChecker     *holiday.Checker
 	holidayCheckerOnce sync.Once
+
+	// activeServer is set by New() and read by systray.onExit() to
+	// flush the log file before the process dies. There's only ever
+	// one Server per process so a plain pointer is sufficient.
+	activeServer *Server
 )
+
+// GetActive returns the currently-running Server (set by New), or nil
+// if no Server has been constructed yet. Used by systray.onExit to
+// flush the log file before the process exits.
+func GetActive() *Server { return activeServer }
+
+// CloseLog flushes the daily-rotated log file. Called from
+// systray.onExit so the last few log lines aren't lost on graceful
+// quit. Best-effort; the OS will close the FD on process exit anyway.
+func (s *Server) CloseLog() error {
+	return s.logBuf.Close()
+}
 
 func getHolidayChecker() *holiday.Checker {
 	holidayCheckerOnce.Do(func() {
@@ -79,6 +96,12 @@ func (s *Server) SetFeishuBot(b *feishu.Bot) {
 
 func New(cfg *config.Config) *Server {
 	lb := newLogBuffer()
+	pruneOldLogs(config.LogDir(), 7)
+	if err := lb.Open(config.LogDir()); err != nil {
+		// Non-fatal: in-memory + stderr still work. Just warn so the
+		// user knows the on-disk log file isn't being written.
+		log.Printf("[server] could not open log dir %s: %v (continuing without disk log)", config.LogDir(), err)
+	}
 	initLogCapture(lb)
 	apiClient := api.NewClient(cfg)
 	s := &Server{
@@ -88,6 +111,7 @@ func New(cfg *config.Config) *Server {
 		logBuf:     lb,
 		chatEngine: chat.NewEngine(apiClient, cfg),
 	}
+	activeServer = s
 	s.registerRoutes()
 	s.startScheduler()
 	return s
