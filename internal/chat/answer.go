@@ -175,6 +175,25 @@ func (e *Engine) Answer(ctx context.Context, paper *session.Paper, question stri
 	return nil
 }
 
+// ToAPIMessage converts a persisted session.Message into the LLM-facing
+// api.ChatMessage, forwarding tool-call metadata. Without the forwarding,
+// replays of past tool-calling rounds would send a tool result message
+// without its tool_call_id, which the OpenAI API rejects.
+//
+// Centralized here so every caller that constructs LLM messages from
+// paper.Messages uses the same conversion and stays in sync if more
+// fields are added later.
+func ToAPIMessage(msg session.Message) api.ChatMessage {
+	cm := api.ChatMessage{Role: msg.Role, Content: msg.Content}
+	if len(msg.ToolCalls) > 0 {
+		cm.ToolCalls = msg.ToolCalls
+	}
+	if msg.ToolCallID != "" {
+		cm.ToolCallID = msg.ToolCallID
+	}
+	return cm
+}
+
 // BuildMessages assembles the LLM message array for a chat round.
 // paper.Content supplies the body; recent context comes from the
 // paper's truncated message history. The chat-phase task prompt is
@@ -189,18 +208,7 @@ func BuildMessages(paper *session.Paper, question, taskPrompt string) []api.Chat
 		api.ChatMessage{Role: "user", Content: taskPrompt},
 	)
 	for _, msg := range recent {
-		cm := api.ChatMessage{Role: msg.Role, Content: msg.Content}
-		// Forward tool-call metadata so the LLM sees the same conversation
-		// shape that was persisted. Without this, replays of past rounds
-		// would be missing the tool-call/result linkage and the API would
-		// reject the request (tool result messages must carry tool_call_id).
-		if len(msg.ToolCalls) > 0 {
-			cm.ToolCalls = msg.ToolCalls
-		}
-		if msg.ToolCallID != "" {
-			cm.ToolCallID = msg.ToolCallID
-		}
-		messages = append(messages, cm)
+		messages = append(messages, ToAPIMessage(msg))
 	}
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 	return messages

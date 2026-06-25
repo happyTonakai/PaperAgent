@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/happyTonakai/paperagent/internal/api"
+	"github.com/happyTonakai/paperagent/internal/chat"
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/database"
 	"github.com/happyTonakai/paperagent/internal/export"
@@ -856,7 +857,7 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: prompt.GetLight()},
 	}
 	for _, m := range prevMsgs {
-		messages = append(messages, api.ChatMessage{Role: m.Role, Content: m.Content})
+		messages = append(messages, chat.ToAPIMessage(m))
 	}
 	// Add the current question at the end (not part of truncated context)
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})

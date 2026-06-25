@@ -124,6 +124,51 @@ func cfgWithDefaults() *config.Config {
 	}
 }
 
+func TestToAPIMessage_ForwardsToolMetadata(t *testing.T) {
+	tc := api.ToolCallCompleted{ID: "call_1", Type: "function"}
+	tc.Function.Name = "get_references"
+
+	tests := []struct {
+		name string
+		in   session.Message
+		want api.ChatMessage
+	}{
+		{
+			name: "plain user/assistant",
+			in:   session.Message{Role: "user", Content: "hello"},
+			want: api.ChatMessage{Role: "user", Content: "hello"},
+		},
+		{
+			name: "assistant with tool_calls",
+			in:   session.Message{Role: "assistant", Content: "", ToolCalls: []api.ToolCallCompleted{tc}},
+			want: api.ChatMessage{Role: "assistant", Content: "", ToolCalls: []api.ToolCallCompleted{tc}},
+		},
+		{
+			name: "tool result with id",
+			in:   session.Message{Role: "tool", Content: "refs", ToolCallID: "call_1"},
+			want: api.ChatMessage{Role: "tool", Content: "refs", ToolCallID: "call_1"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ToAPIMessage(tc.in)
+			if got.Role != tc.want.Role || got.Content != tc.want.Content ||
+				got.ToolCallID != tc.want.ToolCallID {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+			if len(got.ToolCalls) != len(tc.want.ToolCalls) {
+				t.Errorf("ToolCalls len = %d, want %d", len(got.ToolCalls), len(tc.want.ToolCalls))
+				return
+			}
+			for i := range got.ToolCalls {
+				if got.ToolCalls[i].ID != tc.want.ToolCalls[i].ID {
+					t.Errorf("ToolCalls[%d].ID = %q, want %q", i, got.ToolCalls[i].ID, tc.want.ToolCalls[i].ID)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildMessages_BasicShape(t *testing.T) {
 	paper := &session.Paper{
 		Content: "paper body",
