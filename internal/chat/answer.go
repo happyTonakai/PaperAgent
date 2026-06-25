@@ -288,21 +288,7 @@ func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, me
 	toolCalls := firstPass.toolCalls
 	toolName := toolCalls[0].Function.Name
 	sink.OnToolCall(toolName)
-
-	handler, ok := handlers[toolName]
-	var toolResult string
-	if !ok {
-		toolResult = fmt.Sprintf("Tool %q is not available in this session.", toolName)
-		log.Printf("[chat] no handler registered for tool %q", toolName)
-	} else {
-		result, herr := handler(ctx, toolCalls[0].Function.Arguments)
-		if herr != nil {
-			toolResult = fmt.Sprintf("Tool %q execution failed: %v", toolName, herr)
-			log.Printf("[chat] tool %q execution error: %v", toolName, herr)
-		} else {
-			toolResult = result
-		}
-	}
+	toolResult := ResolveToolCall(ctx, handlers, toolCalls)
 
 	// Persist the assistant tool_calls message. Content is empty — the
 	// tool call itself is the round's content. TokenCount is 0 because

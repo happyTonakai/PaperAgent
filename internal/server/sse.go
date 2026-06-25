@@ -13,6 +13,7 @@ const (
 	SSEEventError    = "error"
 	SSEEventTitle    = "title"
 	SSEEventCreated  = "created"
+	SSEEventToolCall = "tool_call"
 )
 
 type SSEEvent struct {
@@ -21,6 +22,7 @@ type SSEEvent struct {
 	Error            string `json:"error,omitempty"`
 	PaperID          string `json:"paper_id,omitempty"`
 	Title            string `json:"title,omitempty"`
+	ToolName         string `json:"tool_name,omitempty"`
 	RoundID          int    `json:"round_id,omitempty"`
 	PromptTokens     int    `json:"prompt_tokens,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"`
@@ -87,4 +89,11 @@ func (s *sseWriter) WriteError(errMsg string) error {
 
 func (s *sseWriter) WriteTitle(title string) error {
 	return s.WriteEvent(SSEEvent{Type: SSEEventTitle, Title: title})
+}
+
+// WriteToolCall emits a "tool_call" event so the client can surface a
+// "fetching…" indicator while the engine executes a tool (e.g. fetch_arxiv,
+// which makes a network request that can take several seconds).
+func (s *sseWriter) WriteToolCall(name string) error {
+	return s.WriteEvent(SSEEvent{Type: SSEEventToolCall, ToolName: name})
 }

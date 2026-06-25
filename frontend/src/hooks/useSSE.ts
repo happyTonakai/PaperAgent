@@ -6,6 +6,7 @@ interface SSEOptions {
   onChunk?: (content: string) => void
   onDone?: (paperId: string) => void
   onError?: (error: string) => void
+  onToolCall?: (toolName: string) => void
 }
 
 export function useSSE() {
@@ -89,6 +90,11 @@ export function useSSE() {
                 break
               case 'error':
                 options.onError?.(evt.error || 'Unknown error')
+                break
+              case 'tool_call':
+                if (evt.tool_name) {
+                  options.onToolCall?.(evt.tool_name)
+                }
                 break
             }
           } catch {

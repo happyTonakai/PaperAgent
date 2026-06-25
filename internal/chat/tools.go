@@ -2,6 +2,8 @@ package chat
 
 import (
 	"context"
+	"fmt"
+	"log"
 
 	"github.com/happyTonakai/paperagent/internal/api"
 	"github.com/happyTonakai/paperagent/internal/session"
@@ -38,4 +40,30 @@ func BuildChatTools(paper *session.Paper) ([]api.Tool, map[string]ToolHandler) {
 	handlers["fetch_arxiv"] = FetchArxivHandler()
 
 	return tools, handlers
+}
+
+// ResolveToolCall looks up the handler for the first tool call in toolCalls,
+// executes it, and returns the content to send back to the LLM as the tool
+// result message. If no handler is registered for the tool, a descriptive
+// message is returned (so the LLM can see the problem and adjust) instead of
+// aborting the round. Handler errors are likewise surfaced as the tool result.
+//
+// This is the single source of truth for tool dispatch: Engine.stream and the
+// retry handlers (handleRetryChat / handleRetrySummary, which bypass the engine
+// because they replace an existing round rather than appending one) both call
+// it, so a tool advertised by BuildChatTools is resolved identically on the
+// live-chat and retry paths.
+func ResolveToolCall(ctx context.Context, handlers map[string]ToolHandler, toolCalls []api.ToolCallCompleted) string {
+	toolName := toolCalls[0].Function.Name
+	handler, ok := handlers[toolName]
+	if !ok {
+		log.Printf("[chat] no handler registered for tool %q", toolName)
+		return fmt.Sprintf("Tool %q is not available in this session.", toolName)
+	}
+	result, herr := handler(ctx, toolCalls[0].Function.Arguments)
+	if herr != nil {
+		log.Printf("[chat] tool %q execution error: %v", toolName, herr)
+		return fmt.Sprintf("Tool %q execution failed: %v", toolName, herr)
+	}
+	return result
 }

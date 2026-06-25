@@ -643,7 +643,13 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	// New papers have references stripped at creation; old papers (References为空)
 	// have full content with references intact.
 	body := paper.Content
-	references := paper.References
+
+	// Use the same tool set as the live chat path so a summary retry can
+	// still invoke fetch_arxiv / get_references. Captured under the lock so
+	// BuildChatTools' read of paper.References is race-free (matches
+	// handleRetryChat). The handlers close over a string copy for refs and
+	// a stateless factory for fetch_arxiv, so they stay safe after unlock.
+	tools, handlers := chat.BuildChatTools(paper)
 
 	unlock()
 
@@ -662,11 +668,6 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[retry-summary] continuing from existing %d chars", len(existingSummary))
 	} else {
 		log.Printf("[retry-summary] fresh summary generation")
-	}
-
-	var tools []api.Tool
-	if references != "" {
-		tools = []api.Tool{api.GetReferencesTool()}
 	}
 
 	sw, err := newSSEWriter(w)
@@ -710,14 +711,22 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle tool call if the LLM requests references during summary generation.
-	if toolCalls != nil && len(toolCalls) > 0 && references != "" {
-		log.Printf("[retry-summary] tool call detected, injecting references")
+	// Handle tool call (fetch_arxiv, get_references, ...). Mirrors the
+	// dispatch in chat.Engine.stream via chat.ResolveToolCall, so the retry
+	// path resolves tools identically to the live-chat path.
+	if toolCalls != nil && len(toolCalls) > 0 {
+		toolName := toolCalls[0].Function.Name
+		log.Printf("[retry-summary] tool call detected: %s", toolName)
+		if err := sw.WriteToolCall(toolName); err != nil {
+			log.Printf("[retry-summary] write tool_call event: %v", err)
+		}
+		toolResult := chat.ResolveToolCall(r.Context(), handlers, toolCalls)
+
 		followUpMsgs := make([]api.ChatMessage, len(msgs))
 		copy(followUpMsgs, msgs)
 		followUpMsgs = append(followUpMsgs,
 			api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
-			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: references},
+			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: toolResult},
 		)
 
 		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMsgs, nil)
@@ -864,10 +873,12 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	// Add the current question at the end (not part of truncated context)
 	messages = append(messages, api.ChatMessage{Role: "user", Content: question})
 
-	var tools []api.Tool
-	if paper.References != "" {
-		tools = []api.Tool{api.GetReferencesTool()}
-	}
+	// Use the same tool set as the live chat path (handleChat) so a retry
+	// can still invoke fetch_arxiv / get_references. The handlers close
+	// over paper state captured at this point (a string copy for refs, a
+	// stateless factory for fetch_arxiv), so they stay safe to call after
+	// the lock is released below.
+	tools, handlers := chat.BuildChatTools(paper)
 
 	unlock() // Release lock before SSE stream
 
@@ -912,14 +923,22 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle tool call for references.
-	if toolCalls != nil && len(toolCalls) > 0 && paper.References != "" {
-		log.Printf("[retry-chat] tool call detected, injecting references")
+	// Handle tool call (fetch_arxiv, get_references, ...). Mirrors the
+	// dispatch in chat.Engine.stream via chat.ResolveToolCall, so the retry
+	// path resolves tools identically to the live-chat path.
+	if toolCalls != nil && len(toolCalls) > 0 {
+		toolName := toolCalls[0].Function.Name
+		log.Printf("[retry-chat] tool call detected: %s", toolName)
+		if err := sw.WriteToolCall(toolName); err != nil {
+			log.Printf("[retry-chat] write tool_call event: %v", err)
+		}
+		toolResult := chat.ResolveToolCall(r.Context(), handlers, toolCalls)
+
 		followUpMsgs := make([]api.ChatMessage, len(messages))
 		copy(followUpMsgs, messages)
 		followUpMsgs = append(followUpMsgs,
 			api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
-			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: paper.References},
+			api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: toolResult},
 		)
 
 		ch2 := s.api.ChatStream(s.cfg.API.DefaultModel, followUpMsgs, nil)

@@ -19,10 +19,15 @@ func (s *sseSink) OnChunk(text string) error {
 	return s.sw.WriteChunk(text)
 }
 
-// OnToolCall is intentionally a no-op for the Web SSE path. Tool-call
-// visualization in the UI is part of a separate fix (see the "tool call
-// persistence" work item) and is not in scope for this refactor.
-func (s *sseSink) OnToolCall(name string) {}
+// OnToolCall emits a "tool_call" event so the Web UI can show a fetching
+// indicator while the engine executes the tool. Without this, a slow tool
+// (e.g. fetch_arxiv, which hits the network) leaves the page with no
+// streaming output for several seconds, looking frozen.
+func (s *sseSink) OnToolCall(name string) {
+	if err := s.sw.WriteToolCall(name); err != nil {
+		log.Printf("[sse-sink] write tool_call event: %v", err)
+	}
+}
 
 // OnDone emits the terminal "done" event with token counts so the
 // client can update its footer.

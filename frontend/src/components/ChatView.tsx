@@ -47,6 +47,29 @@ function LoadingDots() {
   )
 }
 
+// Maps a backend tool name to the Chinese label shown while the engine
+// executes the tool. The engine emits a "tool_call" SSE event before
+// running the handler; without an indicator a slow tool (fetch_arxiv does
+// a network fetch) leaves the UI looking frozen for several seconds.
+function toolCallLabel(name: string): string {
+  switch (name) {
+    case 'fetch_arxiv': return '正在获取论文…'
+    case 'get_references': return '正在获取参考文献…'
+    default: return `正在调用工具 ${name}…`
+  }
+}
+
+function ToolCallIndicator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-1.5 py-1">
+      <span>🔧</span>
+      <span className="text-xs ml-1" style={{ color: 'var(--color-text-muted)' }}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
 export function ChatView() {
   const {
     currentPaperId,
@@ -66,6 +89,10 @@ export function ChatView() {
   const [retrySummaryContent, setRetrySummaryContent] = useState('')
   const [retryingRound, setRetryingRound] = useState<number | null>(null)
   const [pendingUserQuestion, setPendingUserQuestion] = useState<string | null>(null)
+  // Name of the tool the engine is currently executing (null when idle). Set
+  // from the "tool_call" SSE event so the UI can show a fetching indicator;
+  // cleared on the first follow-up chunk / done / error.
+  const [toolCallName, setToolCallName] = useState<string | null>(null)
   const [pendingUserRound, setPendingUserRound] = useState<number>(0)
   const answeringRound = useRef<number | null>(null)
   const userScrolledUp = useRef(false)
@@ -146,23 +173,30 @@ export function ChatView() {
     setPendingUserRound(nextRound)
     answeringRound.current = nextRound
     setIsStreamingLocal(true)
+    setToolCallName(null)
     const body: Record<string, unknown> = { question }
     if (opts?.skipContext) {
       body.skip_context = true
     }
     await streamRequest(`/api/papers/${currentPaperId}/chat`, body, {
-      onChunk: (content) => setStreamingContent((prev) => prev + content),
+      onChunk: (content) => {
+        setToolCallName(null)
+        setStreamingContent((prev) => prev + content)
+      },
       onDone: () => {
+        setToolCallName(null)
         setIsStreamingLocal(false)
         answeringRound.current = null
         refetch()
         qc.invalidateQueries({ queryKey: ['papers'] })
       },
       onError: (error) => {
+        setToolCallName(null)
         setStreamError(error)
         setIsStreamingLocal(false)
         setPendingUserQuestion(null)
       },
+      onToolCall: (name) => setToolCallName(name),
     })
   }, [currentPaperId, isStreamingLocal, streamRequest, refetch, paper?.messages])
 
@@ -202,20 +236,27 @@ export function ChatView() {
     if (!currentPaperId) return
     setRetryingSummary(true)
     setRetrySummaryContent('')
+    setToolCallName(null)
     userScrolledUp.current = false
     await streamRequest(`/api/papers/${currentPaperId}/retry-summary`, {}, {
-      onChunk: (content) => setRetrySummaryContent((prev) => prev + content),
+      onChunk: (content) => {
+        setToolCallName(null)
+        setRetrySummaryContent((prev) => prev + content)
+      },
       onDone: () => {
+        setToolCallName(null)
         setRetryingSummary(false)
         setRetrySummaryContent('')
         refetch()
         qc.invalidateQueries({ queryKey: ['papers'] })
       },
       onError: (error) => {
+        setToolCallName(null)
         setRetryingSummary(false)
         setRetrySummaryContent('')
         setStreamError(error)
       },
+      onToolCall: (name) => setToolCallName(name),
     })
   }, [currentPaperId, streamRequest, refetch])
 
@@ -224,19 +265,26 @@ export function ChatView() {
     setRetryingRound(round)
     setStreamingContent('')
     setStreamError(null)
+    setToolCallName(null)
     userScrolledUp.current = false
     await streamRequest(`/api/papers/${currentPaperId}/chat/${round}/retry`, {}, {
-      onChunk: (content) => setStreamingContent((prev) => prev + content),
+      onChunk: (content) => {
+        setToolCallName(null)
+        setStreamingContent((prev) => prev + content)
+      },
       onDone: () => {
+        setToolCallName(null)
         setRetryingRound(null)
         retryCompletedRoundRef.current = round
         refetch()
         qc.invalidateQueries({ queryKey: ['papers'] })
       },
       onError: (error) => {
+        setToolCallName(null)
         setStreamError(error)
         setRetryingRound(null)
       },
+      onToolCall: (name) => setToolCallName(name),
     })
   }, [currentPaperId, streamRequest, refetch])
 
@@ -456,6 +504,8 @@ export function ChatView() {
             <div className="flex-1 min-w-0">
               {retrySummaryContent ? (
                 <StreamRenderer content={retrySummaryContent} />
+              ) : toolCallName ? (
+                <ToolCallIndicator label={toolCallLabel(toolCallName)} />
               ) : (
                 <LoadingDots />
               )}
@@ -541,7 +591,7 @@ export function ChatView() {
             roundNumber={retryingRound ?? undefined}
           />
         )}
-        {(!streamingContent && pendingUserQuestion && isStreamingLocal) && (
+        {(!streamingContent && ((pendingUserQuestion && isStreamingLocal) || (toolCallName && (isStreamingLocal || retryingRound !== null)))) && (
           <div
             className="flex gap-3 px-5 py-4"
             style={{ borderBottom: '1px solid var(--color-border-light)' }}
@@ -556,7 +606,7 @@ export function ChatView() {
             >
               A
             </div>
-            <LoadingDots />
+            {toolCallName ? <ToolCallIndicator label={toolCallLabel(toolCallName)} /> : <LoadingDots />}
           </div>
         )}
 

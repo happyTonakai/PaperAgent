@@ -43,11 +43,12 @@ export interface PaperSummary {
 // ---- SSE Event Types ----
 
 export interface SSEEvent {
-  type: 'chunk' | 'done' | 'error' | 'title' | 'created'
+  type: 'chunk' | 'done' | 'error' | 'title' | 'created' | 'tool_call'
   content?: string
   error?: string
   paper_id?: string
   title?: string
+  tool_name?: string
   round_id?: number
   prompt_tokens?: number
   completion_tokens?: number
