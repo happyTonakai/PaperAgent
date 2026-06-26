@@ -1010,9 +1010,13 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 
 	// "Mark all as read" button — bulk-marks every article in this page.
 	// (Hover-to-read is the WebUI affordance; this is the Feishu equivalent.)
-	// When every article on the page is already read (status==3) we render
-	// the button in primary (blue) + change the label to "已标记" so the user
-	// can tell the click took. We do NOT set disabled: true because the
+	// The button highlights (primary blue + "已标记" label) when no article
+	// on the page is still in the unread state (status==0). Because status
+	// is now priority-merged (liked/disliked/activated statuses are not
+	// overwritten by a bulk mark-read), the natural state after the user
+	// clicks "一键已阅" AND any later like/dislike interaction still leaves
+	// every article non-unread, so the highlight is stable across clicks
+	// instead of flickering. We do NOT set disabled: true because the
 	// Feishu renderer turns disabled buttons grey regardless of type, which
 	// would hide the blue.
 	markReadBtn := map[string]any{
@@ -1027,7 +1031,7 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 	}
 	allRead := len(items) > 0
 	for _, it := range items {
-		if it.Status != 3 {
+		if it.Status == 0 {
 			allRead = false
 			break
 		}

@@ -923,6 +923,73 @@ func TestBuildDailyRecommendCard_MarkReadPageFooter(t *testing.T) {
 	}
 }
 
+// TestBuildDailyRecommendCard_MarkReadPageFooter_NonUnreadHighlights
+// extends the all-read rule from "every status == 3" to "every status != 0".
+// This is the user-facing fix for the Feishu card interaction bug:
+// when a user likes some articles (status=2) and then bulk-mark-reads the
+// rest (status=3), the like buttons must stay red AND the mark-read footer
+// must stay highlighted, instead of the two states fighting each other.
+func TestBuildDailyRecommendCard_MarkReadPageFooter_NonUnreadHighlights(t *testing.T) {
+	cases := []struct {
+		name       string
+		statuses   []int
+		wantType   string
+		wantLabel  string
+		commentary string
+	}{
+		{
+			name:       "all-liked",
+			statuses:   []int{2, 2, 2},
+			wantType:   "primary",
+			wantLabel:  "✅ 已标记本页 3 篇",
+			commentary: "every article is liked; the page is fully non-unread",
+		},
+		{
+			name:       "mixed-liked-read",
+			statuses:   []int{2, 3, 2},
+			wantType:   "primary",
+			wantLabel:  "✅ 已标记本页 3 篇",
+			commentary: "likes survive a bulk mark-read, so the page is still non-unread",
+		},
+		{
+			name:       "all-activated",
+			statuses:   []int{1, 1},
+			wantType:   "primary",
+			wantLabel:  "✅ 已标记本页 2 篇",
+			commentary: "activating every article (🤖 on each) also counts as non-unread",
+		},
+		{
+			name:       "still-has-unread",
+			statuses:   []int{2, 0, 3},
+			wantType:   "default",
+			wantLabel:  "✅ 一键已阅本页 3 篇",
+			commentary: "one unread keeps the bulk button at its default state",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			items := make([]RecommendCardItem, len(tc.statuses))
+			for i, s := range tc.statuses {
+				items[i] = RecommendCardItem{
+					ID:    fmt.Sprintf("2401.0000%d", i+1),
+					Title: fmt.Sprintf("P%d", i+1), Abstract: "x", Status: s,
+				}
+			}
+			cardJSON := buildDailyRecommendCard(items, 1, 1)
+			btn := findFooterMarkReadBtn(t, cardJSON)
+			if btn == nil {
+				t.Fatalf("mark-read-page footer button not found (%s)", tc.commentary)
+			}
+			if btn["type"] != tc.wantType {
+				t.Errorf("type = %v, want %v (%s)", btn["type"], tc.wantType, tc.commentary)
+			}
+			if got := btn["text"].(map[string]any)["content"]; got != tc.wantLabel {
+				t.Errorf("text = %v, want %q (%s)", got, tc.wantLabel, tc.commentary)
+			}
+		})
+	}
+}
+
 // findFooterMarkReadBtn returns the bulk "mark all as read" footer button.
 // It is the only button on the card whose value.action is
 // "recommend:mark-read-page".

@@ -314,19 +314,120 @@ func UpdateArticleTranslations(id string, translatedTitle, translatedAbstract st
 	return err
 }
 
-// UpdateArticleStatus updates the status for an article.
+// Status priority — used by UpdateArticleStatus / BatchUpdateArticleStatus
+// to decide whether a new status is allowed to overwrite the current one.
+// Lower numbers = weaker signals. The ordering reflects the user-facing
+// intent that a stronger user action (like, dislike) must not be silently
+// downgraded by a weaker one (mark-read, activate):
+//
+//	0  (unread)     < 3 (read) < 1 (activated) < {2 (liked), -1 (disliked)}
+//
+// Toggling back to 0 (cancelling a like/dislike) and switching between
+// like<->dislike are handled by mergeStatus below, not by priority alone.
+func statusPriority(status int) int {
+	switch status {
+	case 0:
+		return 0
+	case 3:
+		return 1
+	case 1:
+		return 2
+	case 2, -1:
+		return 3
+	default:
+		return -1
+	}
+}
+
+// mergeStatus decides what status should actually be written when a caller
+// asks to set `newStatus` on an article whose current status is `oldStatus`.
+// Returns oldStatus unchanged when the new value would clobber a stronger
+// signal, so the stronger one survives.
+//
+// Rules (applied in order):
+//  1. Re-clicking the same non-zero status toggles it off (set to 0).
+//  2. Switching between like and dislike is allowed regardless of "priority"
+//     since they sit at the same level.
+//  3. A strictly higher-priority status overwrites the old one.
+//  4. Everything else is a no-op (preserves the old, stronger state).
+func mergeStatus(oldStatus, newStatus int) int {
+	if newStatus == oldStatus && newStatus != 0 {
+		return 0
+	}
+	if (oldStatus == 2 || oldStatus == -1) && (newStatus == 2 || newStatus == -1) && oldStatus != newStatus {
+		return newStatus
+	}
+	if statusPriority(newStatus) > statusPriority(oldStatus) {
+		return newStatus
+	}
+	return oldStatus
+}
+
+// mergeStatusBulk is the priority-only variant used by batch updates. It
+// drops the toggle and the like<->dislike switch: a bulk "mark all as read"
+// must NOT toggle off articles that already happen to be at the same
+// status, and a bulk caller is never the right place to express "switch
+// from like to dislike" (that goes through per-article UpdateArticleStatus
+// via the Feishu card's individual buttons).
+func mergeStatusBulk(oldStatus, newStatus int) int {
+	if statusPriority(newStatus) > statusPriority(oldStatus) {
+		return newStatus
+	}
+	return oldStatus
+}
+
+// UpdateArticleStatus sets an article's status with priority-aware merging
+// instead of blind overwrite. Without merging, a later weaker signal (e.g.
+// a bulk mark-all-as-read) would silently erase an earlier stronger one
+// (e.g. a 👍 like), which made the Feishu card's like/mark-read buttons
+// visually fight each other. See mergeStatus for the exact rules.
+//
+// Note: passing status=0 here is effectively a no-op when the current status
+// is non-zero (priority-merge preserves the stronger signal). Callers that
+// want to "cancel" a like/dislike should re-send the same non-zero status;
+// the toggle rule then sets it to 0. This is the path the WebUI/Feishu
+// click handlers already follow, so no current caller is affected.
 func UpdateArticleStatus(id string, status int) error {
 	db, err := GetDB()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec("UPDATE articles SET status = ? WHERE id = ?", status, id)
-	return err
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("update article status (%s): begin: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	var oldStatus int
+	err = tx.QueryRow("SELECT status FROM articles WHERE id = ?", id).Scan(&oldStatus)
+	if err == sql.ErrNoRows {
+		// No row to update — treat as success so callers (e.g. the WebUI
+		// status endpoint) don't surface an error for a paper that hasn't
+		// been ingested into the pool yet.
+		return tx.Commit()
+	}
+	if err != nil {
+		return fmt.Errorf("update article status (%s): select: %w", id, err)
+	}
+
+	if finalStatus := mergeStatus(oldStatus, status); finalStatus != oldStatus {
+		if _, err := tx.Exec("UPDATE articles SET status = ? WHERE id = ?", finalStatus, id); err != nil {
+			return fmt.Errorf("update article status (%s): write: %w", id, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update article status (%s): commit: %w", id, err)
+	}
+	return nil
 }
 
-// BatchUpdateArticleStatus updates the status for many articles in one
-// statement. Empty IDs is a no-op. Caller is responsible for capping
-// len(ids) to avoid unbounded IN clauses.
+// BatchUpdateArticleStatus updates the status for many articles with
+// priority-only merging (see mergeStatusBulk). It does NOT toggle same-status
+// rows and does NOT switch like<->dislike — those are user-facing per-article
+// actions handled by UpdateArticleStatus. Empty IDs is a no-op. Caller is
+// responsible for capping len(ids) to avoid unbounded transactions.
 func BatchUpdateArticleStatus(ids []string, status int) error {
 	if len(ids) == 0 {
 		return nil
@@ -335,16 +436,31 @@ func BatchUpdateArticleStatus(ids []string, status int) error {
 	if err != nil {
 		return fmt.Errorf("batch update article status: %w", err)
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = strings.TrimSuffix(placeholders, ",")
-	args := make([]any, len(ids)+1)
-	args[0] = status
-	for i, id := range ids {
-		args[i+1] = id
-	}
-	_, err = db.Exec("UPDATE articles SET status = ? WHERE id IN ("+placeholders+")", args...)
+
+	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("batch update article status (n=%d): %w", len(ids), err)
+		return fmt.Errorf("batch update article status (n=%d): begin: %w", len(ids), err)
+	}
+	defer tx.Rollback()
+
+	for _, id := range ids {
+		var oldStatus int
+		err := tx.QueryRow("SELECT status FROM articles WHERE id = ?", id).Scan(&oldStatus)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("batch update article status (n=%d, id=%s): select: %w", len(ids), id, err)
+		}
+		if finalStatus := mergeStatusBulk(oldStatus, status); finalStatus != oldStatus {
+			if _, err := tx.Exec("UPDATE articles SET status = ? WHERE id = ?", finalStatus, id); err != nil {
+				return fmt.Errorf("batch update article status (n=%d, id=%s): write: %w", len(ids), id, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("batch update article status (n=%d): commit: %w", len(ids), err)
 	}
 	return nil
 }

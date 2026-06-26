@@ -805,3 +805,238 @@ func idsOf(articles []Article) []string {
 	}
 	return out
 }
+
+// ─── status priority-merge: UpdateArticleStatus / BatchUpdateArticleStatus ─
+
+// seedStatusArticles inserts a list of articles with a given starting status.
+// Used by the priority-merge tests so each test can pick its own initial
+// statuses without depending on the production ingest pipeline.
+func seedStatusArticles(t *testing.T, statuses map[string]int) {
+	t.Helper()
+	db, err := GetDB()
+	if err != nil {
+		t.Fatalf("GetDB: %v", err)
+	}
+	for id, status := range statuses {
+		if _, err := db.Exec(
+			`INSERT INTO articles (id, title, link, status) VALUES (?, ?, ?, ?)`,
+			id, "p"+id, "https://arxiv.org/abs/"+id, status,
+		); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+}
+
+func readStatus(t *testing.T, id string) int {
+	t.Helper()
+	a, err := GetArticleByID(id)
+	if err != nil {
+		t.Fatalf("GetArticleByID %s: %v", id, err)
+	}
+	if a == nil {
+		t.Fatalf("article %s not found", id)
+	}
+	return a.Status
+}
+
+func TestStatusPriority(t *testing.T) {
+	cases := []struct {
+		in, want int
+	}{
+		{0, 0},   // unread
+		{3, 1},   // read
+		{1, 2},   // activated
+		{2, 3},   // liked
+		{-1, 3},  // disliked (same level as liked)
+		{99, -1}, // unknown — treated as weaker than anything else
+	}
+	for _, c := range cases {
+		if got := statusPriority(c.in); got != c.want {
+			t.Errorf("statusPriority(%d) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMergeStatus_PriorityRules(t *testing.T) {
+	// Rows = old status, cols = new status. "." = no-op (preserve old).
+	// Tabulates the user-visible intent: stronger signals must not be
+	// downgraded by weaker ones; same-status click cancels back to 0;
+	// like<->dislike can switch.
+	want := [][]int{
+		// new:    0(unread)  3(read)  1(activated)  2(liked)  -1(disliked)
+		/*old 0*/ {0, 3, 1, 2, -1},
+		/*old 3*/ {3, 0, 1, 2, -1},
+		/*old 1*/ {1, 1, 0, 2, -1},
+		/*old 2*/ {2, 2, 2, 0, -1},
+		/*old -1*/ {-1, -1, -1, 2, 0},
+	}
+	oldStatuses := []int{0, 3, 1, 2, -1}
+	newStatuses := []int{0, 3, 1, 2, -1}
+	for i, old := range oldStatuses {
+		for j, neu := range newStatuses {
+			got := mergeStatus(old, neu)
+			if got != want[i][j] {
+				t.Errorf("mergeStatus(old=%d, new=%d) = %d, want %d", old, neu, got, want[i][j])
+			}
+		}
+	}
+}
+
+func TestBatchUpdateArticleStatus_PriorityMerge(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{
+		"a-unread": 0,
+		"a-read":   3,
+		"a-activ":  1,
+		"a-liked":  2,
+		"a-dislik": -1,
+	})
+
+	// Mark-read-page (status=3) should only upgrade unread; everything
+	// else is preserved.
+	if err := BatchUpdateArticleStatus([]string{
+		"a-unread", "a-read", "a-activ", "a-liked", "a-dislik",
+	}, 3); err != nil {
+		t.Fatalf("BatchUpdateArticleStatus: %v", err)
+	}
+
+	cases := map[string]int{
+		"a-unread": 3,  // upgraded
+		"a-read":   3,  // already read
+		"a-activ":  1,  // preserved (read can't downgrade activated)
+		"a-liked":  2,  // preserved
+		"a-dislik": -1, // preserved
+	}
+	for id, want := range cases {
+		if got := readStatus(t, id); got != want {
+			t.Errorf("%s status = %d, want %d (priority-merge)", id, got, want)
+		}
+	}
+}
+
+func TestUpdateArticleStatus_LikeDoesNotEraseRead(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{"p1": 3})       // pre-read
+	if err := UpdateArticleStatus("p1", 2); err != nil { // user now likes it
+		t.Fatalf("UpdateArticleStatus: %v", err)
+	}
+	if got := readStatus(t, "p1"); got != 2 {
+		t.Errorf("status = %d, want 2 (like should upgrade read)", got)
+	}
+}
+
+func TestUpdateArticleStatus_ReadDoesNotEraseLike(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{"p1": 2})       // pre-liked
+	if err := UpdateArticleStatus("p1", 3); err != nil { // bulk mark-read tries to downgrade
+		t.Fatalf("UpdateArticleStatus: %v", err)
+	}
+	if got := readStatus(t, "p1"); got != 2 {
+		t.Errorf("status = %d, want 2 (read must NOT erase like)", got)
+	}
+}
+
+func TestUpdateArticleStatus_ToggleCancel(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{
+		"liked":     2,
+		"disliked":  -1,
+		"activated": 1,
+		"read":      3,
+	})
+	// Re-clicking the same non-zero status toggles it back to 0 (unread).
+	for _, id := range []string{"liked", "disliked", "activated", "read"} {
+		current := readStatus(t, id)
+		if err := UpdateArticleStatus(id, current); err != nil {
+			t.Fatalf("UpdateArticleStatus %s: %v", id, err)
+		}
+		if got := readStatus(t, id); got != 0 {
+			t.Errorf("toggle %s (from %d) = %d, want 0", id, current, got)
+		}
+	}
+}
+
+func TestUpdateArticleStatus_LikeDislikeSwitch(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{"p1": 2})
+	if err := UpdateArticleStatus("p1", -1); err != nil { // liked -> disliked
+		t.Fatalf("UpdateArticleStatus: %v", err)
+	}
+	if got := readStatus(t, "p1"); got != -1 {
+		t.Errorf("status = %d, want -1 (like->dislike switch)", got)
+	}
+
+	if err := UpdateArticleStatus("p1", 2); err != nil { // disliked -> liked back
+		t.Fatalf("UpdateArticleStatus: %v", err)
+	}
+	if got := readStatus(t, "p1"); got != 2 {
+		t.Errorf("status = %d, want 2 (dislike->like switch back)", got)
+	}
+}
+
+func TestUpdateArticleStatus_MissingArticleIsNotError(t *testing.T) {
+	defer setupTestDB(t)()
+	// Setting status on a non-existent id should not fail: the WebUI and
+	// Feishu paths fire status updates from optimistic UI state, and
+	// returning an error would surface a "操作失败" toast on a paper that
+	// simply hasn't been ingested yet.
+	if err := UpdateArticleStatus("nope", 2); err != nil {
+		t.Errorf("UpdateArticleStatus on missing id: %v", err)
+	}
+	if err := BatchUpdateArticleStatus([]string{"nope1", "nope2"}, 3); err != nil {
+		t.Errorf("BatchUpdateArticleStatus on missing ids: %v", err)
+	}
+}
+
+func TestBatchUpdateArticleStatus_PreservesStronger(t *testing.T) {
+	defer setupTestDB(t)()
+	seedStatusArticles(t, map[string]int{
+		"a": 2,  // liked
+		"b": -1, // disliked
+		"c": 1,  // activated
+		"d": 0,  // unread
+	})
+	// Mix all four initial states; bulk mark-read should only upgrade
+	// the unread one (d), and leave a/b/c intact.
+	if err := BatchUpdateArticleStatus([]string{"a", "b", "c", "d"}, 3); err != nil {
+		t.Fatalf("BatchUpdateArticleStatus: %v", err)
+	}
+	want := map[string]int{"a": 2, "b": -1, "c": 1, "d": 3}
+	for id, w := range want {
+		if got := readStatus(t, id); got != w {
+			t.Errorf("%s status = %d, want %d", id, got, w)
+		}
+	}
+}
+
+func TestBatchUpdateArticleStatus_LikeUpgradesRead(t *testing.T) {
+	defer setupTestDB(t)()
+	// Verify the inverse direction: a later like must upgrade an article
+	// that was already bulk-marked read, instead of leaving it stuck at
+	// status=3. This is the scenario where the old, naive overwrite left
+	// the like button visually stuck in its pre-read color on the Feishu
+	// card.
+	seedStatusArticles(t, map[string]int{"a": 3, "b": 3, "c": 3})
+	if err := BatchUpdateArticleStatus([]string{"a"}, 2); err != nil {
+		t.Fatalf("BatchUpdateArticleStatus like: %v", err)
+	}
+	if got := readStatus(t, "a"); got != 2 {
+		t.Errorf("a status = %d, want 2 (like upgraded from read)", got)
+	}
+	if got := readStatus(t, "b"); got != 3 {
+		t.Errorf("b status = %d, want 3 (unchanged)", got)
+	}
+	if got := readStatus(t, "c"); got != 3 {
+		t.Errorf("c status = %d, want 3 (unchanged)", got)
+	}
+}
+
+func TestBatchUpdateArticleStatus_EmptyIsNoop(t *testing.T) {
+	defer setupTestDB(t)()
+	if err := BatchUpdateArticleStatus(nil, 3); err != nil {
+		t.Errorf("nil ids should be no-op, got: %v", err)
+	}
+	if err := BatchUpdateArticleStatus([]string{}, 3); err != nil {
+		t.Errorf("empty ids should be no-op, got: %v", err)
+	}
+}
