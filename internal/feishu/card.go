@@ -917,7 +917,7 @@ func buildDailyRecommendCardRaw(items []RecommendCardItem, page, totalPages int)
 			"tag": "div",
 			"text": map[string]any{
 				"tag":       "lark_md",
-				"content":   fmt.Sprintf("**%d. %s**", i+1, title),
+				"content":   fmt.Sprintf("**%d. %s**", (page-1)*recommendPageSize+i+1, title),
 				"text_size": "heading",
 			},
 		}
