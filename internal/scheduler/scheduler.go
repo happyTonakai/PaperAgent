@@ -386,7 +386,7 @@ func (s *Scheduler) runOnce(force bool) {
 
 	log.Printf("[scheduler] daily pipeline done: %d recommendations", len(recs))
 
-	if onComplete != nil && len(recs) > 0 {
+	if onComplete != nil {
 		onComplete(recs, force)
 	}
 }
