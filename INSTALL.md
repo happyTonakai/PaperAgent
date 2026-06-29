@@ -15,91 +15,34 @@
 
 ---
 
-## 0. 环境探测
+## 1. 安装二进制
 
-逐项执行以下探测命令并记下结果：
+运行下面这个一行命令即可。脚本自动处理：OS/arch 检测、从 GitHub Releases 下载最新版本、macOS Gatekeeper 隔离属性、Linux 缺失库检测、PATH 警告。
 
 ```bash
-# 操作系统与架构
-echo "OS=$(uname -s) ARCH=$(uname -m)"
-
-# 必要工具
-for cmd in curl; do
-  command -v $cmd >/dev/null && echo "$cmd=ok" || echo "$cmd=MISSING"
-done
-
-# 是否已安装
-command -v paperagent && echo "EXISTING=$(which paperagent)" || echo "NOT_INSTALLED"
-
-# 端口可用性（8686~8785）
-for p in 8686 8785; do
-  (echo > /dev/tcp/127.0.0.1/$p) 2>/dev/null && echo "port $p=OCCUPIED" || echo "port $p=FREE"
-done
-
-# 系统库（macOS 不需要，Linux 需要 glibc）
-ldd --version 2>/dev/null | head -1 || echo "linux-only"
+curl -sSfL https://raw.githubusercontent.com/happyTonakai/PaperAgent/main/install.sh | sh
 ```
 
-**根据结果做决策**：
+可选参数：
 
-| 探测结果 | 决策 |
+| 场景 | 命令 |
 |---|---|
-| `OS=Darwin ARCH=arm64` | 下载 `paperagent_darwin_arm64` |
-| `OS=Darwin ARCH=x86_64` | 下载 `paperagent_darwin_amd64` |
-| `OS=Linux ARCH=x86_64` | 下载 `paperagent_linux_amd64` |
-| `OS=Linux ARCH=aarch64` | 下载 `paperagent_linux_arm64` |
-| `OS=Windows*` | 提示用户改用 PowerShell 或 WSL，本指南不覆盖 |
-| `port 8686~8785=OCCUPIED` | 提示用户关闭占用进程，或设 `PAPER_ADDR` 改端口 |
-| `curl=MISSING` | 提示用户先装 curl 再继续 |
+| 指定版本 | `... \| VERSION=v1.2.0 sh` |
+| 自定义安装路径 | `... \| INSTALL_DIR=/usr/local/bin sh`（全局安装需要 sudo） |
 
----
+**Agent 不要主动跑 sudo** —— 让用户自己输密码。
 
-## 1. 下载与安装
-
-### 1.1 选择安装路径
-
-**默认**：`~/.local/bin/paperagent`（**无需 sudo**）。装完后如果 `which paperagent` 找不到，把下面加进 `~/.zshrc` / `~/.bashrc`：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-**如果用户明确想全局装**（让所有用户都能用）到 `/usr/local/bin/paperagent`：自己执行 `sudo mv ~/.local/bin/paperagent /usr/local/bin/`。**Agent 不要主动跑 sudo** —— 让用户自己输密码。
-
-### 1.2 下载
-
-根据 0 节探测结果替换 `<OS>` 和 `<ARCH>`：
-
-```bash
-mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR"
-curl -fL -o paperagent \
-  "https://github.com/happyTonakai/PaperAgent/releases/latest/download/paperagent_<OS>_<ARCH>"
-chmod +x paperagent
-```
+**Windows 用户**：本脚本不支持 Windows（mingw/msys 环境会被拒绝）。请去 [Releases 页面](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe`。
 
 **验证**：
 
 ```bash
-ls -la "$INSTALL_DIR/paperagent"
-file "$INSTALL_DIR/paperagent" 2>/dev/null  # 应输出 ELF / Mach-O
-"$INSTALL_DIR/paperagent" -version           # 应输出版本号
+command -v paperagent && paperagent -version
 ```
 
-如果 `curl` 返回 404，去 [Releases 页面](https://github.com/happyTonakai/PaperAgent/releases/latest) 确认实际文件名后重试。
+如果 `command -v paperagent` 找不到，说明 `$HOME/.local/bin` 不在 PATH 里，install.sh 已经提示过，把对应 export 加进 `~/.zshrc` / `~/.bashrc` 后 `source` 一下即可。
 
-### 1.3 macOS 额外步骤
-
-```bash
-xattr -cr "$INSTALL_DIR/paperagent"   # 移除 Gatekeeper 隔离
-```
-
-### 1.4 Linux 额外步骤
-
-```bash
-# 仅在系统库不兼容时报告；modernc.org/sqlite 纯 Go 通常无依赖问题
-ldd "$INSTALL_DIR/paperagent" | grep "not found" && echo "MISSING_LIBS" || echo "LIBS_OK"
-```
+如果脚本里检测到 Linux 缺失库或下载失败，会在 stderr 给出明确错误信息和排查指引。
 
 ---
 
@@ -336,10 +279,18 @@ cat "$CONFIG_DIR/config.yaml"      # 人工 spot-check，确认 api_key / app_se
 
 ## 6. 启动 + 健康检查
 
+**端口检查**（如果 8686~8785 都被占用，需要设 `PAPER_ADDR` 改端口，或停掉占用进程）：
+
+```bash
+for p in 8686 8785; do
+  (echo > /dev/tcp/127.0.0.1/$p) 2>/dev/null && echo "port $p=OCCUPIED" || echo "port $p=FREE"
+done
+```
+
 ```bash
 # 日志按天轮转写入 $CONFIG_DIR/logs/paperagent-YYYY-MM-DD.log，启动时自动清理 7 天前的旧文件
 # stderr 仍重定向到 paperagent.out，以备 panic 诊断
-nohup "$INSTALL_DIR/paperagent" > "$CONFIG_DIR/paperagent.out" 2>&1 &
+nohup paperagent > "$CONFIG_DIR/paperagent.out" 2>&1 &
 echo $! > "$CONFIG_DIR/paperagent.pid"
 
 sleep 3
@@ -440,7 +391,7 @@ tail -50 "$CONFIG_DIR/logs/paperagent-$(date +%F).log" | grep -i "feishu\|lark\|
 
 ```
 ✅ PaperAgent 已就绪
-   - 二进制：<INSTALL_DIR>/paperagent
+   - 二进制：~/.local/bin/paperagent（默认；如用户用 INSTALL_DIR 自定义则填实际路径）
    - 配置：~/.config/paperagent/config.yaml（权限 600）
    - PID 文件：~/.config/paperagent/paperagent.pid
    - 日志：~/.config/paperagent/logs/paperagent-YYYY-MM-DD.log（按天轮转，保留 7 天）
@@ -466,8 +417,13 @@ tail -50 "$CONFIG_DIR/logs/paperagent-$(date +%F).log" | grep -i "feishu\|lark\|
 PID=$(cat "$CONFIG_DIR/paperagent.pid" 2>/dev/null)
 [ -n "$PID" ] && kill "$PID" 2>/dev/null
 
-# 删二进制
-rm -f "$INSTALL_DIR/paperagent"
+# 删二进制：优先从 PATH 找（默认 ~/.local/bin）；找不到时问用户当初装到了哪里
+PAPERAGENT_BIN="$(command -v paperagent 2>/dev/null || true)"
+if [ -z "$PAPERAGENT_BIN" ]; then
+  echo "⚠️  在 PATH 里找不到 paperagent。如果用户当初用了自定义 INSTALL_DIR（如 /opt/bin）且不在 PATH 里，停下来用 AskUserQuestion 问装到了哪里。" >&2
+else
+  rm -f "$PAPERAGENT_BIN"
+fi
 
 # 询问用户：是否删除全部数据（论文、配置、SQLite、加密 API key）
 # 如果是：
@@ -494,5 +450,5 @@ rm -rf "$CONFIG_DIR"
 - **不要 echo API key / app_secret 到任何命令输出**，所有写入文件用 heredoc 或 stdin 重定向
 - **每节执行完跑一次验证命令**，失败了**先诊断再继续**，不要假装成功
 - **修改 config.yaml 用 heredoc 整体重写**（不是增量编辑，因为重写时 §5 已经合并了所有模块）
-- **macOS Gatekeeper**（`xattr -cr`）和 **Linux 库依赖**（`ldd`）这两个步骤是平台特定的，不要在错平台执行
+- **macOS Gatekeeper**（`xattr -cr`）和 **Linux 库依赖**（`ldd`）由 `install.sh` 自动处理，agent 无需再跑
 - **API key 优先推荐 `${OPENAI_API_KEY}` 引用形式**，跟 README 主文档一致；写盘后磁盘上是引用形式（不加密），但启动时 PaperAgent 用 `os.ExpandEnv` 展开 → 内存中是明文。明文直接填也是合法的，**首次启动时** PaperAgent 会自动用 AES-256-GCM 加密成 `!!aes:...` 写回磁盘（不依赖后续任何 Save() 调用）。

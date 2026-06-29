@@ -118,22 +118,23 @@ Agent 会自动探测环境、下载二进制、引导你输入 API key / 飞书
 
 ### 手动安装
 
-从 [Releases](https://github.com/happyTonakai/PaperAgent/releases) 下载对应平台二进制：
+一行命令搞定，自动检测 OS/arch、处理 macOS Gatekeeper、Linux 库依赖检查：
 
 ```bash
-# macOS (Apple Silicon)
-curl -L -o paperagent https://github.com/happyTonakai/PaperAgent/releases/latest/download/paperagent_darwin_arm64
-chmod +x paperagent
-xattr -cr paperagent                     # macOS Gatekeeper 隔离移除
-sudo mv paperagent /usr/local/bin/
+curl -sSfL https://raw.githubusercontent.com/happyTonakai/PaperAgent/main/install.sh | sh
+```
 
-# Linux (amd64)
-curl -L -o paperagent https://github.com/happyTonakai/PaperAgent/releases/latest/download/paperagent_linux_amd64
-chmod +x paperagent
-sudo mv paperagent /usr/local/bin/
+可选参数：
 
-# Windows (amd64)
-# 下载 paperagent_windows_amd64.exe，双击运行即可
+- 指定版本：`... | VERSION=v1.2.0 sh`
+- 装到全局 `/usr/local/bin`（需 sudo）：`... | INSTALL_DIR=/usr/local/bin sh`
+
+Windows 用户请去 [Releases](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe`。
+
+验证：
+
+```bash
+paperagent -version
 ```
 
 二进制内嵌前端静态资源（React SPA），运行时无需安装 Node.js。
