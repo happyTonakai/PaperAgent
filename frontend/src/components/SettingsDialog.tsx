@@ -232,6 +232,22 @@ export function SettingsDialog() {
 		}
 	}, [recommendConfig])
 
+	// ── arXiv categories raw input (comma-separated) ──
+	// Same pattern as excluded_keywords above. We keep the raw string the
+	// user is typing in a local state instead of normalising it on every
+	// keystroke. Previously the onChange handler did split → trim →
+	// filter(Boolean) eagerly, which meant a trailing "," (or ", ") the
+	// user just typed produced ["cs.LG", ""] in the array, the empty
+	// piece got filtered out, and re-rendering with value={join} wiped
+	// the user's comma before they could type the next category — making
+	// it impossible to add a second arXiv category through the UI.
+	const [arxivCategoriesInput, setArxivCategoriesInput] = useState('')
+	useEffect(() => {
+		if (recommendConfig) {
+			setArxivCategoriesInput(recommendConfig.arxiv_categories?.join(', ') ?? '')
+		}
+	}, [recommendConfig])
+
 	// ── Preferences ──
 	const [preferencesContent, setPreferencesContent] = useState('')
 	const [preferencesOriginal, setPreferencesOriginal] = useState('')
@@ -371,9 +387,10 @@ export function SettingsDialog() {
 		if (!recommendConfig) return
 		setRecSaving(true)
 		try {
+			const parsedCategories = arxivCategoriesInput.split(',').map(s => s.trim()).filter(Boolean)
 			const body: Record<string, unknown> = {
 				recommend: recommendConfig.recommend,
-				arxiv_categories: recommendConfig.arxiv_categories,
+				arxiv_categories: parsedCategories,
 			}
 			const res = await fetch('/api/recommend/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 			if (!res.ok) throw new Error((await res.json().catch(() => ({ error: '保存失败' })) as { error?: string }).error)
@@ -400,12 +417,13 @@ export function SettingsDialog() {
 			if (recommendConfig) {
 				// Parse the raw comma-separated input into an array
 				const parsedKeywords = excludedKeywordsInput.split(',').map(s => s.trim()).filter(Boolean)
+				const parsedCategories = arxivCategoriesInput.split(',').map(s => s.trim()).filter(Boolean)
 				const cfgRes = await fetch('/api/recommend/config', {
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
 						recommend: { ...recommendConfig.recommend, excluded_keywords: parsedKeywords },
-						arxiv_categories: recommendConfig.arxiv_categories,
+						arxiv_categories: parsedCategories,
 					}),
 				})
 				if (!cfgRes.ok) throw new Error('排除关键词保存失败')
@@ -519,8 +537,8 @@ export function SettingsDialog() {
 			<fieldset className="space-y-3">
 				<legend className={legendCls}>arXiv 订阅分类</legend>
 				<p className={hintCls}>每天从这些 arXiv 分类中拉取最新论文。</p>
-				<div><label className={labelCls}>分类列表（用逗号分隔，如 cs.LG, cs.CV, cs.AI）</label><input type="text" value={recommendConfig?.arxiv_categories?.join(', ') ?? ''} onChange={(e) => setRecommendConfig(prev => prev ? { ...prev, arxiv_categories: e.target.value.split(',').map(s => s.trim()).filter(Boolean) } : prev)} className={inputCls} placeholder="cs.LG, cs.CV, cs.AI" /></div>
-				{(recommendConfig?.recommend.enabled ?? false) && (recommendConfig?.arxiv_categories?.length ?? 0) === 0 && (
+				<div><label className={labelCls}>分类列表（用逗号分隔，如 cs.LG, cs.CV, cs.AI）</label><input type="text" value={arxivCategoriesInput} onChange={(e) => setArxivCategoriesInput(e.target.value)} className={inputCls} placeholder="cs.LG, cs.CV, cs.AI" /></div>
+				{(recommendConfig?.recommend.enabled ?? false) && arxivCategoriesInput.split(',').map(s => s.trim()).filter(Boolean).length === 0 && (
 					<p className="text-xs text-amber-600 dark:text-amber-400">启用推荐时必须至少填写一个分类，否则后端会拒绝保存。</p>
 				)}
 			</fieldset>
