@@ -4,6 +4,7 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
+import { remarkTruncateCjkLinks } from '../lib/remarkTruncateCjkLinks'
 import { RefreshCw } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { usePaper } from '../hooks/usePapers'
@@ -13,7 +14,7 @@ import { MessageBubble } from './MessageBubble'
 import { RoundNav } from './RoundNav'
 import type { Message } from '../types'
 
-const remarkPlugins = [remarkMath, remarkGfm]
+const remarkPlugins = [remarkMath, remarkGfm, remarkTruncateCjkLinks]
 const rehypePlugins = [rehypeKatex, rehypeHighlight]
 
 function StreamRenderer({ content }: { content: string }) {

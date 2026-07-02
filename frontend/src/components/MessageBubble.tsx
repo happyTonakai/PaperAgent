@@ -6,8 +6,9 @@ import remarkMath from 'remark-math'
 import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
+import { remarkTruncateCjkLinks } from '../lib/remarkTruncateCjkLinks'
 
-const remarkPlugins = [remarkMath, remarkGfm]
+const remarkPlugins = [remarkMath, remarkGfm, remarkTruncateCjkLinks]
 const rehypePlugins = [rehypeKatex, rehypeHighlight]
 
 interface MessageBubbleProps {
