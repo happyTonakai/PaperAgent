@@ -10,6 +10,7 @@ paperagent
 .paperagent/
 .claude/
 .pi/
+.codegraph/
 
 # Frontend
 frontend/node_modules/
