@@ -55,8 +55,11 @@ vet:
     GOCACHE={{gocache}} go vet ./...
 
 # Go 静态分析（golangci-lint v2，需要本机先装好：brew install golangci-lint 或
-# go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest）
+# go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest）。
+# 先 config verify 再 run：CI 的 golangci-lint-action 默认会跑 config verify，
+# 本地也对齐、提前发现 schema 非法问题。
 lint:
+    golangci-lint config verify --config .golangci.yaml
     golangci-lint run --config .golangci.yaml ./...
 
 # 前端类型检查

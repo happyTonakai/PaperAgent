@@ -12,17 +12,17 @@ linters:
     - unused        # 检测未使用的常量、变量、函数、类型
 
   # revive 默认会要求每个 exported 都有 godoc，先关掉最容易爆 noise 的规则。
-  # 仅留实际有用的几条（命名 / shadow / 包级注释）。
+  # 仅留实际有用的几条（命名 / shadow / 错误格式）。
   settings:
     revive:
       severity: warning
       rules:
         - name: var-naming
         - name: import-shadowing
-        - name: explicit-returns
         - name: errorf
 
-  # v2 起 exclusions 放在 linters.exclusions（替代顶层 issues：）
+  # v2 起 exclusions 放在 linters.exclusions（替代顶层 issues：）。
+  # 路径排除也在这里 —— run.exclude-dirs 在 v2 已被移除。
   exclusions:
     presets:
       - common-false-positives
@@ -32,6 +32,31 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+
+      # 排除没有 Go 文件的目录（前端源码 / 内嵌前端构建产物 / 测试数据），
+      # 用 path-except 是 v2 推荐写法。注意：内部 Go 文件（如 internal/server/frontend.go）
+      # 不应被排除，所以这里只排除真正的非 Go 路径。
+      - path-except: frontend
+        linters:
+          - errcheck
+          - govet
+          - ineffassign
+          - staticcheck
+          - unused
+      - path-except: internal/server/frontend-dist
+        linters:
+          - errcheck
+          - govet
+          - ineffassign
+          - staticcheck
+          - unused
+      - path-except: testdata
+        linters:
+          - errcheck
+          - govet
+          - ineffassign
+          - staticcheck
+          - unused
 
       # SSE writer 失败 = 客户端断开，没有可恢复动作；同 stream 已经在上层 log.Printf。
       # 覆盖 sw.WriteTitle / WriteError / WriteDoneWithTokens / WriteToolCall / s.sw.WriteDoneWithTokens。
@@ -54,8 +79,3 @@ linters:
 run:
   timeout: 5m
   tests: true
-  # 默认排除：前端构建产物 / 测试数据
-  exclude-dirs:
-    - frontend
-    - internal/server/frontend-dist
-    - testdata
