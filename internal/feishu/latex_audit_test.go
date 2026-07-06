@@ -271,17 +271,6 @@ func countSkipped(spans []auditFormulaSpan) int {
 	return n
 }
 
-func stripDollars(s string) string {
-	if strings.HasPrefix(s, "$$") {
-		s = strings.TrimPrefix(s, "$$")
-		s = strings.TrimSuffix(s, "$$")
-	} else if strings.HasPrefix(s, "$") {
-		s = strings.TrimPrefix(s, "$")
-		s = strings.TrimSuffix(s, "$")
-	}
-	return s
-}
-
 func truncStr(s string, maxLen int) string {
 	runes := []rune(s)
 	if len(runes) <= maxLen {

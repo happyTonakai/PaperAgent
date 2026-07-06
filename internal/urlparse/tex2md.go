@@ -327,13 +327,6 @@ func stripLineComment(line string) string {
 // Macro expansion (simplified)
 // ---------------------------------------------------------------------------
 
-type texMacroDef struct {
-	name   string
-	nargs  int
-	optDef string
-	body   string
-}
-
 func expandMacros(tex string) string {
 	// Remove \newcommand / \renewcommand and their definitions
 	// Supports both \newcommand\foo{body} and \newcommand{\foo}{body}
@@ -984,9 +977,10 @@ func findMatchingBrace(s string, pos int) int {
 			i++ // skip escaped char
 			continue
 		}
-		if ch == '{' {
+		switch ch {
+		case '{':
 			depth++
-		} else if ch == '}' {
+		case '}':
 			depth--
 			if depth == 0 {
 				return i

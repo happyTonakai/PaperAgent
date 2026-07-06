@@ -669,33 +669,6 @@ func buildPaperListCardPaginated(pagePapers []session.PaperSummary, totalCount, 
 	return c
 }
 
-// ─── Paper detail card (when clicking a paper from list) ───
-
-func buildPaperDetailCard(paper *session.Paper) map[string]any {
-	c := cardBase()
-
-	title := paper.Title
-	if title == "" {
-		title = "Paper " + paperShortRef(*paper)
-	}
-	c["header"] = cardHeader("📄 "+truncateTitle(title, 40), "blue")
-
-	summary := paper.InitialSummary
-	if len(summary) > 3000 {
-		summary = summary[:3000] + "\n\n...（内容过长，已截断）"
-	}
-
-	elements := []map[string]any{
-		mdElement(summary),
-		hrElement(),
-		buttonElement("💬 开始问答", "qa:"+paper.Ref(), "primary", map[string]string{"paper_id": paper.Ref()}),
-		noteElement("已设为当前文章，可以直接在聊天中提问 ✨"),
-	}
-
-	c["body"] = map[string]any{"elements": elements}
-	return c
-}
-
 // ─── Simple markdown card (for auto-upgraded text messages) ───
 
 func buildCardMarkdown(content string) string {
@@ -1144,9 +1117,7 @@ func splitTextByBytes(text string, maxBytes int) []string {
 		}
 
 		// Recalculate maxBytes proportionally for remaining text
-		if len(chunks) > 0 && len(remaining) > 0 {
-			// Keep using the same maxBytes for subsequent chunks
-		}
+		// (intentionally empty: keep the same maxBytes for subsequent chunks)
 	}
 
 	if remaining != "" {
@@ -1194,11 +1165,4 @@ func reverse(s []string) []string {
 		s[i], s[j] = s[j], s[i]
 	}
 	return s
-}
-
-func paperShortRef(p session.Paper) string {
-	if p.SessionID != "" && len(p.SessionID) >= 8 {
-		return p.SessionID[:8]
-	}
-	return fmt.Sprintf("%d", p.ID)
 }

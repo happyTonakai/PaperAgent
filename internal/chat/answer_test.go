@@ -142,12 +142,6 @@ func makeRefsTools(refs string) ([]api.Tool, map[string]ToolHandler) {
 	}
 }
 
-// makeNoTools returns the (nil, nil) tool config used by tests that don't
-// expect the LLM to call any tools.
-func makeNoTools() ([]api.Tool, map[string]ToolHandler) {
-	return nil, nil
-}
-
 func TestToAPIMessage_ForwardsToolMetadata(t *testing.T) {
 	tc := api.ToolCallCompleted{ID: "call_1", Type: "function"}
 	tc.Function.Name = "get_references"

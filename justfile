@@ -54,6 +54,11 @@ arxiv2md:
 vet:
     GOCACHE={{gocache}} go vet ./...
 
+# Go 静态分析（golangci-lint v2，需要本机先装好：brew install golangci-lint 或
+# go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest）
+lint:
+    golangci-lint run --config .golangci.yaml ./...
+
 # 前端类型检查
 typecheck:
     cd frontend && npx tsc --noEmit

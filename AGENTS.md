@@ -63,6 +63,7 @@ go test ./internal/config/ ./internal/session/ ./internal/chat/ \
 
 # Lint
 go vet ./...
+golangci-lint run --config .golangci.yaml ./...   # v2，与 .github/workflows/lint.yml 同配置
 ```
 
 测试覆盖：config + crypto（含 AES 解密旧 key 兼容）、session、chat（fakeLLM 驱动 Engine+Sink 测试）、prompt、urlparse、export、database（含 SQL 池钩子）、recommend（feed / scoring / algorithm 单测 + e2e）、feishu（latex2unicode / 卡片尺寸 / 卡片模板）、api 客户端。
@@ -73,7 +74,7 @@ go vet ./...
 
 通过 GitHub Actions（`.github/workflows/release.yml`，`workflow_dispatch`）发布。**不要** 手动 `git tag` / `gh release create`。
 
-CI（`.github/workflows/ci.yml`）会在 PR 上跑 `npm ci && npm run build`、`go vet ./...`、单元测试、`go build`。
+CI（`.github/workflows/ci.yml` + `.github/workflows/lint.yml`）会在 PR 上跑 `npm ci && npm run build`、`go vet ./...`、单元测试、`go build`、golangci-lint v2。
 
 ### 步骤
 

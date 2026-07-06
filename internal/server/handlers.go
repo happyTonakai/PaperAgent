@@ -253,7 +253,7 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 
 	// If LLM called get_references, inject references and do a follow-up stream.
 	// (Unlikely during summary generation, but handle it for completeness.)
-	if toolCalls != nil && len(toolCalls) > 0 && references != "" {
+	if len(toolCalls) > 0 && references != "" {
 		log.Printf("[new-paper] tool call detected: %s, injecting references", toolCalls[0].Function.Name)
 		followUpMessages := make([]api.ChatMessage, len(messages))
 		copy(followUpMessages, messages)
@@ -715,7 +715,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	// Handle tool call (fetch_arxiv, get_references, ...). Mirrors the
 	// dispatch in chat.Engine.stream via chat.ResolveToolCall, so the retry
 	// path resolves tools identically to the live-chat path.
-	if toolCalls != nil && len(toolCalls) > 0 {
+	if len(toolCalls) > 0 {
 		toolName := toolCalls[0].Function.Name
 		log.Printf("[retry-summary] tool call detected: %s", toolName)
 		if err := sw.WriteToolCall(toolName); err != nil {
@@ -770,7 +770,7 @@ func (s *Server) handleRetrySummary(w http.ResponseWriter, r *http.Request) {
 	// Remove any existing round-0 assistant messages
 	var filtered []session.Message
 	for _, m := range paper.Messages {
-		if !(m.RoundNumber == 0 && m.Role == "assistant") {
+		if m.RoundNumber != 0 || m.Role != "assistant" {
 			filtered = append(filtered, m)
 		}
 	}
@@ -927,7 +927,7 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	// Handle tool call (fetch_arxiv, get_references, ...). Mirrors the
 	// dispatch in chat.Engine.stream via chat.ResolveToolCall, so the retry
 	// path resolves tools identically to the live-chat path.
-	if toolCalls != nil && len(toolCalls) > 0 {
+	if len(toolCalls) > 0 {
 		toolName := toolCalls[0].Function.Name
 		log.Printf("[retry-chat] tool call detected: %s", toolName)
 		if err := sw.WriteToolCall(toolName); err != nil {
@@ -981,7 +981,7 @@ func (s *Server) handleRetryChat(w http.ResponseWriter, r *http.Request) {
 	// Filter out old assistant message for this round (reloaded from disk)
 	var filtered []session.Message
 	for _, m := range paper.Messages {
-		if !(m.RoundNumber == round && m.Role == "assistant") {
+		if m.RoundNumber != round || m.Role != "assistant" {
 			filtered = append(filtered, m)
 		}
 	}
@@ -1237,9 +1237,9 @@ func (s *Server) handleSummarize(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if msg.Role == "user" {
-			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
+			fmt.Fprintf(&context, "Q: %s\n", msg.Content)
 		} else {
-			context.WriteString(fmt.Sprintf("A: %s\n", msg.Content))
+			fmt.Fprintf(&context, "A: %s\n", msg.Content)
 		}
 	}
 
@@ -1306,9 +1306,9 @@ func (s *Server) handleSummarizeExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if msg.Role == "user" {
-			context.WriteString(fmt.Sprintf("Q: %s\n", msg.Content))
+			fmt.Fprintf(&context, "Q: %s\n", msg.Content)
 		} else {
-			context.WriteString(fmt.Sprintf("A: %s\n", msg.Content))
+			fmt.Fprintf(&context, "A: %s\n", msg.Content)
 		}
 	}
 

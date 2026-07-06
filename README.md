@@ -1,8 +1,8 @@
 # PaperAgent 📄
 
 [![CI](https://github.com/happyTonakai/paperagent/actions/workflows/ci.yml/badge.svg)](https://github.com/happyTonakai/paperagent/actions/workflows/ci.yml)
+[![Lint](https://github.com/happyTonakai/paperagent/actions/workflows/lint.yml/badge.svg)](https://github.com/happyTonakai/paperagent/actions/workflows/lint.yml)
 [![Release](https://img.shields.io/github/release/happyTonakai/paperagent.svg)](https://github.com/happyTonakai/paperagent/releases/latest)
-[![Go Report Card](https://goreportcard.com/badge/github.com/happyTonakai/paperagent)](https://goreportcard.com/report/github.com/happyTonakai/paperagent)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/happyTonakai/paperagent/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/happyTonakai/paperagent)](https://go.dev/)
 [![License](https://img.shields.io/github/license/happyTonakai/paperagent)](LICENSE)
@@ -472,6 +472,7 @@ just arxiv2md
 
 # 静态分析
 just vet                # Go vet
+just lint               # golangci-lint v2（与 CI .github/workflows/lint.yml 同配置）
 just typecheck          # 前端 tsc --noEmit
 
 # 单元测试（不打 API）

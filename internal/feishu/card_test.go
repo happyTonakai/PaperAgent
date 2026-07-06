@@ -161,11 +161,11 @@ func TestMultiCardSplit_LargeContent(t *testing.T) {
 
 	// Many markdown tables (each generates many internal Feishu elements)
 	for i := 0; i < 50; i++ {
-		sb.WriteString(fmt.Sprintf("## Table %d\n\n", i+1))
+		fmt.Fprintf(&sb, "## Table %d\n\n", i+1)
 		sb.WriteString("| Method | Param (M) | Acc (%) | F1 | Speed |\n")
 		sb.WriteString("|--------|-----------|---------|-----|-------|\n")
 		for j := 0; j < 10; j++ {
-			sb.WriteString(fmt.Sprintf("| Model-%d | %.1f | %2.1f | %.3f | fast |\n", j, float64(j)*5.2, float64(j)*3.7+85.0, float64(j)*0.02+0.88))
+			fmt.Fprintf(&sb, "| Model-%d | %.1f | %2.1f | %.3f | fast |\n", j, float64(j)*5.2, float64(j)*3.7+85.0, float64(j)*0.02+0.88)
 		}
 		sb.WriteString("\n")
 	}
@@ -176,14 +176,14 @@ func TestMultiCardSplit_LargeContent(t *testing.T) {
 	sb.WriteString("def compute(x):\n")
 	sb.WriteString("    # This is a very long code block that should never be split\n")
 	for i := 0; i < 200; i++ {
-		sb.WriteString(fmt.Sprintf("    result = layer_%d.forward(x)  # step %d\n", i, i))
+		fmt.Fprintf(&sb, "    result = layer_%d.forward(x)  # step %d\n", i, i)
 	}
 	sb.WriteString("    return x\n")
 	sb.WriteString("```\n")
 
 	// More paragraphs
 	for i := 0; i < 100; i++ {
-		sb.WriteString(fmt.Sprintf("This is paragraph number %d. It contains enough text to make the summary really long and force multiple card splits during streaming. ", i+1))
+		fmt.Fprintf(&sb, "This is paragraph number %d. It contains enough text to make the summary really long and force multiple card splits during streaming. ", i+1)
 	}
 	sb.WriteString("\n\n## Conclusion\n\n")
 	sb.WriteString("This is the conclusion of the paper. It summarizes all the findings and future work.\n")
@@ -303,7 +303,7 @@ func TestMultiCardSplit_Chat(t *testing.T) {
 	// Generate a long answer
 	var sb strings.Builder
 	for i := 0; i < 500; i++ {
-		sb.WriteString(fmt.Sprintf("Finding number %d: The model demonstrates significant improvements in benchmark evaluations. ", i+1))
+		fmt.Fprintf(&sb, "Finding number %d: The model demonstrates significant improvements in benchmark evaluations. ", i+1)
 	}
 	answer := sb.String()
 
@@ -396,11 +396,11 @@ func TestFitMarkdownContent_NoMidTableSplit(t *testing.T) {
 	sb.WriteString("## Introduction\n\nSome text before tables.\n\n")
 
 	for i := 1; i <= 5; i++ {
-		sb.WriteString(fmt.Sprintf("**表%d：测试表格\n\n", i))
+		fmt.Fprintf(&sb, "**表%d：测试表格\n\n", i)
 		sb.WriteString("| Col A | Col B | Col C |\n")
 		sb.WriteString("|-------|-------|-------|\n")
 		for j := 0; j < 7; j++ {
-			sb.WriteString(fmt.Sprintf("| row-%d | value-%d | data-%d |\n", j, j, j))
+			fmt.Fprintf(&sb, "| row-%d | value-%d | data-%d |\n", j, j, j)
 		}
 		sb.WriteString("\n")
 	}

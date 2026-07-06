@@ -1,0 +1,61 @@
+version: "2"
+
+# 起步配置：与 go vet 互补的几个核心 linter。
+# 后续可按需加 (gocritic / gosec / bodyclose / exportloopref 等)。
+
+linters:
+  enable:
+    - errcheck      # 检测未检查的 error 返回值
+    - govet         # go vet 套件（含 shadow 等）
+    - ineffassign   # 检测无效赋值
+    - staticcheck   # 100+ 检查，覆盖大量常见 bug
+    - unused        # 检测未使用的常量、变量、函数、类型
+
+  # revive 默认会要求每个 exported 都有 godoc，先关掉最容易爆 noise 的规则。
+  # 仅留实际有用的几条（命名 / shadow / 包级注释）。
+  settings:
+    revive:
+      severity: warning
+      rules:
+        - name: var-naming
+        - name: import-shadowing
+        - name: explicit-returns
+        - name: errorf
+
+  # v2 起 exclusions 放在 linters.exclusions（替代顶层 issues：）
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # errcheck 在测试文件里默认噪声太高（os.Setenv/Unsetenv 等测试 setup）。
+      - path: _test\.go
+        linters:
+          - errcheck
+
+      # SSE writer 失败 = 客户端断开，没有可恢复动作；同 stream 已经在上层 log.Printf。
+      # 覆盖 sw.WriteTitle / WriteError / WriteDoneWithTokens / WriteToolCall / s.sw.WriteDoneWithTokens。
+      - linters:
+          - errcheck
+        text: 'Error return value of `(s\.)?sw\.Write[A-Z][A-Za-z]+` is not checked'
+
+      # 持久化层：paper.Save / session.ClearActivePaper / httpServer.Shutdown 失败当前是
+      # best-effort 语义（带 TODO：之后要么返回错误给 handler、要么交给后台 flush）。
+      - linters:
+          - errcheck
+        text: 'Error return value of `(paper\.Save|session\.ClearActivePaper|httpServer\.Shutdown)` is not checked'
+
+      # IO / 文件系统 setup 路径：失败通常已经被 MkdirAll 原子性 / 启动阶段日志覆盖。
+      # 覆盖 os.MkdirAll / os.Chmod / os.WriteFile / io.Copy / filepath.Walk / reader.Seek。
+      - linters:
+          - errcheck
+        text: 'Error return value of `(os\.(MkdirAll|Chmod|WriteFile|Unsetenv|Setenv)|io\.Copy|filepath\.Walk|reader\.Seek)` is not checked'
+
+run:
+  timeout: 5m
+  tests: true
+  # 默认排除：前端构建产物 / 测试数据
+  exclude-dirs:
+    - frontend
+    - internal/server/frontend-dist
+    - testdata

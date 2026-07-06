@@ -11,47 +11,6 @@ import (
 	"github.com/happyTonakai/paperagent/internal/session"
 )
 
-const defaultTemplate = `---
-title: "{{Title}}"
-date: {{Date}}
-{{- if .SourceURL}}
-source_url: "{{.SourceURL}}"
-{{- end}}
-tags:
-  - paper
-  - reading
----
-
-# {{Title}}
-
-{{- if .InitialSummary}}
-
-## 论文总结
-
-{{.InitialSummary}}
-{{- end}}
-
-{{- if .Messages}}
-
----
-
-## 问答记录
-{{- range .Messages}}
-{{- if eq .Role "user"}}
-
-### 第 {{.RoundNumber}} 轮
-
-**Q**: {{.Content}}
-
-{{- else}}
-
-**A**: {{.Content}}
-
-{{- end}}
-{{- end}}
-{{- end}}
-`
-
 type TemplateData struct {
 	Title          string
 	Date           string
@@ -90,12 +49,12 @@ func ExportToObsidian(cfg *config.Config, p *session.Paper) (string, error) {
 		}
 		if msg.RoundNumber != currentRound {
 			currentRound = msg.RoundNumber
-			qna.WriteString(fmt.Sprintf("### 第 %d 轮\n\n", currentRound))
+			fmt.Fprintf(&qna, "### 第 %d 轮\n\n", currentRound)
 		}
 		if msg.Role == "user" {
-			qna.WriteString(fmt.Sprintf("**Q**: %s\n\n", msg.Content))
+			fmt.Fprintf(&qna, "**Q**: %s\n\n", msg.Content)
 		} else {
-			qna.WriteString(fmt.Sprintf("**A**: %s\n\n", msg.Content))
+			fmt.Fprintf(&qna, "**A**: %s\n\n", msg.Content)
 		}
 	}
 
@@ -125,17 +84,17 @@ func exportWithDefault(dir, filename string, data TemplateData) (string, error) 
 
 	// YAML frontmatter
 	b.WriteString("---\n")
-	b.WriteString(fmt.Sprintf("title: \"%s\"\n", escapeYAML(data.Title)))
-	b.WriteString(fmt.Sprintf("date: %s\n", data.Date))
+	fmt.Fprintf(&b, "title: \"%s\"\n", escapeYAML(data.Title))
+	fmt.Fprintf(&b, "date: %s\n", data.Date)
 	if data.SourceURL != "" {
-		b.WriteString(fmt.Sprintf("source_url: \"%s\"\n", data.SourceURL))
+		fmt.Fprintf(&b, "source_url: \"%s\"\n", data.SourceURL)
 	}
 	b.WriteString("tags:\n")
 	b.WriteString("  - paper\n")
 	b.WriteString("  - reading\n")
 	b.WriteString("---\n\n")
 
-	b.WriteString(fmt.Sprintf("# %s\n\n", data.Title))
+	fmt.Fprintf(&b, "# %s\n\n", data.Title)
 
 	if data.InitialSummary != "" {
 		b.WriteString("## 论文总结\n\n")

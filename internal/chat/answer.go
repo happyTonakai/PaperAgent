@@ -277,7 +277,7 @@ func (e *Engine) stream(ctx context.Context, paper *session.Paper, round int, me
 	if firstErr != nil {
 		return buf.String(), pTokens, cTokens, ccTokens, firstErr
 	}
-	if firstPass.toolCalls == nil || len(firstPass.toolCalls) == 0 {
+	if len(firstPass.toolCalls) == 0 {
 		return buf.String(), pTokens, cTokens, ccTokens, nil
 	}
 

@@ -93,7 +93,7 @@ func SaveArticles(articles []NewArticle) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(
 		`INSERT OR IGNORE INTO articles (id, title, link, abstract, author, category)
@@ -278,7 +278,7 @@ func UpdateArticleScores(scores map[string]float64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare("UPDATE articles SET score = ? WHERE id = ?")
 	if err != nil {
@@ -397,7 +397,7 @@ func UpdateArticleStatus(id string, status int) error {
 	if err != nil {
 		return fmt.Errorf("update article status (%s): begin: %w", id, err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var oldStatus int
 	err = tx.QueryRow("SELECT status FROM articles WHERE id = ?", id).Scan(&oldStatus)
@@ -441,7 +441,7 @@ func BatchUpdateArticleStatus(ids []string, status int) error {
 	if err != nil {
 		return fmt.Errorf("batch update article status (n=%d): begin: %w", len(ids), err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, id := range ids {
 		var oldStatus int
@@ -544,7 +544,7 @@ func MarkDailyRecommendations(date string, count int, diversityRatio float64) (i
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Clear previous recommendations for this date
 	if _, err := tx.Exec(

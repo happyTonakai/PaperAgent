@@ -70,9 +70,6 @@ func (b *Bot) SetForcePushFunc(fn func() (int, error)) {
 	b.forcePush = fn
 }
 
-// feishuRequestFunc is the callback type used by withFreshTenantAccessTokenRetry.
-type feishuRequestFunc func(client *lark.Client, options ...larkcore.RequestOptionFunc) error
-
 // New creates a new Feishu bot. Always returns a non-nil Bot (even when disabled)
 // so that hot-reload via the Web UI works. Call Start() to connect.
 func New(cfg *config.Config) *Bot {
@@ -1343,14 +1340,22 @@ func (b *Bot) PushDailyRecommend(chatID string, articles []database.Article) err
 	return nil
 }
 
-// loadRecommendItemsForToday returns today's recommended articles as
-// RecommendCardItems, ordered by batch_order. Translations and statuses
-// are read straight from the DB so the card reflects the latest state
-// after a like / dislike / activate / mark-read-page click. Used by both
-// the daily push and the card-action re-render path.
-func (b *Bot) loadRecommendItemsForToday() ([]RecommendCardItem, error) {
-	today := time.Now().Format("2006-01-02")
-	dbArticles, err := database.GetArticlesByRecommendDate(today)
+// loadRecommendItemsForDate returns the recommended articles for the given
+// date as RecommendCardItems, ordered by batch_order. Translations and
+// statuses are read straight from the DB so the card reflects the latest
+// state after a like / dislike / activate / mark-read-page click.
+//
+// An empty date falls back to today, matching recommendDateForArticle's
+// behavior so the caller doesn't need to special-case missing data.
+//
+// Used only by the card-action re-render path. The original push goes
+// through PushDailyRecommend's own GetArticlesByIDs path so it can drain
+// the backlog (multi-day) in a single paginated send.
+func (b *Bot) loadRecommendItemsForDate(date string) ([]RecommendCardItem, error) {
+	if date == "" {
+		date = time.Now().Format("2006-01-02")
+	}
+	dbArticles, err := database.GetArticlesByRecommendDate(date)
 	if err != nil {
 		return nil, err
 	}
@@ -1393,19 +1398,28 @@ func findRecommendPage(items []RecommendCardItem, articleID string) int {
 	return 1
 }
 
-// buildDailyRecommendCardForArticle rebuilds the page of the daily
+// buildDailyRecommendCardForArticleDate rebuilds the page of the daily
 // recommendation card that contains the given article, reflecting the
 // latest statuses from the DB. Returns the card as a map so it can be
 // embedded in callback.Card{Data: ...} for the card-action response. The
 // returned card includes the per-article buttons in their post-action
 // state (highlighted + disabled) when the user has already interacted.
-func (b *Bot) buildDailyRecommendCardForArticle(articleID string) (map[string]any, error) {
-	items, err := b.loadRecommendItemsForToday()
+//
+// `date` is the article's recommend_date. Passing the date (instead of
+// always using today) means interacting with a card from a previous
+// day's batch re-renders THAT day's articles, not today's. This matters
+// when the original push drained a multi-day backlog in one go: the
+// re-render must use the same scope as the page the user is on, or
+// findRecommendPage computes the wrong page index and the clicked
+// article effectively disappears from view. An empty date falls back to
+// today, mirroring recommendDateForArticle.
+func (b *Bot) buildDailyRecommendCardForArticleDate(articleID, date string) (map[string]any, error) {
+	items, err := b.loadRecommendItemsForDate(date)
 	if err != nil {
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("no recommended articles for today")
+		return nil, fmt.Errorf("no recommended articles for date %q", date)
 	}
 	page := findRecommendPage(items, articleID)
 	totalPages := (len(items) + recommendPageSize - 1) / recommendPageSize
@@ -1422,12 +1436,31 @@ func (b *Bot) buildDailyRecommendCardForArticle(articleID string) (map[string]an
 	return cardMap, nil
 }
 
+// recommendDateForArticle resolves the recommend_date of the given article
+// from the database. Returns an empty string when the article is not found
+// or has no recommend_date; buildDailyRecommendCardForArticleDate then
+// falls back to today.
+func recommendDateForArticle(articleID string) string {
+	a, err := database.GetArticleByID(articleID)
+	if err != nil || a == nil || a.RecommendDate == nil {
+		return ""
+	}
+	return *a.RecommendDate
+}
+
 // recommendResponseWithCard returns a CardActionTriggerResponse with both
 // a toast and a refreshed card. On error (e.g. article not in today's
 // list), returns a toast-only response so the user still sees feedback
 // for their click.
+//
+// The card date is resolved from the article's recommend_date rather than
+// today's date, so interacting with a card from a previous day re-renders
+// that day's articles instead of swapping in today's batch. Without this
+// the page index recomputed from today's-only list no longer matches the
+// page the user is on, and the clicked article effectively disappears.
 func (b *Bot) recommendResponseWithCard(articleID, toastType, content string) *callback.CardActionTriggerResponse {
-	card, err := b.buildDailyRecommendCardForArticle(articleID)
+	date := recommendDateForArticle(articleID)
+	card, err := b.buildDailyRecommendCardForArticleDate(articleID, date)
 	if err != nil {
 		log.Printf("[feishu] rebuild card for %s: %v", articleID, err)
 		return &callback.CardActionTriggerResponse{
@@ -1637,7 +1670,7 @@ func formatRounds(rounds []fetchRound) string {
 		if i > 0 {
 			sb.WriteString("\n---\n")
 		}
-		sb.WriteString(fmt.Sprintf("**Q%d:** %s\n\n**A%d:** %s", item.R, item.Q, item.R, item.A))
+		fmt.Fprintf(&sb, "**Q%d:** %s\n\n**A%d:** %s", item.R, item.Q, item.R, item.A)
 	}
 	return sb.String()
 }

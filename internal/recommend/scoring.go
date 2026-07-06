@@ -59,16 +59,14 @@ func scoreChunk(client *api.Client, model string, preferences string, articles [
 	var userContent strings.Builder
 
 	if preferences != "" {
-		userContent.WriteString(fmt.Sprintf("## 用户兴趣偏好\n%s\n\n", preferences))
+		fmt.Fprintf(&userContent, "## 用户兴趣偏好\n%s\n\n", preferences)
 	}
 
 	userContent.WriteString("## 待评分论文\n")
 	for _, article := range articles {
 		abstract := truncateText(article.Abstract, 500)
-		userContent.WriteString(fmt.Sprintf(
-			"ID: %s\n标题: %s\n摘要: %s\n---\n",
-			article.ID, article.Title, abstract,
-		))
+		fmt.Fprintf(&userContent, "ID: %s\n标题: %s\n摘要: %s\n---\n",
+			article.ID, article.Title, abstract)
 	}
 
 	raw, _, _, _, _, _, err := client.Chat(model, []api.ChatMessage{

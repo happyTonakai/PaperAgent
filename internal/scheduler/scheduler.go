@@ -339,10 +339,7 @@ func (s *Scheduler) shouldRun() bool {
 	today := now.Format("2006-01-02")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if today == s.lastRunDate {
-		return false
-	}
-	return true
+	return today != s.lastRunDate
 }
 
 // runOnce executes one full pipeline cycle. `force` propagates to onComplete

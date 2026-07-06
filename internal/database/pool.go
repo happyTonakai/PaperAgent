@@ -173,7 +173,7 @@ func applyMigration(conn *sql.DB, version int, sql string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(sql); err != nil {
 		return fmt.Errorf("exec: %w", err)

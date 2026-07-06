@@ -260,12 +260,11 @@ func processMathSpans(text string) string {
 			continue
 		}
 		isDisplay := i+1 < len(text) && text[i+1] == '$'
-		innerStart := i
 		if isDisplay {
 			if i+2 >= len(text) {
 				break // incomplete $$
 			}
-			innerStart = i + 2
+			innerStart := i + 2
 			closeIdx := findClosingDollars(text, innerStart, true)
 			if closeIdx < 0 {
 				break // unclosed $$
@@ -273,7 +272,7 @@ func processMathSpans(text string) string {
 			spans = append(spans, mathSpan{start: i, end: closeIdx + 2, isDisplay: true})
 			i = closeIdx + 2
 		} else {
-			innerStart = i + 1
+			innerStart := i + 1
 			closeIdx := findClosingDollars(text, innerStart, false)
 			if closeIdx < 0 {
 				break // unclosed $
@@ -477,8 +476,8 @@ func convertLatexTokens(s string) (string, bool) {
 	for i := 0; i < len(s); {
 		ch := s[i]
 
-		switch {
-		case ch == '^':
+		switch ch {
+		case '^':
 			// Superscript
 			i++
 			sub, n, ok := parseSubSuper(s, i)
@@ -492,7 +491,7 @@ func convertLatexTokens(s string) (string, bool) {
 			result.WriteString(conv)
 			i = n
 
-		case ch == '_':
+		case '_':
 			// Subscript
 			i++
 			sub, n, ok := parseSubSuper(s, i)
@@ -506,7 +505,7 @@ func convertLatexTokens(s string) (string, bool) {
 			result.WriteString(conv)
 			i = n
 
-		case ch == '{':
+		case '{':
 			// Standalone group (not consumed by a command handler above):
 			// preserve braces and convert content recursively.
 			inner, endPos := extractMatchingBrace(s, i)
@@ -524,12 +523,12 @@ func convertLatexTokens(s string) (string, bool) {
 			result.WriteByte('}')
 			i = endPos
 
-		case ch == '}':
+		case '}':
 			// Stray closing brace — treat as literal
 			result.WriteByte('}')
 			i++
 
-		case ch == '\\':
+		case '\\':
 			// Command
 			i++
 			cmd, n := parseCommand(s, i)
@@ -671,7 +670,7 @@ func convertLatexTokens(s string) (string, bool) {
 				return "", false
 			}
 
-		case ch == ' ' || ch == '\t':
+		case ' ', '\t':
 			// Whitespace inside formula: preserve
 			result.WriteByte(ch)
 			i++
@@ -768,9 +767,8 @@ func toSubscript(s string) (string, bool) {
 	}
 
 	// Try to convert each resulting character to subscript
-	runes := []rune(converted)
 	var out strings.Builder
-	for _, r := range runes {
+	for _, r := range converted {
 		if sub, ok := subscriptMap[r]; ok {
 			out.WriteRune(sub)
 		} else {
@@ -794,9 +792,8 @@ func toSuperscript(s string) (string, bool) {
 	}
 
 	// Try to convert each resulting character to superscript
-	runes := []rune(converted)
 	var out strings.Builder
-	for _, r := range runes {
+	for _, r := range converted {
 		if sup, ok := superscriptMap[r]; ok {
 			out.WriteRune(sup)
 		} else {
