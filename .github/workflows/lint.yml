@@ -19,6 +19,8 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +28,16 @@ jobs:
         with:
           go-version: "1.25"
           cache: false  # golangci-lint-action 自带 internal cache
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # //go:embed frontend-dist 在 internal/server/server.go:23 依赖该目录存在。
+      # golangci-lint 的 typecheck linter 内部会跑 go build，找不到目录就直接挂。
+      # 必须先构建前端，与 .github/workflows/ci.yml 一致。
+      - name: Build frontend
+        run: cd frontend && npm ci && npm run build
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
