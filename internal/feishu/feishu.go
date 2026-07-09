@@ -565,7 +565,13 @@ func (b *Bot) streamSummary(chatID string, paper *session.Paper) {
 		{Role: "user", Content: prompt.GetHeavy()},
 	}
 
-	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages, nil)
+	// Tools must match the chat-path tools exactly (cmdChat → chat.BuildChatTools)
+	// so OpenAI's prompt cache can hit the [system, paper.Content] prefix on the
+	// first Feishu Q&A round. chat-completions serializes tools BEFORE messages
+	// into the cache key, so passing nil here would diverge from the chat path
+	// at the start of the serialized request and invalidate the cache prefix.
+	tools, _ := chat.BuildChatTools(paper)
+	ch := b.apiClient.ChatStream(b.cfg.API.DefaultModel, messages, tools)
 	var totalContent strings.Builder
 	var promptTokens, completionTokens, cachedTokens int
 	lastPatch := 0
@@ -943,7 +949,11 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 		// message construction the engine would do, but only on this rare
 		// fallback branch; the streaming path below uses the shared engine.
 		messages := chat.BuildMessages(paper, question, prompt.GetLight())
-		result, _, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, nil)
+		// Match the tools slice used by the streaming path so OpenAI's prompt
+		// cache can hit if this fallback is reached for a paper whose [system,
+		// paper.Content] prefix is already cached on the streaming path.
+		tools, _ := chat.BuildChatTools(paper)
+		result, _, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, tools)
 		if chatErr != nil {
 			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
 			return

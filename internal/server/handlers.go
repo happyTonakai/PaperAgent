@@ -210,10 +210,12 @@ func (s *Server) handleNewPaper(w http.ResponseWriter, r *http.Request) {
 		{Role: "user", Content: paper.Content},
 		{Role: "user", Content: prompt.GetHeavy()},
 	}
-	var tools []api.Tool
-	if references != "" {
-		tools = []api.Tool{api.GetReferencesTool()}
-	}
+	// Tools must match chat.BuildChatTools(paper) byte-for-byte and in the same
+	// order. Chat-completions serializes tools BEFORE messages into the cache
+	// key, so any divergence here (extra / missing / reordered tool) at byte 0
+	// invalidates the entire prefix lookup and the first Q&A round cannot
+	// reuse the cached [system, paper.Content] prefix from this initial summary.
+	tools, _ := chat.BuildChatTools(paper)
 
 	ch := s.api.ChatStream(s.cfg.API.DefaultModel, messages, tools)
 	var summaryBuilder strings.Builder

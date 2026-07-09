@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -635,6 +636,53 @@ func TestBuildChatTools_ConditionalReferences(t *testing.T) {
 			t.Error("get_references handler should not be registered when paper has no references")
 		}
 	})
+}
+
+// TestBuildChatTools_StableForOpenAIPromptCache pins down the exact tool
+// slice BuildChatTools returns for each paper state (with / without refs).
+//
+// The slice's elements, count, and order matter for OpenAI prompt caching:
+// chat-completions serializes tools into the cache key BEFORE messages, so
+// handleNewPaper (INIT summary) and handleChat (Q&A) must hand the API
+// identical tools lists in identical order. If this test fails with a
+// "tools slice changed" message, the cache prefix at position 0 shifts and
+// the first Q&A round loses its [system, paper.Content] cache hit.
+//
+// If you intentionally change BuildChatTools, update both fixtures here so
+// the cache-alignment contract stays auditable in code.
+func TestBuildChatTools_StableForOpenAIPromptCache(t *testing.T) {
+	want := struct {
+		withRefs    []api.Tool
+		withoutRefs []api.Tool
+	}{
+		withRefs:    []api.Tool{api.GetReferencesTool(), api.FetchArxivTool()},
+		withoutRefs: []api.Tool{api.FetchArxivTool()},
+	}
+
+	cases := []struct {
+		name    string
+		refs    string
+		wantOut []api.Tool
+	}{
+		{"with references, ordered [get_references, fetch_arxiv]", "the refs", want.withRefs},
+		{"without references, only [fetch_arxiv]", "", want.withoutRefs},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			paper := &session.Paper{Content: "body", References: tc.refs}
+			got, _ := BuildChatTools(paper)
+			if !reflect.DeepEqual(got, tc.wantOut) {
+				t.Errorf("BuildChatTools tools slice drifted from fixture\n  got:  %#v\n  want: %#v", got, tc.wantOut)
+			}
+			// Determinism: calling twice on the same paper must not change
+			// the slice (catches accidental map-iteration ordering in any
+			// future refactor that returns tools from a map).
+			got2, _ := BuildChatTools(paper)
+			if !reflect.DeepEqual(got, got2) {
+				t.Errorf("BuildChatTools is non-deterministic across calls\n  call1: %#v\n  call2: %#v", got, got2)
+			}
+		})
+	}
 }
 
 func TestAnswer_MissingToolHandlerSurfacesError(t *testing.T) {
