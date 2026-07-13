@@ -124,17 +124,13 @@ Agent 会自动探测环境、下载二进制、引导你输入 API key / 飞书
 curl -sSfL https://raw.githubusercontent.com/happyTonakai/PaperAgent/main/install.sh | sh
 ```
 
-可选参数：
-
-- 指定版本：`... | VERSION=v1.2.0 sh`
-- 装到全局 `/usr/local/bin`（需 sudo）：`... | INSTALL_DIR=/usr/local/bin sh`
-
-Windows 用户请去 [Releases](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe`。
+Windows 用户请去 [Releases](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe` 或 `arxiv2md_windows_amd64.exe`。
 
 验证：
 
 ```bash
 paperagent -version
+arxiv2md  # 显示用法信息
 ```
 
 二进制内嵌前端静态资源（React SPA），运行时无需安装 Node.js。

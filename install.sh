@@ -75,10 +75,9 @@ fi
 
 # Windows ships a .exe suffix; macOS/Linux don't. Only darwin/linux are
 # supported by this script (Windows users go to the Releases page).
+# ── Download paperagent ─────────────────────────────────────────
 BINARY="paperagent_${GOOS}_${GOARCH}"
 URL="https://github.com/$REPO/releases/download/$TAG/$BINARY"
-
-# ── Download ──────────────────────────────────────────────────────
 echo "Downloading $BINARY ($TAG)..." >&2
 mkdir -p "$INSTALL_DIR"
 if ! curl -sSfL "$URL" -o "$INSTALL_DIR/paperagent"; then
@@ -89,6 +88,18 @@ if ! curl -sSfL "$URL" -o "$INSTALL_DIR/paperagent"; then
 fi
 chmod +x "$INSTALL_DIR/paperagent"
 
+# ── Download arxiv2md ────────────────────────────────────────────
+BINARY="arxiv2md_${GOOS}_${GOARCH}"
+URL="https://github.com/$REPO/releases/download/$TAG/$BINARY"
+echo "Downloading $BINARY ($TAG)..." >&2
+if ! curl -sSfL "$URL" -o "$INSTALL_DIR/arxiv2md"; then
+  echo "" >&2
+  echo "Download failed. Please check the actual asset name at:" >&2
+  echo "  https://github.com/$REPO/releases/tag/$TAG" >&2
+  exit 1
+fi
+chmod +x "$INSTALL_DIR/arxiv2md"
+
 # ── Platform-specific post-install ───────────────────────────────
 # macOS: clear Gatekeeper quarantine so the binary can run without
 #        the user manually opening "Security & Privacy" once.
@@ -98,6 +109,7 @@ case "$GOOS" in
   darwin)
     if command -v xattr >/dev/null 2>&1; then
       xattr -cr "$INSTALL_DIR/paperagent" || true
+      xattr -cr "$INSTALL_DIR/arxiv2md" || true
     fi
     ;;
   linux)
@@ -127,3 +139,6 @@ fi
 # ── Verify ────────────────────────────────────────────────────────
 echo "" >&2
 "$INSTALL_DIR/paperagent" -version
+echo "" >&2
+"$INSTALL_DIR/arxiv2md" 2>&1 | head -3
+echo "Installed arxiv2md to $INSTALL_DIR/arxiv2md" >&2
