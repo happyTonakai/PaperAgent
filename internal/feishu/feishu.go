@@ -952,21 +952,76 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 		// Match the tools slice used by the streaming path so OpenAI's prompt
 		// cache can hit if this fallback is reached for a paper whose [system,
 		// paper.Content] prefix is already cached on the streaming path.
-		tools, _ := chat.BuildChatTools(paper)
-		result, _, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, tools)
+		tools, handlers := chat.BuildChatTools(paper)
+
+		// Persist user message first, mirroring Engine.Answer's step 1, so the
+		// round's message order on disk is [user, assistant(ToolCalls), tool, assistant].
+		paper.AddMessage(session.Message{RoundNumber: round, Role: "user", Content: question, TokenCount: session.EstimateTokens(question), SkipContext: skipContext})
+		if err := paper.Save(); err != nil {
+			log.Printf("[feishu] save user message (fallback): %v", err)
+			b.sendText(chatID, fmt.Sprintf("❌ 保存失败：%v", err))
+			return
+		}
+
+		result, toolCalls, _, _, _, _, chatErr := b.apiClient.Chat(b.cfg.API.DefaultModel, messages, tools)
 		if chatErr != nil {
 			b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
 			return
 		}
-		// Persist user + assistant messages on the fallback path so the
-		// answer is not lost from the paper history. We pass zero token
-		// counts because the synchronous Chat() call doesn't expose them;
-		// SetAnchorFromTokens still anchors the round correctly (the
-		// algorithm rounds up to min_recent_rounds when counts are zero).
-		paper.AddMessage(session.Message{RoundNumber: round, Role: "user", Content: question, TokenCount: session.EstimateTokens(question), SkipContext: skipContext})
+
+		// If the LLM called a tool (e.g. fetch_arxiv), resolve it synchronously
+		// and make a follow-up call, mirroring what engine.stream() does. This
+		// keeps the fallback path functionally equivalent to the streaming path.
+		if len(toolCalls) > 0 {
+			toolResult := chat.ResolveToolCall(context.Background(), handlers, toolCalls)
+
+			paper.AddMessage(session.Message{
+				RoundNumber:      round,
+				Role:             "assistant",
+				Content:          "",
+				TokenCount:       0,
+				SkipContext:      skipContext,
+				ToolCalls:        toolCalls,
+			})
+			paper.AddMessage(session.Message{
+				RoundNumber:      round,
+				Role:             "tool",
+				ToolCallID:       toolCalls[0].ID,
+				Content:          toolResult,
+				TokenCount:       session.EstimateTokens(toolResult),
+				SkipContext:      skipContext,
+			})
+
+			// Persist tool history before the follow-up call so a crash mid-flight
+			// doesn't cause the next round to re-invoke the tool (which could
+			// return different content and confuse the conversation).
+			if err := paper.Save(); err != nil {
+				log.Printf("[feishu] save tool-call messages (fallback): %v", err)
+				b.sendText(chatID, fmt.Sprintf("❌ 保存失败：%v", err))
+				return
+			}
+
+			followUp := make([]api.ChatMessage, 0, len(messages)+2)
+			followUp = append(followUp, messages...)
+			followUp = append(followUp,
+				api.ChatMessage{Role: "assistant", ToolCalls: toolCalls},
+				api.ChatMessage{Role: "tool", ToolCallID: toolCalls[0].ID, Content: toolResult},
+			)
+			result, _, _, _, _, _, chatErr = b.apiClient.Chat(b.cfg.API.DefaultModel, followUp, nil)
+			if chatErr != nil {
+				b.sendText(chatID, fmt.Sprintf("❌ 回答失败：%v", chatErr))
+				return
+			}
+		}
+
+		// Persist the final assistant answer and save. Zero token counts because
+		// the synchronous Chat() doesn't expose them; anchor stays where it was
+		// (the synchronous fallback never advances it because SetAnchorFromTokens
+		// only triggers when prompt+completion > max_input).
 		paper.AddMessage(session.Message{RoundNumber: round, Role: "assistant", Content: result, TokenCount: session.EstimateTokens(result), SkipContext: skipContext})
-		paper.SetAnchorFromTokens(round, 0, 0, b.cfg.UI.MaxInputTokens, b.cfg.UI.MinRecentRounds)
-		paper.Save()
+		if err := paper.Save(); err != nil {
+			log.Printf("[feishu] save assistant message (fallback): %v", err)
+		}
 		b.sendText(chatID, result)
 		return
 	}

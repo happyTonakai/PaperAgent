@@ -1474,6 +1474,14 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 func paperToResponse(p *session.Paper) paperResponse {
 	msgs := make([]messageResponse, 0, len(p.Messages))
 	for _, m := range p.Messages {
+		// Skip tool-call assistant messages (empty content with tool calls)
+		// and tool result messages — these are internal to the LLM context
+		// and should not be rendered in the UI (e.g. a fetch_arxiv result
+		// dumps the full fetched paper text, which the LLM needs but the
+		// user should not see, just like the Q0 paper content is hidden).
+		if m.Role == "tool" || (m.Role == "assistant" && m.Content == "" && len(m.ToolCalls) > 0) {
+			continue
+		}
 		msgs = append(msgs, messageResponse{
 			RoundNumber:      m.RoundNumber,
 			Role:             m.Role,

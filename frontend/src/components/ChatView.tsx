@@ -405,6 +405,14 @@ export function ChatView() {
   if (paper) {
     for (const msg of paper.messages) {
       if (msg.round_number === 0) continue
+      // Skip tool result messages — these are internal to the LLM context
+      // and should not be rendered in the UI (e.g. a fetch_arxiv result
+      // dumps the full fetched paper text, which the LLM needs but the
+      // user should not see, just like the Q0 paper content is hidden).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((msg as any).role === 'tool') continue
+      // Skip tool-call-only assistant messages (empty content).
+      if (msg.role === 'assistant' && !msg.content) continue
       // During retry streaming, hide the old assistant answer for that round
       // so the streaming bubble at the bottom acts as the visual replacement
       if (retryingRound !== null && msg.round_number === retryingRound && msg.role === 'assistant') continue
