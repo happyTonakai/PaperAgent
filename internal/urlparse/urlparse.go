@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -100,11 +99,11 @@ func extractArxivIDFromURL(raw string) (string, bool) {
 // FetchURL fetches content from an arXiv URL.
 // Priority:
 //  1. HTML version (https://arxiv.org/html/{id}/)
-//  2. TeX source (via arxiv2text binary)
+//  2. TeX source (parsed in-process via FetchArxivAsMarkdownFromTeX)
 //
-// ctx cancels both the HTTP fetch and the arxiv2text subprocess. Errors
-// from each fallback are collected and reported in the final error if
-// both fail, so the caller (typically the LLM) can see what went wrong.
+// ctx cancels the in-flight HTTP fetches. Errors from each fallback are
+// collected and reported in the final error if both fail, so the caller
+// (typically the LLM) can see what went wrong.
 func FetchURL(ctx context.Context, url string) (string, error) {
 	_, id, ok := extractArxivIDFromAbsURL(url)
 	if !ok {
@@ -118,16 +117,15 @@ func FetchURL(ctx context.Context, url string) (string, error) {
 		return htmlContent, nil
 	}
 
-	// Priority 2: Fallback to TeX source via arxiv2text
-	absURL := fmt.Sprintf("https://arxiv.org/abs/%s", id)
-	texContent, texErr := tryArxiv2Text(ctx, absURL)
+	// Priority 2: Fallback to TeX source (parsed in-process)
+	texContent, texErr := FetchArxivAsMarkdownFromTeX(ctx, id)
 	if texErr == nil && texContent != "" {
 		return texContent, nil
 	}
 
 	// Both failed — return a combined error so the caller can see which
 	// paths were tried and what went wrong with each.
-	return "", fmt.Errorf("failed to fetch paper from arXiv (id=%s): HTML: %v; TeX (arxiv2text): %v",
+	return "", fmt.Errorf("failed to fetch paper from arXiv (id=%s): HTML: %v; TeX: %v",
 		id, htmlErr, texErr)
 }
 
@@ -355,25 +353,6 @@ func FetchArxivAbstractCtx(ctx context.Context, arxivID string) (string, error) 
 	}
 
 	return "", fmt.Errorf("abstract not found in arxiv page")
-}
-
-func tryArxiv2Text(ctx context.Context, url string) (string, error) {
-	// Check if arxiv2text is available
-	path, err := exec.LookPath("arxiv2text")
-	if err != nil {
-		return "", fmt.Errorf("arxiv2text not found in PATH")
-	}
-
-	// exec.CommandContext propagates ctx cancellation to the subprocess:
-	// if the caller cancels (e.g., the user closes the browser tab), the
-	// arxiv2text process is killed via SIGKILL.
-	cmd := exec.CommandContext(ctx, path, url)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("arxiv2text failed: %w", err)
-	}
-
-	return string(output), nil
 }
 
 func httpFetch(ctx context.Context, url string) (string, error) {

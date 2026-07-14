@@ -1147,7 +1147,7 @@ func (b *Bot) handleCardResumeQA(paperID, chatID string) (*callback.CardActionTr
 
 // fetchContent fetches paper content from a URL. ctx is propagated to
 // urlparse so the caller's cancellation (e.g., bot shutdown) terminates
-// the HTTP request or arxiv2text subprocess.
+// the HTTP request or arxiv2md subprocess.
 func (b *Bot) fetchContent(ctx context.Context, url string) (content, sourceURL, arxivID string, err error) {
 	if arxivURL, id, ok := urlparse.NormalizeArxivInput(url); ok {
 		sourceURL = arxivURL

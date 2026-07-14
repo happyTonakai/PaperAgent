@@ -42,7 +42,7 @@ func FetchArxivHandler() ToolHandler {
 			return "", fmt.Errorf("not a valid arXiv URL or ID: %q", args.URLOrID)
 		}
 
-		// ctx is propagated through to the HTTP fetch and the arxiv2text
+		// ctx is propagated through to the HTTP fetch and the arxiv2md
 		// subprocess, so caller cancellation (e.g., browser tab close)
 		// terminates the work promptly.
 		content, err := urlparse.FetchURL(ctx, canonical)
