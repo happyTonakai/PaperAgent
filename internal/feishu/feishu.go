@@ -976,20 +976,20 @@ func (b *Bot) cmdChat(chatID, messageID, paperID, question string, skipContext b
 			toolResult := chat.ResolveToolCall(context.Background(), handlers, toolCalls)
 
 			paper.AddMessage(session.Message{
-				RoundNumber:      round,
-				Role:             "assistant",
-				Content:          "",
-				TokenCount:       0,
-				SkipContext:      skipContext,
-				ToolCalls:        toolCalls,
+				RoundNumber: round,
+				Role:        "assistant",
+				Content:     "",
+				TokenCount:  0,
+				SkipContext: skipContext,
+				ToolCalls:   toolCalls,
 			})
 			paper.AddMessage(session.Message{
-				RoundNumber:      round,
-				Role:             "tool",
-				ToolCallID:       toolCalls[0].ID,
-				Content:          toolResult,
-				TokenCount:       session.EstimateTokens(toolResult),
-				SkipContext:      skipContext,
+				RoundNumber: round,
+				Role:        "tool",
+				ToolCallID:  toolCalls[0].ID,
+				Content:     toolResult,
+				TokenCount:  session.EstimateTokens(toolResult),
+				SkipContext: skipContext,
 			})
 
 			// Persist tool history before the follow-up call so a crash mid-flight
