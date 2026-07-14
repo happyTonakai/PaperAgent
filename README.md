@@ -118,13 +118,13 @@ Agent 会自动探测环境、下载二进制、引导你输入 API key / 飞书
 
 ### 手动安装
 
-一行命令搞定，自动检测 OS/arch、处理 macOS Gatekeeper、Linux 库依赖检查：
+一行命令搞定，自动检测 OS/arch、处理 macOS Gatekeeper、Linux 库依赖检查，同时安装 **paperagent** + **arxiv2md** 两个二进制：
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/happyTonakai/PaperAgent/main/install.sh | sh
 ```
 
-Windows 用户请去 [Releases](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe` 或 `arxiv2md_windows_amd64.exe`。
+Windows 用户请去 [Releases](https://github.com/happyTonakai/PaperAgent/releases/latest) 手动下载 `paperagent_windows_amd64.exe` 和 `arxiv2md_windows_amd64.exe`。
 
 验证：
 
@@ -162,17 +162,16 @@ arxiv2md  # 显示用法信息
 
 ### 📐 arxiv2md 独立工具
 
-PaperAgent 内置的 arXiv→Markdown 转换引擎也可以独立使用。两种路径：
+PaperAgent 内置的 arXiv→Markdown 转换引擎也可以独立使用（[install.sh](#手动安装) 已一并安装）。两种路径：
 
 - **HTML 优先**：从 arXiv HTML 提取内容，MathML 转 `$...$` 行内公式，表格保持 Markdown 对齐格式
 - **TeX 备选**：下载 e-print tar.gz，自动展开 `\input`，`\begin{tabular}` 转 Markdown 表格
 
-```bash
-# 编译
-just arxiv2md
+输出会自动剥离参考文献章节，只保留论文主体内容。
 
+```bash
 # 使用：arXiv URL → 干净 Markdown
-./arxiv2md https://arxiv.org/abs/2503.12345 > paper.md
+arxiv2md https://arxiv.org/abs/2503.12345 > paper.md
 ```
 
 ## 配置
