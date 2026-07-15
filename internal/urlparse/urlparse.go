@@ -110,9 +110,8 @@ func FetchURL(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("not a valid arXiv URL: %s", url)
 	}
 
-	// Priority 1: Try HTML version
-	htmlURL := fmt.Sprintf("https://arxiv.org/html/%s/", id)
-	htmlContent, htmlErr := fetchArxivHTML(ctx, htmlURL)
+	// Priority 1: Try HTML version → Markdown (with tables, math)
+	htmlContent, htmlErr := FetchArxivAsMarkdown(ctx, id)
 	if htmlErr == nil && htmlContent != "" {
 		return htmlContent, nil
 	}
@@ -180,16 +179,6 @@ func FetchArxivAsMarkdown(ctx context.Context, arxivID string) (string, error) {
 	return HTMLToMarkdown(html), nil
 }
 
-// fetchArxivHTML fetches the HTML version of an arXiv paper, converting to
-// plain text for LLM consumption.
-func fetchArxivHTML(ctx context.Context, url string) (string, error) {
-	html, err := fetchArxivHTMLRaw(ctx, url)
-	if err != nil {
-		return "", err
-	}
-	return stripHTML(html), nil
-}
-
 // fetchArxivHTMLRaw fetches the raw HTML from an arXiv HTML URL.
 func fetchArxivHTMLRaw(ctx context.Context, url string) (string, error) {
 	client := &http.Client{
@@ -228,40 +217,6 @@ func fetchArxivHTMLRaw(ctx context.Context, url string) (string, error) {
 	}
 
 	return string(body), nil
-}
-
-// stripHTML removes HTML tags from the input, returning plain text with
-// whitespace normalized.
-func stripHTML(html string) string {
-	// Remove scripts and styles first
-	reScript := regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	html = reScript.ReplaceAllString(html, "")
-	reStyle := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	html = reStyle.ReplaceAllString(html, "")
-
-	// Replace <br> and block-level tags with newlines
-	reBr := regexp.MustCompile(`(?is)<br\s*/?>`)
-	html = reBr.ReplaceAllString(html, "\n")
-	reBlock := regexp.MustCompile(`(?is)</?(p|div|h[1-6]|li|tr|blockquote|section|pre|article)[^>]*>`)
-	html = reBlock.ReplaceAllString(html, "\n")
-
-	// Remove remaining tags
-	reTag := regexp.MustCompile(`<[^>]*>`)
-	html = reTag.ReplaceAllString(html, "")
-
-	// Decode common HTML entities
-	html = strings.ReplaceAll(html, "&amp;", "&")
-	html = strings.ReplaceAll(html, "&lt;", "<")
-	html = strings.ReplaceAll(html, "&gt;", ">")
-	html = strings.ReplaceAll(html, "&quot;", "\"")
-	html = strings.ReplaceAll(html, "&#39;", "'")
-	html = strings.ReplaceAll(html, "&nbsp;", " ")
-
-	// Normalize whitespace: collapse multiple newlines, trim
-	reBlankLines := regexp.MustCompile(`\n{3,}`)
-	html = reBlankLines.ReplaceAllString(html, "\n\n")
-
-	return strings.TrimSpace(html)
 }
 
 var arxivTitleRe = regexp.MustCompile(`<title>\[([^\]]+)\]\s+(.*?)</title>`)
