@@ -153,6 +153,10 @@ jobs:
           path: dist/
           merge-multiple: true
 
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum paperagent_* arxiv2md_* > checksums.txt
+
       - name: Create tag
         run: |
           git tag "${{ needs.prepare.outputs.version }}"
@@ -172,13 +176,13 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           name: ${{ needs.prepare.outputs.version }}
           body_path: /tmp/release_body.md
-          # Pin to the two binary artifact names so frontend-dist
-          # (index.html / favicon.svg / assets/) never leaks into the release.
-          # softprops/action-gh-release@v2 splits multi-line files into
-          # one glob per line.
+          # Pin to the binary artifacts so frontend-dist (index.html / favicon.svg
+          # /assets/) never leaks into the release.  softprops/action-gh-release@v2
+          # splits multi-line files into one glob per line.
           files: |
             dist/paperagent_*
             dist/arxiv2md_*
+            dist/checksums.txt
 
       - name: Create release (auto-generated notes)
         if: ${{ inputs.release_notes == '' }}
@@ -190,3 +194,4 @@ jobs:
           files: |
             dist/paperagent_*
             dist/arxiv2md_*
+            dist/checksums.txt

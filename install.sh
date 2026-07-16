@@ -16,8 +16,11 @@ case "$OS" in
   linux)   GOOS="linux"   ;;
   mingw*|msys*|cygwin*)
     echo "Detected Windows-like shell environment ($OS)." >&2
-    echo "This script is intended for macOS/Linux. On Windows please" >&2
-    echo "download the binary manually from:" >&2
+    echo "On Windows, please run the PowerShell script instead:" >&2
+    echo "" >&2
+    echo "  powershell -c \"irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex\"" >&2
+    echo "" >&2
+    echo "Or download the binary manually from:" >&2
     echo "  https://github.com/$REPO/releases/latest" >&2
     exit 1
     ;;
@@ -73,32 +76,60 @@ else
   fi
 fi
 
-# Windows ships a .exe suffix; macOS/Linux don't. Only darwin/linux are
-# supported by this script (Windows users go to the Releases page).
-# ── Download paperagent ─────────────────────────────────────────
+# ── Download with atomic replace ──────────────────────────────
+# Download to temp files first (same filesystem as the target so mv
+# is atomic), then rename into place.  This avoids leaving a truncated
+# binary if the download is interrupted.
+mkdir -p "$INSTALL_DIR"
+
+PAPERAGENT_TMP=$(mktemp "$INSTALL_DIR/.paperagent.XXXXXXXX")
+ARXIV2MD_TMP=$(mktemp "$INSTALL_DIR/.arxiv2md.XXXXXXXX")
+
+cleanup() {
+  rm -f "$PAPERAGENT_TMP" "$ARXIV2MD_TMP"
+}
+trap cleanup EXIT INT TERM
+
 BINARY="paperagent_${GOOS}_${GOARCH}"
 URL="https://github.com/$REPO/releases/download/$TAG/$BINARY"
 echo "Downloading $BINARY ($TAG)..." >&2
-mkdir -p "$INSTALL_DIR"
-if ! curl -sSfL "$URL" -o "$INSTALL_DIR/paperagent"; then
+if ! curl -sSfL "$URL" -o "$PAPERAGENT_TMP"; then
   echo "" >&2
   echo "Download failed. Please check the actual asset name at:" >&2
   echo "  https://github.com/$REPO/releases/tag/$TAG" >&2
   exit 1
 fi
-chmod +x "$INSTALL_DIR/paperagent"
+chmod +x "$PAPERAGENT_TMP"
 
-# ── Download arxiv2md ────────────────────────────────────────────
 BINARY="arxiv2md_${GOOS}_${GOARCH}"
 URL="https://github.com/$REPO/releases/download/$TAG/$BINARY"
 echo "Downloading $BINARY ($TAG)..." >&2
-if ! curl -sSfL "$URL" -o "$INSTALL_DIR/arxiv2md"; then
+if ! curl -sSfL "$URL" -o "$ARXIV2MD_TMP"; then
   echo "" >&2
   echo "Download failed. Please check the actual asset name at:" >&2
   echo "  https://github.com/$REPO/releases/tag/$TAG" >&2
   exit 1
 fi
-chmod +x "$INSTALL_DIR/arxiv2md"
+chmod +x "$ARXIV2MD_TMP"
+
+# ── Verify temporary binaries before replacing ──────────────
+echo "Verifying paperagent..." >&2
+if ! "$PAPERAGENT_TMP" -version >/dev/null 2>&1; then
+  echo "paperagent verification failed (downloaded binary may be corrupted)" >&2
+  exit 1
+fi
+
+echo "Verifying arxiv2md..." >&2
+arxiv2md_status=0
+"$ARXIV2MD_TMP" >/dev/null 2>&1 || arxiv2md_status=$?
+if [ "$arxiv2md_status" -ne 0 ] && [ "$arxiv2md_status" -ne 1 ]; then
+  echo "arxiv2md verification failed (downloaded binary may be corrupted)" >&2
+  exit 1
+fi
+
+mv -f "$PAPERAGENT_TMP" "$INSTALL_DIR/paperagent"
+mv -f "$ARXIV2MD_TMP" "$INSTALL_DIR/arxiv2md"
+trap - EXIT INT TERM
 
 # ── Platform-specific post-install ───────────────────────────────
 # macOS: clear Gatekeeper quarantine so the binary can run without
@@ -140,5 +171,5 @@ fi
 echo "" >&2
 "$INSTALL_DIR/paperagent" -version
 echo "" >&2
-"$INSTALL_DIR/arxiv2md" 2>&1 | head -3
+"$INSTALL_DIR/arxiv2md" 2>&1 | head -3 || true
 echo "Installed arxiv2md to $INSTALL_DIR/arxiv2md" >&2
