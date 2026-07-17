@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -12,36 +11,41 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/pflag"
+
 	"github.com/happyTonakai/paperagent/internal/config"
 	"github.com/happyTonakai/paperagent/internal/feishu"
 	"github.com/happyTonakai/paperagent/internal/server"
 	"github.com/happyTonakai/paperagent/internal/systray"
+	"github.com/happyTonakai/paperagent/internal/update"
 )
 
 // version is set via ldflags at build time: -ldflags "-X main.version=v1.2.3"
 var version = "dev"
 
-var versionFlag = flag.Bool("version", false, "Print version and exit")
-var daemonFlag = flag.Bool("daemon", false, "internal: already running as background daemon")
-
 func main() {
-	flag.Parse()
+	// Handle subcommands before flag parsing.
+	if len(os.Args) > 1 && os.Args[1] == "update" {
+		update.Run(version)
+		return
+	}
 
-	if *versionFlag {
+	var showVersion bool
+	pflag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	pflag.Parse()
+
+	if showVersion {
 		fmt.Printf("paperagent %s\n", version)
-		os.Exit(0)
+		return
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		// Config parse errors are fatal
 		if !strings.Contains(err.Error(), "env var not set") &&
 			!strings.Contains(err.Error(), "unresolved env vars") {
 			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 			os.Exit(1)
 		}
-		// Unresolved env var references are warnings, not fatal.
-		// The user can fix them via the Web UI settings page.
 		fmt.Fprintf(os.Stderr, "⚠️  Config warning: %v\n", err)
 		fmt.Fprintln(os.Stderr, "   API calls will fail until the keys are configured.")
 		fmt.Fprintln(os.Stderr, "   Open the Web UI settings page, or set the environment variables.")
@@ -56,7 +60,9 @@ func main() {
 	os.MkdirAll(config.PapersDir(), 0755)
 	os.MkdirAll(config.PromptsDir(), 0755)
 
-	if !*daemonFlag {
+	// daemonize() is a no-op on Windows (process lifecycle managed by systray).
+	// It is also skipped when PAPER_DAEMONIZED=1 (child process already forked).
+	if os.Getenv("PAPER_DAEMONIZED") == "" {
 		daemonize()
 	}
 
@@ -83,10 +89,19 @@ func runSystray(cfg *config.Config) {
 		Handler: s.Handler(),
 	}
 
+	// Wire up the /api/shutdown endpoint so an update process can request
+	// a graceful shutdown of the running daemon.
+	// We only call systray.Quit here — the actual httpServer.Shutdown is
+	// handled by systray's onExit callback, which runs when the fyne event
+	// loop returns.  Having both paths call Shutdown would be harmless but
+	// redundant: the second call would return http.ErrServerClosed silently.
+	s.ShutdownFunc = func() {
+		systray.Quit()
+	}
+
 	url := fmt.Sprintf("http://localhost:%d", actualPort)
 	log.Printf("PaperAgent server starting on %s", url)
 
-	// Start HTTP server in background goroutine
 	httpErrCh := make(chan error, 1)
 	go func() {
 		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -94,7 +109,6 @@ func runSystray(cfg *config.Config) {
 		}
 	}()
 
-	// Monitor HTTP server error and shut down gracefully
 	go func() {
 		if err := <-httpErrCh; err != nil {
 			fmt.Fprintf(os.Stderr, "\nServer error: %v\n", err)
@@ -102,12 +116,10 @@ func runSystray(cfg *config.Config) {
 		}
 	}()
 
-	// Auto-open browser (skip when PAPER_NO_BROWSER is set, e.g. in dev mode)
 	if os.Getenv("PAPER_NO_BROWSER") == "" {
 		go openBrowser(url)
 	}
 
-	// Start Feishu bot if enabled
 	feishuBot := feishu.New(cfg)
 	s.SetFeishuBot(feishuBot)
 	if err := feishuBot.Start(); err != nil {
@@ -116,11 +128,8 @@ func runSystray(cfg *config.Config) {
 		defer feishuBot.Stop()
 	}
 
-	// Run systray (blocks until user quits)
 	systray.Run(systray.Options{Port: actualPort, Version: version}, httpServer)
 
-	// After systray returns (either from Quit menu or signal), do final cleanup.
-	// If we exited due to an HTTP error, propagate it.
 	select {
 	case err := <-httpErrCh:
 		if err != nil {
@@ -131,8 +140,6 @@ func runSystray(cfg *config.Config) {
 	}
 }
 
-// parsePortFromAddr extracts the port number from an address string like ":8686" or "localhost:8686".
-// Returns 0 if parsing fails.
 func parsePortFromAddr(addr string) int {
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -145,8 +152,6 @@ func parsePortFromAddr(addr string) int {
 	return port
 }
 
-// findAvailablePort tries to listen on baseAddr. If the port is occupied,
-// it increments the port number up to 100 times until it finds an open one.
 func findAvailablePort(baseAddr string) (net.Listener, int, error) {
 	host, portStr, err := net.SplitHostPort(baseAddr)
 	if err != nil {
@@ -169,7 +174,6 @@ func findAvailablePort(baseAddr string) (net.Listener, int, error) {
 	return nil, 0, fmt.Errorf("no available port found starting from %d", startPort)
 }
 
-// openBrowser opens the given URL in the default browser.
 func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

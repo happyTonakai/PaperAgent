@@ -9,16 +9,21 @@ import (
 	"syscall"
 )
 
+// daemonize forks a background child process via os/exec and exits the parent.
+// The child inherits stdout/stderr (both nil → detached from terminal) and
+// runs in a new session (Setsid) so it survives the parent's death.
+//
+// It is a no-op when PAPER_FOREGROUND=1 (development mode) or when the
+// process is already the daemonized child (PAPER_DAEMONIZED=1, set by the
+// parent before exec).
+//
+// On Windows this function is replaced by a no-op (main_windows.go) because
+// the systray icon manages the process lifecycle directly and Windows has no
+// fork/setsid mechanism.
 func daemonize() {
-	// When PAPER_FOREGROUND is set (e.g. in dev mode), skip daemonization
-	// so the process stays attached to the terminal and receives Ctrl+C.
 	if os.Getenv("PAPER_FOREGROUND") != "" {
 		return
 	}
-
-	args := make([]string, 0, len(os.Args)+1)
-	args = append(args, os.Args...)
-	args = append(args, "--daemon")
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -26,8 +31,11 @@ func daemonize() {
 		os.Exit(1)
 	}
 
-	cmd := exec.Command(exe, args[1:]...)
-	cmd.Env = os.Environ()
+	cmd := exec.Command(exe, os.Args[1:]...)
+	// Use an env var instead of a --daemon flag. This keeps the public CLI
+	// clean (no hidden flags shown in --help) and avoids the need to register
+	// daemon with the flag parser.
+	cmd.Env = append(os.Environ(), "PAPER_DAEMONIZED=1")
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil

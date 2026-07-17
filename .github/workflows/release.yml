@@ -120,10 +120,13 @@ jobs:
 
       - name: Build arxiv2md
         shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          LDFLAGS="-s -w -X main.version=${VERSION}"
           SUFFIX=""
           if [ "${{ matrix.goos }}" = "windows" ]; then SUFFIX=".exe"; fi
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o "dist/arxiv2md_${{ matrix.goos }}_${{ matrix.goarch }}${SUFFIX}" ./cmd/arxiv2md/
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="$LDFLAGS" -o "dist/arxiv2md_${{ matrix.goos }}_${{ matrix.goarch }}${SUFFIX}" ./cmd/arxiv2md/
 
       - name: Codesign (macOS)
         if: matrix.goos == 'darwin'

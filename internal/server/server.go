@@ -80,6 +80,11 @@ type Server struct {
 	// Feishu bot. It is constructed once at boot so its internal state
 	// (cfg, llm client) is shared across all requests.
 	chatEngine *chat.Engine
+
+	// ShutdownFunc is set by main.go to trigger a graceful shutdown of the
+	// HTTP server. Called by handleShutdown when an update process sends a
+	// POST /api/shutdown request.
+	ShutdownFunc func()
 }
 
 // SetFeishuBot sets the feishu bot reference for hot-reload support.
@@ -150,6 +155,7 @@ func (s *Server) registerRoutes() {
 	mux.HandleFunc("POST /api/prompts", s.handleSavePrompts)
 	mux.HandleFunc("GET /api/logs", s.handleGetLogs)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("POST /api/shutdown", s.handleShutdown)
 	mux.HandleFunc("GET /api/feishu/status", s.handleFeishuStatus)
 	mux.HandleFunc("GET /api/active-paper", s.handleGetActivePaper)
 	mux.HandleFunc("PUT /api/active-paper", s.handleSetActivePaper)

@@ -171,5 +171,5 @@ fi
 echo "" >&2
 "$INSTALL_DIR/paperagent" -version
 echo "" >&2
-"$INSTALL_DIR/arxiv2md" 2>&1 | head -3 || true
+"$INSTALL_DIR/arxiv2md" --version
 echo "Installed arxiv2md to $INSTALL_DIR/arxiv2md" >&2

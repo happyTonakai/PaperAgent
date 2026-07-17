@@ -132,8 +132,8 @@ function Install-PaperAgent {
         $VersionOutput | ForEach-Object { Write-Host $_ }
 
         Write-Host "Verifying $BinaryName2..." -ForegroundColor Cyan
-        & $TempFile2 --help 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
+        & $TempFile2 --version 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
             throw "arxiv2md verification failed (exit code $LASTEXITCODE)"
         }
 

@@ -22,17 +22,23 @@ import (
 	"github.com/happyTonakai/paperagent/internal/urlparse"
 )
 
+// version is set via ldflags at build time: -ldflags "-X main.version=v1.2.3"
+var version = "dev"
+
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "--version":
+			fmt.Printf("arxiv2md %s\n", version)
+			return
+		case "--help", "-h":
+			printUsage()
+			return
+		}
+	}
+
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: arxiv2md <arxiv-id-or-url>\n")
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Fprintf(os.Stderr, "Accepts arXiv ID, abs/PDF/HTML URL, or arxiv: prefix.\n")
-		fmt.Fprintf(os.Stderr, "\n")
-		fmt.Fprintf(os.Stderr, "Examples:\n")
-		fmt.Fprintf(os.Stderr, "  arxiv2md 2509.06926\n")
-		fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/abs/2509.06926\n")
-		fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/pdf/2509.06926\n")
-		fmt.Fprintf(os.Stderr, "  arxiv2md arxiv:2509.06926\n")
+		printUsage()
 		os.Exit(1)
 	}
 
@@ -68,4 +74,16 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "Error: both HTML and TeX source unavailable for %s\n", id)
 	os.Exit(1)
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "Usage: arxiv2md [--version] [--help] <arxiv-id-or-url>\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Accepts arXiv ID, abs/PDF/HTML URL, or arxiv: prefix.\n")
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Examples:\n")
+	fmt.Fprintf(os.Stderr, "  arxiv2md 2509.06926\n")
+	fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/abs/2509.06926\n")
+	fmt.Fprintf(os.Stderr, "  arxiv2md https://arxiv.org/pdf/2509.06926\n")
+	fmt.Fprintf(os.Stderr, "  arxiv2md arxiv:2509.06926\n")
 }
