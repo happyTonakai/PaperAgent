@@ -127,7 +127,10 @@ func Run(currentVersion string) {
 // tryDetectRunningDaemon attempts to find a running PaperAgent instance by
 // trying the configured or default ports. Returns 0 if none found.
 func tryDetectRunningDaemon() int {
-	type target struct{ host string; port int }
+	type target struct {
+		host string
+		port int
+	}
 	targets := []target{{"localhost", 8686}}
 	if v := os.Getenv("PAPER_ADDR"); v != "" {
 		if h, pStr, err := net.SplitHostPort(v); err == nil && pStr != "" {
