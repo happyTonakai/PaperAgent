@@ -275,6 +275,11 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 	configDir := filepath.Join(tmpDir, ".config", "paperagent")
 	os.MkdirAll(configDir, 0755)
 
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	defer os.Setenv("HOME", origHome)
+
 	// Encrypt a key manually, write that, then load — disk form must not change.
 	cfg := &Config{
 		API:             APIConfig{BaseURL: "https://test.com/v1", APIKey: "preserved-plaintext", DefaultModel: "test-model"},
@@ -286,11 +291,6 @@ func TestLoadPreservesAlreadyEncrypted(t *testing.T) {
 		t.Fatalf("initial save: %v", err)
 	}
 	beforeDisk, _ := os.ReadFile(filepath.Join(configDir, "config.yaml"))
-
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", "")
-	defer os.Setenv("HOME", origHome)
 
 	_, err := Load()
 	if err != nil {
