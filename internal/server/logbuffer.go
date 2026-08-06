@@ -233,10 +233,19 @@ func (w *dailyRotateWriter) rotateIfNeeded() error {
 // on stderr but never fatal: a partial cleanup is still better than
 // refusing to start.
 func pruneOldLogs(dir string, keepDays int) {
+	pruneOldLogsAt(dir, keepDays, time.Now())
+}
+
+// pruneOldLogsAt is the testable core of pruneOldLogs with an explicit
+// "now" anchor. The cutoff is computed from `now` instead of the wall
+// clock so tests can pin the date and don't go stale as the calendar
+// moves on (the old test hard-coded 2026-06-25 expectations and broke
+// outside that narrow window).
+func pruneOldLogsAt(dir string, keepDays int, now time.Time) {
 	if keepDays <= 0 {
 		return
 	}
-	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
+	cutoff := now.AddDate(0, 0, -keepDays).Format("2006-01-02")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		// Most common reason: dir doesn't exist yet (first run). Silent.

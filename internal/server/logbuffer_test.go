@@ -52,11 +52,12 @@ func TestPruneOldLogs(t *testing.T) {
 		}
 	}
 
-	// Run the function under test, but redirect the time anchor. The
-	// implementation uses time.Now() directly, so we just run with the
-	// system clock — the relative deltas above are large enough that
-	// running on any day in mid-2026 gives the same result.
-	pruneOldLogs(dir, 7)
+	// Run the function under test with the pinned anchor. The old version
+	// used time.Now() internally while the expectations above were derived
+	// from the hard-coded 2026-06-25 anchor, so the test only passed when
+	// the wall clock happened to land within a few days of that date. The
+	// injectable variant keeps both sides on the same clock.
+	pruneOldLogsAt(dir, 7, now)
 
 	got := remaining(t, dir)
 	want := []string{
