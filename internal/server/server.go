@@ -76,6 +76,11 @@ type Server struct {
 	logBuf     *logBuffer
 	feishuBot  *feishu.Bot
 	sched      *scheduler.Scheduler
+	// schedMu guards s.sched: the pointer is assigned at boot AND when
+	// the user re-enables the pipeline at runtime, and it is read by
+	// several handlers. A dedicated mutex keeps those assignments and
+	// reads race-free.
+	schedMu sync.Mutex
 	// chatEngine runs the shared Q&A pipeline used by handleChat and the
 	// Feishu bot. It is constructed once at boot so its internal state
 	// (cfg, llm client) is shared across all requests.
@@ -185,12 +190,42 @@ func (s *Server) registerRoutes() {
 
 func (s *Server) startScheduler() {
 	s.cfg.RLock()
+	enabled := s.cfg.Recommend.Enabled
+	s.cfg.RUnlock()
+
+	if !enabled {
+		log.Println("[server] recommend pipeline disabled in config, scheduler not started")
+		return
+	}
+
+	s.schedMu.Lock()
+	defer s.schedMu.Unlock()
+	s.buildScheduler()
+}
+
+// buildScheduler constructs and starts the recommendation scheduler from
+// the current config, wiring the onComplete callback that translates and
+// pushes to Feishu. Caller must hold schedMu. Safe to call at boot and
+// again at runtime when the user re-enables the pipeline: it re-reads
+// the config and no-ops (with a log) when the pipeline is still off or
+// no arXiv categories are configured.
+func (s *Server) buildScheduler() {
+	// Defensive: never replace a live scheduler. Both call sites guarantee
+	// s.sched == nil today, but a future caller reusing this method would
+	// otherwise leak the old ticker goroutine and double the pipeline
+	// (two schedulers both firing onComplete → RunPush).
+	if s.sched != nil {
+		return
+	}
+
+	s.cfg.RLock()
+	enabled := s.cfg.Recommend.Enabled
 	categories := s.cfg.ArxivCategories
 	dailyPapers := s.cfg.Recommend.DailyPapers
 	batchSize := s.cfg.Recommend.ScoringBatchSize
 	scheduledTime := s.cfg.Recommend.ScheduledTime
+	diversityRatio := s.cfg.Recommend.DiversityRatio
 	excludedKeywords := s.cfg.Recommend.ExcludedKeywords
-	enabled := s.cfg.Recommend.Enabled
 	s.cfg.RUnlock()
 
 	if !enabled {
@@ -207,12 +242,14 @@ func (s *Server) startScheduler() {
 		scheduledTime = "08:00"
 	}
 
-	// One-time migration: import existing JSON papers to chat_papers
+	// One-time migration: import existing JSON papers to chat_papers.
+	// Runs here (not just at boot) so a user who enables the pipeline at
+	// runtime gets the same backfill; idempotent via ChatPaperCount.
 	if err := s.migrateChatPapers(); err != nil {
 		log.Printf("[server] chat_papers migration: %v", err)
 	}
 
-	s.sched = scheduler.New(enabled, categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, s.cfg.Recommend.DiversityRatio, scheduledTime, excludedKeywords)
+	s.sched = scheduler.New(enabled, categories, s.scoringClient(), s.scoringModel(), dailyPapers, batchSize, diversityRatio, scheduledTime, excludedKeywords)
 
 	// Connect scheduler completion to Feishu daily recommendation push.
 	// The push logic itself lives in RunPush so the Feishu bot's /push
@@ -230,6 +267,41 @@ func (s *Server) startScheduler() {
 	})
 
 	s.sched.Start()
+}
+
+// syncSchedulerRuntime propagates the current recommend config to the
+// live scheduler after a config save. This is what makes the WebUI
+// "启用每日推荐管线" toggle take effect immediately instead of only after
+// a restart: previously the running scheduler kept the enabled state it
+// captured at boot, so unchecking the box still produced daily pushes.
+//
+// Two directions are handled:
+//   - scheduler running: push enabled + params via SetEnabled/UpdateConfig;
+//   - scheduler never started (pipeline was off at boot) and the user just
+//     flipped the master switch on: boot it now via buildScheduler.
+func (s *Server) syncSchedulerRuntime() {
+	s.schedMu.Lock()
+	defer s.schedMu.Unlock()
+
+	if s.sched == nil {
+		// buildScheduler re-checks enabled + categories itself, so it is
+		// a safe no-op when the pipeline is still off.
+		s.buildScheduler()
+		return
+	}
+
+	s.cfg.RLock()
+	enabled := s.cfg.Recommend.Enabled
+	scheduledTime := s.cfg.Recommend.ScheduledTime
+	dailyPapers := s.cfg.Recommend.DailyPapers
+	batchSize := s.cfg.Recommend.ScoringBatchSize
+	diversityRatio := s.cfg.Recommend.DiversityRatio
+	excludedKeywords := s.cfg.Recommend.ExcludedKeywords
+	s.cfg.RUnlock()
+
+	s.sched.SetEnabled(enabled)
+	s.sched.UpdateConfig(scheduledTime, dailyPapers, batchSize, diversityRatio)
+	s.sched.SetExcludedKeywords(excludedKeywords)
 }
 
 // RunPush is the single entry point for pushing recommended articles to

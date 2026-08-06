@@ -153,13 +153,13 @@ func (s *Server) handleRecommendUpdateConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Update scheduler config at runtime
-	if s.sched != nil {
-		s.cfg.RLock()
-		s.sched.UpdateConfig(s.cfg.Recommend.ScheduledTime, s.cfg.Recommend.DailyPapers, s.cfg.Recommend.ScoringBatchSize, s.cfg.Recommend.DiversityRatio)
-		s.sched.SetExcludedKeywords(s.cfg.Recommend.ExcludedKeywords)
-		s.cfg.RUnlock()
-	}
+	// Propagate the master switch + params to the live scheduler so the
+	// WebUI "启用每日推荐管线" toggle takes effect immediately. Previously
+	// only the config file/in-memory config were updated here and the
+	// running scheduler kept its boot-time enabled state — unchecking the
+	// box still produced daily RSS fetch + recommendation + Feishu push
+	// until the process was restarted.
+	s.syncSchedulerRuntime()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
@@ -445,12 +445,30 @@ func (s *Server) handleRecommendFetchVotes(w http.ResponseWriter, r *http.Reques
 // recommendations → translate → push to Feishu (if configured and enabled).
 // This is the manual trigger endpoint.
 func (s *Server) handleRecommendTrigger(w http.ResponseWriter, r *http.Request) {
-	if s.sched == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scheduler not initialized (no categories configured)"})
+	s.schedMu.Lock()
+	sched := s.sched
+	s.schedMu.Unlock()
+	if sched == nil {
+		// A nil scheduler has two distinct causes; report the actionable
+		// one instead of the old blanket "no categories" message.
+		s.cfg.RLock()
+		enabled := s.cfg.Recommend.Enabled
+		hasCats := len(s.cfg.ArxivCategories) > 0
+		s.cfg.RUnlock()
+		var msg string
+		switch {
+		case !enabled:
+			msg = "recommend pipeline is disabled (enable '启用每日推荐管线' in settings first)"
+		case !hasCats:
+			msg = "scheduler not initialized (no arXiv categories configured)"
+		default:
+			msg = "scheduler not initialized"
+		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
 
-	s.sched.ManualTrigger()
+	sched.ManualTrigger()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "triggered"})
 }
@@ -500,14 +518,17 @@ func (s *Server) handleRecommendPushToFeishu(w http.ResponseWriter, r *http.Requ
 
 // handleRecommendSchedulerStatus returns the current scheduler state.
 func (s *Server) handleRecommendSchedulerStatus(w http.ResponseWriter, r *http.Request) {
-	if s.sched == nil {
+	s.schedMu.Lock()
+	sched := s.sched
+	s.schedMu.Unlock()
+	if sched == nil {
 		writeJSON(w, http.StatusOK, scheduler.SchedulerStatus{
 			Scheduled: "",
 		})
 		return
 	}
 
-	status := s.sched.Status()
+	status := sched.Status()
 	s.cfg.RLock()
 	status.PushToFeishu = s.cfg.Recommend.PushToFeishu
 	s.cfg.RUnlock()
