@@ -620,6 +620,10 @@ func FindPaperByArxivID(arxivID string) (*Paper, error) {
 // It handles both markdown-formatted ("## References") and TeX-formatted
 // ("\\begin{thebibliography}") reference sections.
 // Returns (body, references). If no reference section is found, returns (content, "").
+//
+// Content that follows the reference list is NOT discarded: arXiv papers commonly
+// place appendices after the bibliography, so anything past the end of the
+// reference section is re-attached to the body.
 func ExtractReferences(content string) (body, references string) {
 	if content == "" {
 		return "", ""
@@ -628,8 +632,8 @@ func ExtractReferences(content string) (body, references string) {
 	// Try TeX format first (before markdown heading check, since thebibliography
 	// is unambiguous even in markdown-converted output).
 	if loc := texRefRe.FindStringIndex(content); loc != nil {
-		body = strings.TrimSpace(content[:loc[0]])
-		references = strings.TrimSpace(content[loc[0]:])
+		body = strings.TrimSpace(content[:loc[0]] + "\n\n" + content[loc[1]:])
+		references = strings.TrimSpace(content[loc[0]:loc[1]])
 		return
 	}
 
@@ -645,15 +649,63 @@ func ExtractReferences(content string) (body, references string) {
 	}
 
 	if refStart >= 0 {
-		bodyLines := lines[:refStart]
-		refLines := lines[refStart:]
-		body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
-		references = strings.TrimSpace(strings.Join(refLines, "\n"))
+		// The reference section ends at the next heading of the same or a higher
+		// level, not at end-of-document. Anything after that heading (typically
+		// appendices) belongs to the body.
+		refEnd := len(lines)
+		refLevel := leadingHeadingLevel(lines[refStart])
+		for i := refStart + 1; i < len(lines); i++ {
+			if lv, ok := sectionHeadingLevel(lines[i]); ok && lv <= refLevel {
+				refEnd = i
+				break
+			}
+		}
+
+		bodyParts := []string{strings.Join(lines[:refStart], "\n")}
+		if refEnd < len(lines) {
+			bodyParts = append(bodyParts, strings.Join(lines[refEnd:], "\n"))
+		}
+		body = strings.TrimSpace(strings.Join(bodyParts, "\n\n"))
+		references = strings.TrimSpace(strings.Join(lines[refStart:refEnd], "\n"))
 		return
 	}
 
 	// No recognizable reference section found.
 	return content, ""
+}
+
+// leadingHeadingLevel returns the length of the leading '#' run on a line that
+// has already been validated as the reference heading by mdRefRe (which
+// guarantees 1-4 hashes).
+func leadingHeadingLevel(line string) int {
+	t := strings.TrimSpace(line)
+	n := 0
+	for n < len(t) && t[n] == '#' {
+		n++
+	}
+	if n == 0 {
+		return 2
+	}
+	return n
+}
+
+// sectionHeadingLevel reports whether a line is an ATX heading and returns its
+// level. Used to find where the reference section ends.
+func sectionHeadingLevel(line string) (int, bool) {
+	t := strings.TrimSpace(line)
+	n := 0
+	for n < len(t) && t[n] == '#' {
+		n++
+	}
+	if n == 0 || n > 6 {
+		return 0, false
+	}
+	// Require a space after the hashes (or a bare "#") per CommonMark, so that
+	// code-ish lines sprinkled through the text do not close the section.
+	if n < len(t) && t[n] != ' ' && t[n] != '\t' {
+		return 0, false
+	}
+	return n, true
 }
 
 // StripReferences returns the paper content with the reference section removed.

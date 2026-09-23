@@ -742,6 +742,62 @@ func TestExtractReferences_ReferencesHeadingNotAtStart(t *testing.T) {
 	}
 }
 
+func TestExtractReferences_AppendixAfterReferences(t *testing.T) {
+	// arXiv papers commonly place appendices after the bibliography. The old
+	// implementation cut from the "## References" heading to end-of-document and
+	// discarded every appendix as if it were part of the reference list.
+	content := "正文内容。\n\n## References\n[1] A. Smith, \"Title\", 2023.\n\n" +
+		"## Appendix A: Data Synthesis Pipeline\nWe build the pipeline in three stages.\n\n" +
+		"## Appendix B: Hyperparameters\nLearning rate is 1e-5."
+	body, refs := ExtractReferences(content)
+
+	if !strings.Contains(body, "正文内容") {
+		t.Errorf("body should contain main text, got: %q", body)
+	}
+	if !strings.Contains(body, "Data Synthesis Pipeline") || !strings.Contains(body, "Hyperparameters") {
+		t.Errorf("body should contain appendices, got: %q", body)
+	}
+	if strings.Contains(body, "[1] A. Smith") {
+		t.Errorf("body should NOT contain reference entries, got: %q", body)
+	}
+	if !strings.Contains(refs, "[1] A. Smith") {
+		t.Errorf("refs should contain reference entries, got: %q", refs)
+	}
+	if strings.Contains(refs, "Data Synthesis Pipeline") {
+		t.Errorf("refs should NOT contain appendix content, got: %q", refs)
+	}
+}
+
+func TestExtractReferences_TeXAppendixAfterBibliography(t *testing.T) {
+	content := "正文。\n\n\\begin{thebibliography}{9}\n\\bibitem{a} A.\n\\end{thebibliography}\n\n" +
+		"\\section{Appendix}\nExtra material."
+	body, refs := ExtractReferences(content)
+
+	if !strings.Contains(body, "Extra material") {
+		t.Errorf("content after thebibliography should stay in body, got: %q", body)
+	}
+	if strings.Contains(refs, "Extra material") {
+		t.Errorf("refs should not contain trailing content, got: %q", refs)
+	}
+	if strings.Contains(body, "thebibliography") {
+		t.Errorf("body should not contain the bibliography, got: %q", body)
+	}
+}
+
+func TestExtractReferences_SubsectionsInsideReferencesStay(t *testing.T) {
+	// A deeper heading inside the reference section (e.g. grouped entries) must
+	// not be mistaken for the end of the reference section.
+	content := "正文。\n\n## References\n\n### Conference Papers\n[1] X.\n\n### Journal Papers\n[2] Y."
+	body, refs := ExtractReferences(content)
+
+	if body != "正文。" {
+		t.Errorf("body should only hold the main text, got: %q", body)
+	}
+	if !strings.Contains(refs, "### Conference Papers") || !strings.Contains(refs, "### Journal Papers") {
+		t.Errorf("grouped reference subsections should stay in refs, got: %q", refs)
+	}
+}
+
 func TestStripReferences_DelegatesToExtract(t *testing.T) {
 	content := "正文。\n\n## References\n[1] ..."
 	stripped := StripReferences(content)
