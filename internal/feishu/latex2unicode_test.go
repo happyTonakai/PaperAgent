@@ -407,3 +407,28 @@ func TestProcessMathSpans_DisplayAndInline(t *testing.T) {
 		t.Errorf("display+inline: got %q, want %q", got, want)
 	}
 }
+
+// urlparse escapes a table cell's pipes as \vert (inside a formula) and \|
+// (outside one), so that a set-cardinality bar cannot split the markdown row.
+// Both spellings have to survive the Unicode conversion.
+func TestLatexToUnicode_VertBars(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"vert in formula", `$\max(\vert{\mathcal{C}}\vert)$`, "max(∣{*C*}∣)"},
+		// \vert{} is how urlparse terminates the control word before a letter; the
+		// empty group must not leak into the card text.
+		{"vert with terminator group", `$|V|$ 准确率 $\vert{}V\vert$`, "|V| 准确率 ∣V∣"},
+		{"norm bar command", `$a \| b$`, "a ∥ b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := latexToUnicode(tt.in)
+			if got != tt.want {
+				t.Errorf("latexToUnicode(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -5,6 +5,12 @@ import (
 	"testing"
 )
 
+// convertFigureTable renders a <figure class="ltx_table"> (or a bare tabular)
+// the way the extraction pipeline does.
+func convertFigureTable(html string) string {
+	return convertTableSegment(tableSegment{html: html})
+}
+
 // LaTeXML puts the id attribute before class, which is what the old regexes
 // failed to match.
 const tableFigureClassNotFirst = `<figure id="S3.T1" class="ltx_table">
@@ -23,7 +29,7 @@ func TestConvertTableToMarkdown_ClassAttributeNotFirst(t *testing.T) {
 	// Regression: LaTeXML emits <table id="..." class="ltx_tabular ...">. The
 	// previous regexes required class to be the first attribute, so every table
 	// silently degraded to a caption-only placeholder ("&gt; Table N:").
-	md := convertTableToMarkdown(tableFigureClassNotFirst)
+	md := convertFigureTable(tableFigureClassNotFirst)
 	if !strings.Contains(md, "| Name | Hours |") {
 		t.Errorf("header row missing, got: %q", md)
 	}
@@ -42,7 +48,7 @@ func TestConvertTableToMarkdown_ClassAttributeFirst(t *testing.T) {
 	// The original (class-first) form must keep working.
 	figure := `<figure class="ltx_table"><figcaption>Table 2: X.</figcaption>
 <table class="ltx_tabular"><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table></figure>`
-	md := convertTableToMarkdown(figure)
+	md := convertFigureTable(figure)
 	if !strings.Contains(md, "| A | B |") || !strings.Contains(md, "| 1 | 2 |") {
 		t.Errorf("table not converted, got: %q", md)
 	}
@@ -52,7 +58,7 @@ func TestConvertTableToMarkdown_HeaderCellsWithTH(t *testing.T) {
 	figure := `<figure class="ltx_table"><figcaption>Table 3: Y.</figcaption>
 <table class="ltx_tabular"><thead><tr><th>Col</th><th>Val</th></tr></thead>
 <tbody><tr><td>a</td><td>1</td></tr></tbody></table></figure>`
-	md := convertTableToMarkdown(figure)
+	md := convertFigureTable(figure)
 	if !strings.Contains(md, "| Col | Val |") {
 		t.Errorf("<th> header cells not converted, got: %q", md)
 	}
@@ -61,7 +67,7 @@ func TestConvertTableToMarkdown_HeaderCellsWithTH(t *testing.T) {
 func TestConvertTableToMarkdown_HTMLIsEscapedInCells(t *testing.T) {
 	figure := `<figure class="ltx_table"><figcaption>Table 4: Z.</figcaption>
 <table class="ltx_tabular"><tr><td>a &lt; b &amp; c</td><td>&gt;= 3</td></tr></table></figure>`
-	md := convertTableToMarkdown(figure)
+	md := convertFigureTable(figure)
 	if !strings.Contains(md, "a < b & c") || !strings.Contains(md, ">= 3") {
 		t.Errorf("entities not decoded, got: %q", md)
 	}
@@ -87,7 +93,7 @@ const spanBasedTableFigure = `<figure id="A6.T10" class="ltx_table">
 </figure>`
 
 func TestConvertTableToMarkdown_SpanBasedTable(t *testing.T) {
-	md := convertTableToMarkdown(spanBasedTableFigure)
+	md := convertFigureTable(spanBasedTableFigure)
 	if !strings.Contains(md, "| System | Audio APR (%) |") {
 		t.Errorf("span-based header row missing, got: %q", md)
 	}
@@ -105,7 +111,7 @@ func TestConvertTableToMarkdown_VerbatimFigure(t *testing.T) {
 	figure := `<figure class="ltx_table"><figcaption>Table 21: Judge prompt.</figcaption>
 <pre class="ltx_verbatim">ROLE: {role_name}
 PERSONA: {persona}</pre></figure>`
-	md := convertTableToMarkdown(figure)
+	md := convertFigureTable(figure)
 	if !strings.Contains(md, "ROLE: {role_name}") || !strings.Contains(md, "PERSONA: {persona}") {
 		t.Errorf("verbatim content dropped, got: %q", md)
 	}
@@ -119,7 +125,7 @@ func TestConvertTableToMarkdown_PictureOnlyFigure(t *testing.T) {
 	// caption is the only sensible output.
 	figure := `<figure id="S5.T4" class="ltx_table"><figcaption>Table 4: Qualitative example.</figcaption>
 <span class="ltx_inline-block"><svg class="ltx_picture"><g><path d="M0 0"/></g></svg></span></figure>`
-	md := convertTableToMarkdown(figure)
+	md := convertFigureTable(figure)
 	if !strings.Contains(md, "Table 4:") {
 		t.Errorf("caption should be kept, got: %q", md)
 	}

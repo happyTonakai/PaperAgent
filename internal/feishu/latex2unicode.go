@@ -112,15 +112,23 @@ var unicodeMap = map[string]string{
 	"cong":           "≅",
 	"parallel":       "∥",
 	"mid":            "∣",
-	"triangle":       "△",
-	"triangleq":      "≜",
-	"ell":            "ℓ",
-	"aleph":          "ℵ",
-	"hbar":           "ℏ",
-	"imath":          "ı",
-	"jmath":          "ȷ",
-	"Re":             "ℜ",
-	"Im":             "ℑ",
+	// \vert and friends: markdown table cells escape a formula's plain bars this
+	// way (\| would mean the norm double bar in KaTeX).
+	"vert":      "∣",
+	"lvert":     "∣",
+	"rvert":     "∣",
+	"Vert":      "∥",
+	"lVert":     "∥",
+	"rVert":     "∥",
+	"triangle":  "△",
+	"triangleq": "≜",
+	"ell":       "ℓ",
+	"aleph":     "ℵ",
+	"hbar":      "ℏ",
+	"imath":     "ı",
+	"jmath":     "ȷ",
+	"Re":        "ℜ",
+	"Im":        "ℑ",
 
 	// function names (often in \text{} but sometimes bare)
 	"sin":    "sin",
@@ -514,6 +522,12 @@ func convertLatexTokens(s string) (string, bool) {
 				i++
 				continue
 			}
+			if strings.TrimSpace(inner) == "" {
+				// An empty group renders as nothing; it is also what urlparse emits to
+				// terminate a control word (\vert{}x), so keep it out of the text.
+				i = endPos
+				continue
+			}
 			conv, ok := convertLatexTokens(inner)
 			if !ok {
 				return "", false
@@ -545,6 +559,10 @@ func convertLatexTokens(s string) (string, bool) {
 						continue
 					case ' ':
 						result.WriteByte(' ') // escaped space
+						i++
+						continue
+					case '|':
+						result.WriteString("∥") // \| is the norm / divides bar
 						i++
 						continue
 					case '{':

@@ -1,7 +1,6 @@
 package urlparse
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 )
@@ -19,11 +18,10 @@ func HTMLToMarkdown(html string) string {
 	// 1. Extract document title
 	title := extractTitle(html)
 
-	// 2. Extract all tables and replace with placeholders
-	// First: figure-wrapped tables (<figure class="ltx_table">)
-	// Then: bare tables (<table class="ltx_tabular"> not inside a figure)
-	tables := extractAllTables(html)
-	html = replaceAllTablePlaceholders(html)
+	// 2. Extract every table (figure-wrapped or stand-alone tabular) and swap it
+	// for a placeholder, so stripping cannot mangle the cell structure.
+	segs, tables := extractTables(html)
+	html = insertTablePlaceholders(html, segs, tables)
 
 	// 3. Extract body content (inside ltx_page_content div, before </article>)
 	html = extractArticleBody(html)
@@ -43,7 +41,12 @@ func HTMLToMarkdown(html string) string {
 	// 7. Restore table markdown
 	html = restoreTables(html, tables)
 
-	// 8. Prepend title
+	// 8. A table dropped on purpose (a decorative tabular) leaves its blank
+	// lines behind, and restored blocks add their own. Fence-aware: restored
+	// prompt listings keep the empty lines inside them.
+	html = collapseBlankLines(html)
+
+	// 9. Prepend title
 	if title != "" {
 		html = "# " + title + "\n\n" + html
 	}
@@ -186,309 +189,6 @@ func extractArticleBody(html string) string {
 }
 
 // ---------------------------------------------------------------------------
-// Table extraction
-// ---------------------------------------------------------------------------
-
-var tableFigureRe = regexp.MustCompile(`(?is)<figure[^>]*class="[^"]*ltx_table[^"]*"[^>]*>(.*?)</figure>`)
-var tableCaptionRe = regexp.MustCompile(`(?is)<figcaption[^>]*>(.*?)</figcaption>`)
-
-// Some LaTeXML "tables" carry no table at all: a <figure class="ltx_table"> wrapping
-// a verbatim block, used for prompt templates and similar listings. Keep the text
-// instead of emitting a caption with no content.
-var verbatimBlockRe = regexp.MustCompile(`(?is)<pre[^>]*>(.*?)</pre>`)
-
-// LaTeXML sometimes emits a table built purely from <span> elements (no <table>
-// at all) when the table sits inside a flex panel: the ltx_tabular / ltx_tr /
-// ltx_td classes end up on spans. Those are real tables and are recovered below.
-// Span elements nest heavily, so the extent of each element is found by counting
-// span depth rather than by a non-greedy regex.
-var spanTabularRe = regexp.MustCompile(`(?is)<span[^>]*class="[^"]*ltx_tabular[^"]*"[^>]*>`)
-var spanTrRe = regexp.MustCompile(`(?is)<span[^>]*class="[^"]*ltx_tr[^"]*"[^>]*>`)
-var spanTdRe = regexp.MustCompile(`(?is)<span[^>]*class="[^"]*ltx_td[^"]*"[^>]*>`)
-var spanAnyRe = regexp.MustCompile(`(?is)<span\b[^>]*>|</span>`)
-
-// NOTE: the class attribute is matched with a leading `[^>]*\b`, not as the first
-// attribute. LaTeXML emits <table id="S3.T1.4" class="ltx_tabular ..."> so anchoring
-// on `<table\s+class=` never matched and every table silently degraded to a
-// caption-only placeholder.
-var tabularRe = regexp.MustCompile(`(?is)<table[^>]*\bclass="[^"]*ltx_tabular[^"]*"[^>]*>(.*?)</table>`)
-var bareTableRe = regexp.MustCompile(`(?is)<table[^>]*\bclass="[^"]*ltx_tabular[^"]*"[^>]*>.*?</table>`)
-var trRe = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
-var tdRe = regexp.MustCompile(`(?is)<t[dh][^>]*>(.*?)</t[dh]>`)
-var wsRe = regexp.MustCompile(`\s+`)
-
-type tableInfo struct {
-	placeholder string
-	markdown    string
-}
-
-func extractAllTables(html string) []tableInfo {
-	var tables []tableInfo
-
-	// Step 1: figure-wrapped tables (<figure class="ltx_table">)
-	figMatches := tableFigureRe.FindAllStringSubmatch(html, -1)
-	for _, m := range figMatches {
-		tableMD := convertTableToMarkdown(m[0])
-		tables = append(tables, tableInfo{
-			placeholder: fmt.Sprintf("__TABLE_PLACEHOLDER_%d__", len(tables)),
-			markdown:    tableMD,
-		})
-	}
-
-	// Step 2: bare tables (<table class="ltx_tabular"> not inside a <figure>)
-	// Remove figure-wrapped tables first to avoid double-counting
-	htmlStripped := tableFigureRe.ReplaceAllLiteralString(html, "")
-	bareMatches := bareTableRe.FindAllStringSubmatch(htmlStripped, -1)
-	for _, m := range bareMatches {
-		tableMD := convertTableToMarkdown(m[0])
-		tables = append(tables, tableInfo{
-			placeholder: fmt.Sprintf("__TABLE_PLACEHOLDER_%d__", len(tables)),
-			markdown:    tableMD,
-		})
-	}
-
-	return tables
-}
-
-func replaceAllTablePlaceholders(html string) string {
-	counter := 0
-
-	// Step 1: Replace figure-wrapped tables (<figure class="ltx_table">)
-	result := tableFigureRe.ReplaceAllStringFunc(html, func(m string) string {
-		p := fmt.Sprintf("__TABLE_PLACEHOLDER_%d__", counter)
-		counter++
-		return p
-	})
-
-	// Step 2: Replace bare tables (<table class="ltx_tabular"> not yet replaced)
-	result = bareTableRe.ReplaceAllStringFunc(result, func(m string) string {
-		p := fmt.Sprintf("__TABLE_PLACEHOLDER_%d__", counter)
-		counter++
-		return p
-	})
-
-	return result
-}
-
-func convertTableToMarkdown(figureHTML string) string {
-	caption := ""
-	if m := tableCaptionRe.FindStringSubmatch(figureHTML); len(m) >= 2 {
-		caption = stripHTMLTags(m[1])
-		caption = strings.TrimSpace(caption)
-	}
-
-	m := tabularRe.FindStringSubmatch(figureHTML)
-	if len(m) >= 2 {
-		return renderMarkdownTable(parseHTMLTableRows(m[1]), detectHTMLColumnAlignments(m[1]), caption)
-	}
-
-	// Span-based table (no <table> element).
-	if loc := spanTabularRe.FindStringIndex(figureHTML); loc != nil {
-		if rows, aligns, ok := parseSpanTableRows(figureHTML[loc[0]:]); ok {
-			return renderMarkdownTable(rows, aligns, caption)
-		}
-	}
-
-	// No real table: fall back to a verbatim block if the figure wraps one,
-	// so prompt templates and similar listings are not silently dropped.
-	if pre := verbatimBlockRe.FindStringSubmatch(figureHTML); len(pre) >= 2 {
-		// Strip tags before decoding entities: a literal "<|...|>" in the source
-		// is entity-escaped and must survive tag stripping.
-		body := decodeEntities(stripHTMLTags(pre[1]))
-		body = strings.Trim(body, " \t\n")
-		if body != "" {
-			if caption != "" {
-				return "> " + caption + "\n\n```\n" + body + "\n```\n"
-			}
-			return "```\n" + body + "\n```\n"
-		}
-	}
-
-	// Nothing recoverable beyond the caption.
-	if caption != "" {
-		return "> " + caption + "\n"
-	}
-	return ""
-}
-
-// parseHTMLTableRows extracts rows from <table>-based LaTeXML markup.
-func parseHTMLTableRows(tabularHTML string) [][]string {
-	var rows [][]string
-	for _, tr := range trRe.FindAllStringSubmatch(tabularHTML, -1) {
-		var cells []string
-		for _, td := range tdRe.FindAllStringSubmatch(tr[1], -1) {
-			cells = append(cells, cleanHTMLCellText(td[1]))
-		}
-		if len(cells) > 0 {
-			rows = append(rows, cells)
-		}
-	}
-	return rows
-}
-
-// parseSpanTableRows recovers rows and column alignments from span-based table
-// markup. Returns ok=false when no rows could be recovered.
-func parseSpanTableRows(html string) ([][]string, []string, bool) {
-	inner, _, ok := innerOfBalancedSpan(html)
-	if !ok {
-		return nil, nil, false
-	}
-
-	var rows [][]string
-	var alignments []string
-	for _, trLoc := range spanTrRe.FindAllStringIndex(inner, -1) {
-		trHTML := inner[trLoc[0]:]
-		trInner, _, ok := innerOfBalancedSpan(trHTML)
-		if !ok {
-			continue
-		}
-
-		var cells []string
-		var aligns []string
-		for _, tdLoc := range spanTdRe.FindAllStringIndex(trInner, -1) {
-			tdHTML := trInner[tdLoc[0]:]
-			tdInner, _, ok := innerOfBalancedSpan(tdHTML)
-			if !ok {
-				continue
-			}
-			cells = append(cells, cleanHTMLCellText(tdInner))
-			aligns = append(aligns, alignFromAttrs(tdHTML[:tdLoc[1]-tdLoc[0]]))
-		}
-		if len(cells) == 0 {
-			continue
-		}
-		if len(alignments) == 0 {
-			alignments = aligns
-		}
-		rows = append(rows, cells)
-	}
-
-	if len(rows) == 0 {
-		return nil, nil, false
-	}
-	return rows, alignments, true
-}
-
-// innerOfBalancedSpan returns the inner HTML of the <span> element that html
-// starts with, plus the offset just past its closing tag. Span elements nest, so
-// the extent is determined by counting open/close span tags.
-func innerOfBalancedSpan(html string) (string, int, bool) {
-	tags := spanAnyRe.FindAllStringIndex(html, -1)
-	if len(tags) == 0 || tags[0][0] != 0 {
-		return "", 0, false
-	}
-	if strings.HasPrefix(html[tags[0][0]:tags[0][1]], "</") {
-		return "", 0, false
-	}
-
-	depth := 0
-	for _, t := range tags {
-		if strings.HasPrefix(html[t[0]:t[1]], "</") {
-			depth--
-			if depth == 0 {
-				return html[tags[0][1]:t[0]], t[1], true
-			}
-			continue
-		}
-		depth++
-	}
-	return "", 0, false
-}
-
-// cleanHTMLCellText normalises the text content of a single HTML table cell.
-// (Distinct from cleanCellText in tex2md.go, which handles LaTeX cell source.)
-func cleanHTMLCellText(cellHTML string) string {
-	c := stripHTMLTags(cellHTML)
-	c = decodeEntities(c)
-	c = wsRe.ReplaceAllString(c, " ")
-	return strings.TrimSpace(c)
-}
-
-// alignFromAttrs maps LaTeXML alignment classes to a markdown column alignment.
-func alignFromAttrs(attrs string) string {
-	switch {
-	case strings.Contains(attrs, "ltx_align_right"):
-		return "right"
-	case strings.Contains(attrs, "ltx_align_center"):
-		return "center"
-	default:
-		return "left"
-	}
-}
-
-// renderMarkdownTable renders parsed rows as a GitHub-flavoured markdown table.
-func renderMarkdownTable(rows [][]string, alignments []string, caption string) string {
-	if len(rows) == 0 {
-		if caption != "" {
-			return "> " + caption + "\n"
-		}
-		return ""
-	}
-
-	// Build markdown table
-	var buf strings.Builder
-	header := rows[0]
-	buf.WriteString("| ")
-	for i, c := range header {
-		if i > 0 {
-			buf.WriteString(" | ")
-		}
-		buf.WriteString(c)
-	}
-	buf.WriteString(" |\n|")
-	for i := 0; i < len(header); i++ {
-		align := ""
-		if i < len(alignments) {
-			align = alignments[i]
-		}
-		switch align {
-		case "right":
-			buf.WriteString(" ---:|")
-		case "center":
-			buf.WriteString(" :---:|")
-		default:
-			buf.WriteString(" :---|")
-		}
-	}
-	buf.WriteString("\n")
-	for _, row := range rows[1:] {
-		buf.WriteString("| ")
-		for i, c := range row {
-			if i > 0 {
-				buf.WriteString(" | ")
-			}
-			buf.WriteString(c)
-		}
-		for i := len(row); i < len(header); i++ {
-			buf.WriteString(" |")
-		}
-		buf.WriteString(" |\n")
-	}
-	if caption != "" {
-		buf.WriteString("\n*" + caption + "*\n")
-	}
-	return buf.String()
-}
-
-// detectHTMLColumnAlignments extracts alignment from the first row's td classes
-// (ltx_align_left, ltx_align_center, ltx_align_right).
-func detectHTMLColumnAlignments(tabularHTML string) []string {
-	trMatch := trRe.FindStringSubmatch(tabularHTML)
-	if len(trMatch) < 2 {
-		return nil
-	}
-
-	tdRe := regexp.MustCompile(`(?is)<t[dh]\b([^>]*)>(.*?)</t[dh]>`)
-	tdMatches := tdRe.FindAllStringSubmatch(trMatch[1], -1)
-
-	var aligns []string
-	for _, td := range tdMatches {
-		aligns = append(aligns, alignFromAttrs(td[1]))
-	}
-	return aligns
-}
-
-// ---------------------------------------------------------------------------
 // HTML tag stripping
 // ---------------------------------------------------------------------------
 
@@ -515,15 +215,19 @@ func stripAllHTMLTags(html string) string {
 	return html
 }
 
-// stripHTMLTags removes all HTML tags but keeps text content.
+// stripHTMLTags removes all HTML tags but keeps text content. htmlTagRe is
+// package level (shared with the title/abstract helpers in urlparse.go) because
+// this runs once per table cell.
 func stripHTMLTags(s string) string {
-	reTag := regexp.MustCompile(`<[^>]+>`)
-	return reTag.ReplaceAllString(s, "")
+	return htmlTagRe.ReplaceAllString(s, "")
 }
 
 // ---------------------------------------------------------------------------
 // Entity decoding
 // ---------------------------------------------------------------------------
+
+// numericEntityRe is package level: decodeEntities runs once per table cell.
+var numericEntityRe = regexp.MustCompile(`&#(\d+);`)
 
 func decodeEntities(s string) string {
 	s = strings.ReplaceAll(s, "&amp;", "&")
@@ -541,9 +245,8 @@ func decodeEntities(s string) string {
 	s = strings.ReplaceAll(s, "&Dagger;", "‡")
 
 	// Numeric entities
-	reNum := regexp.MustCompile(`&#(\d+);`)
-	s = reNum.ReplaceAllStringFunc(s, func(m string) string {
-		parts := reNum.FindStringSubmatch(m)
+	s = numericEntityRe.ReplaceAllStringFunc(s, func(m string) string {
+		parts := numericEntityRe.FindStringSubmatch(m)
 		if len(parts) >= 2 {
 			return string(rune(parseInt(parts[1])))
 		}
@@ -568,21 +271,38 @@ func parseInt(s string) int {
 // Whitespace normalization
 // ---------------------------------------------------------------------------
 
+var blankLinesRe = regexp.MustCompile(`\n{3,}`)
+
 func normalizeWhitespace(s string) string {
 	// Collapse multiple blank lines to at most 2
-	re := regexp.MustCompile(`\n{3,}`)
-	s = re.ReplaceAllString(s, "\n\n")
+	s = blankLinesRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
 }
 
-// ---------------------------------------------------------------------------
-// Table placeholder restoration
-// ---------------------------------------------------------------------------
-
-func restoreTables(html string, tables []tableInfo) string {
-	for i, t := range tables {
-		placeholder := fmt.Sprintf("__TABLE_PLACEHOLDER_%d__", i)
-		html = strings.Replace(html, placeholder, "\n\n"+t.markdown+"\n\n", 1)
+// collapseBlankLines does the same for the finished document, but leaves fenced
+// code blocks alone: their empty lines are content, and the verbatim fallback for
+// <figure class="ltx_table"> listings restores one of those fences.
+func collapseBlankLines(s string) string {
+	var out []string
+	inFence, blanks := false, 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence, blanks = !inFence, 0
+			out = append(out, line)
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			if !inFence {
+				blanks++
+				if blanks > 1 {
+					continue
+				}
+			}
+			out = append(out, line)
+			continue
+		}
+		blanks = 0
+		out = append(out, line)
 	}
-	return html
+	return strings.Join(out, "\n")
 }

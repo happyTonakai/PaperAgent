@@ -150,7 +150,7 @@ func estimateContentElements(content string) int {
 		// so individual rows don't each generate cells/2 card elements.
 		// Use cells/4 to avoid overcounting wide tables and causing premature splits.
 		if strings.HasPrefix(trimmed, "|") && strings.HasSuffix(trimmed, "|") {
-			cells := strings.Count(trimmed, "|") - 1
+			cells := countTableCells(trimmed)
 			count += 1 + cells/4 // row + moderate cell overhead
 			continue
 		}
@@ -160,6 +160,29 @@ func estimateContentElements(content string) int {
 	}
 
 	return count
+}
+
+// countTableCells counts the cells of a markdown table row. Bars that are
+// escaped (\|) are cell content, not separators: urlparse escapes them so that a
+// formula like $\max(|C|)$ cannot split the row.
+func countTableCells(row string) int {
+	seps := 0
+	for i := 0; i < len(row); i++ {
+		if row[i] != '|' {
+			continue
+		}
+		// An odd number of preceding backslashes means the bar is escaped.
+		b, j := 0, i-1
+		for j >= 0 && row[j] == '\\' {
+			b++
+			j--
+		}
+		if b%2 == 1 {
+			continue
+		}
+		seps++
+	}
+	return seps - 1
 }
 
 // countMdTables counts the number of markdown tables in a string.

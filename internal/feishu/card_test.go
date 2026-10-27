@@ -1042,3 +1042,21 @@ func TestFindRecommendPage(t *testing.T) {
 		}
 	}
 }
+
+// Escaped bars inside a cell are content, not column separators: counting them
+// inflates the element estimate and splits cards too early.
+func TestCountTableCellsIgnoresEscapedBars(t *testing.T) {
+	tests := []struct {
+		row  string
+		want int
+	}{
+		{"| A | B | C |", 3},
+		{`| Dataset | $\max(\vert C\vert)$ | 2 |`, 3},
+		{`| a \| b | 1 |`, 2},
+	}
+	for _, tt := range tests {
+		if got := countTableCells(tt.row); got != tt.want {
+			t.Errorf("countTableCells(%q) = %d, want %d", tt.row, got, tt.want)
+		}
+	}
+}
